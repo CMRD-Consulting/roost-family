@@ -144,6 +144,56 @@ describe('RPinPad', () => {
     expect(w.emitted('verified')).toEqual([[{ membershipId: 'm1', pin: '1234' }]])
   })
 
+  const pressDigits = async (w: ReturnType<typeof mount>, digits: string) => {
+    for (const d of digits) await w.findAll('button').find((b) => b.text() === d)!.trigger('click')
+    await flushPromises()
+  }
+
+  it('when verify rejects, clears the digits and says the PIN could not be checked', async () => {
+    const verify = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce(true)
+    const w = mount(RPinPad, { props: { members, verify } })
+    await w.get('button[aria-label="Sam"]').trigger('click')
+
+    await pressDigits(w, '1234')
+
+    const alert = w.get('[role="alert"]')
+    expect(alert.text()).toBe("Couldn't check the PIN. Try again.")
+    expect(alert.classes()).toContain('text-[18px]')
+    expect(w.get('[aria-live="polite"]').text()).toBe('0 of 4 digits entered')
+    expect(w.emitted('verified')).toBeUndefined()
+
+    await pressDigits(w, '1234')
+    expect(w.emitted('verified')).toEqual([[{ membershipId: 'm1', pin: '1234' }]])
+  })
+
+  it('lists adults as plain named buttons, not a radiogroup', () => {
+    const w = mount(RPinPad, { props: { members, verify: async () => true } })
+    expect(w.find('[role="radiogroup"]').exists()).toBe(false)
+    expect(w.find('[role="radio"]').exists()).toBe(false)
+    const list = w.get('ul')
+    expect(list.findAll('li > button').map((b) => b.attributes('aria-label'))).toEqual(['Sam', 'Alex'])
+  })
+
+  it('keypad: the blank key is a non-interactive spacer, "Not you?" is at least 60 px tall, and progress is announced', async () => {
+    const w = mount(RPinPad, { props: { members, verify: async () => true } })
+    await w.get('button[aria-label="Sam"]').trigger('click')
+
+    const keypadButtons = w.findAll('[data-keypad] button')
+    expect(keypadButtons.map((b) => b.attributes('aria-label'))).toEqual(['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', 'Backspace'])
+    const spacer = w.get('[data-keypad] [data-spacer]')
+    expect(spacer.element.tagName).not.toBe('BUTTON')
+    expect(spacer.attributes('aria-hidden')).toBe('true')
+
+    const notYou = w.findAll('button').find((b) => b.text().includes('Not you?'))!
+    expect(notYou.classes()).toContain('min-h-[60px]')
+
+    const status = w.get('[aria-live="polite"]')
+    expect(status.text()).toBe('0 of 4 digits entered')
+    await w.get('button[aria-label="1"]').trigger('click')
+    await w.get('button[aria-label="2"]').trigger('click')
+    expect(status.text()).toBe('2 of 4 digits entered')
+  })
+
   it('emits cancel', async () => {
     const w = mount(RPinPad, { props: { members, verify: async () => true } })
     await w.findAll('button').find((b) => b.text() === 'Cancel')!.trigger('click')

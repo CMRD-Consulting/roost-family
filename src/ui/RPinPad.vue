@@ -24,6 +24,9 @@ const shake = ref(false)
 const pending = ref(false)
 
 const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', '⌫'] as const
+const PIN_LENGTH = 4
+
+const progress = computed(() => `${pin.value.length} of ${PIN_LENGTH} digits entered`)
 
 function pick(member: Member): void {
   selected.value = member
@@ -42,7 +45,14 @@ async function submit(): Promise<void> {
   if (!member) return
   pending.value = true
   try {
-    const ok = await props.verify(member.id, pin.value)
+    let ok: boolean
+    try {
+      ok = await props.verify(member.id, pin.value)
+    } catch {
+      error.value = "Couldn't check the PIN. Try again."
+      pin.value = ''
+      return
+    }
     if (ok) {
       emit('verified', { membershipId: member.id, pin: pin.value })
     } else {
@@ -61,9 +71,9 @@ async function press(key: string): Promise<void> {
     pin.value = pin.value.slice(0, -1)
     return
   }
-  if (pin.value.length >= 4) return
+  if (pin.value.length >= PIN_LENGTH) return
   pin.value += key
-  if (pin.value.length === 4) await submit()
+  if (pin.value.length === PIN_LENGTH) await submit()
 }
 </script>
 
@@ -71,30 +81,31 @@ async function press(key: string): Promise<void> {
   <div class="flex flex-col items-center gap-6">
     <h2 class="text-[24px] font-semibold text-ink">{{ title }}</h2>
 
-    <div v-if="!selected" role="radiogroup" aria-label="Choose who you are" class="grid grid-cols-2 gap-6">
-      <button
-        v-for="member in eligibleMembers"
-        :key="member.id"
-        type="button"
-        class="flex flex-col items-center gap-2 rounded-[var(--radius-control)] p-2"
-        @click="pick(member)"
-      >
-        <RAvatar :name="member.displayName" :color="member.color" :size="96" />
-        <span class="text-[22px] font-medium text-ink">{{ member.displayName }}</span>
-      </button>
-    </div>
+    <ul v-if="!selected" aria-label="Choose who you are" class="grid grid-cols-2 gap-6">
+      <li v-for="member in eligibleMembers" :key="member.id">
+        <button
+          type="button"
+          :aria-label="member.displayName"
+          class="flex flex-col items-center gap-2 rounded-[var(--radius-control)] p-2"
+          @click="pick(member)"
+        >
+          <RAvatar :name="member.displayName" :color="member.color" :size="96" aria-hidden="true" />
+          <span class="text-[22px] font-medium text-ink">{{ member.displayName }}</span>
+        </button>
+      </li>
+    </ul>
 
     <div v-else class="flex flex-col items-center gap-6">
       <button
         type="button"
-        class="flex items-center gap-2 rounded-full bg-surface-2 py-1 pr-4 pl-1"
+        class="flex min-h-[60px] items-center gap-2 rounded-full bg-surface-2 py-1 pr-4 pl-1"
         @click="backToWho"
       >
-        <RAvatar :name="selected.displayName" :color="selected.color" :size="36" />
+        <RAvatar :name="selected.displayName" :color="selected.color" :size="44" aria-hidden="true" />
         <span class="text-[18px] text-ink-3">Not you?</span>
       </button>
 
-      <div class="flex gap-4" :class="shake && 'r-pinpad-shake'" @animationend="shake = false">
+      <div class="flex gap-4" aria-hidden="true" :class="shake && 'r-pinpad-shake'" @animationend="shake = false">
         <span
           v-for="i in 4"
           :key="i"
@@ -103,21 +114,23 @@ async function press(key: string): Promise<void> {
         />
       </div>
 
+      <p aria-live="polite" class="sr-only">{{ progress }}</p>
+
       <p v-if="error" role="alert" class="text-[18px] text-warn-ink">{{ error }}</p>
 
-      <div class="grid grid-cols-3 gap-3">
-        <button
-          v-for="(key, i) in KEYS"
-          :key="i"
-          type="button"
-          :disabled="key === ''"
-          :aria-label="key === '⌫' ? 'Backspace' : key === '' ? undefined : key"
-          class="flex min-h-[72px] min-w-[72px] items-center justify-center rounded-[var(--radius-control)] text-[32px] font-medium text-ink disabled:cursor-default"
-          :class="key === '' ? 'bg-transparent' : 'bg-surface-2'"
-          @click="press(key)"
-        >
-          {{ key }}
-        </button>
+      <div data-keypad class="grid grid-cols-3 gap-3">
+        <template v-for="(key, i) in KEYS" :key="i">
+          <span v-if="key === ''" data-spacer aria-hidden="true" class="min-h-[72px] min-w-[72px]" />
+          <button
+            v-else
+            type="button"
+            :aria-label="key === '⌫' ? 'Backspace' : key"
+            class="flex min-h-[72px] min-w-[72px] items-center justify-center rounded-[var(--radius-control)] bg-surface-2 text-[32px] font-medium text-ink"
+            @click="press(key)"
+          >
+            {{ key }}
+          </button>
+        </template>
       </div>
     </div>
 
