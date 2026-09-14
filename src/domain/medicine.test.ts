@@ -133,6 +133,13 @@ describe('recentDoses', () => {
     const [s] = recentDoses([ibuprofen], [dose({ at: '2026-09-14T12:00:00Z' })], new Date('2026-09-14T18:00:00Z'))
     expect(s?.nextAllowed).toBe(true)
   })
+
+  it('still shows a dose logged a few minutes in the future', () => {
+    const now = new Date('2026-09-14T12:00:00Z')
+    const [s] = recentDoses([ibuprofen], [dose({ at: '2026-09-14T12:05:00Z' })], now)
+    expect(s?.givenAt).toEqual(new Date('2026-09-14T12:05:00Z'))
+    expect(s?.nextAllowed).toBe(false)
+  })
 })
 
 describe('unacknowledgedConflicts', () => {

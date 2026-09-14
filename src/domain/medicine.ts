@@ -74,10 +74,7 @@ export function recentDoses(medicines: Medicine[], doses: DoseEntry[], now: Date
   for (const medicine of medicines) {
     const latest = doses
       .filter((d) => isActive(d) && d.medicineId === medicine.id)
-      .filter((d) => {
-        const dt = Date.parse(d.at)
-        return dt > t - DAY_MS && dt <= t
-      })
+      .filter((d) => Date.parse(d.at) > t - DAY_MS)
       .sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0]
     if (!latest) continue
     const nextAfter = nextDoseAfter(latest, medicine)
