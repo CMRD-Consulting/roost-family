@@ -9,7 +9,9 @@ export interface FeatureContext {
 
 function parseDate(d: HouseholdDate): [number, number, number] {
   const [y, m, day] = d.split('-').map(Number)
-  if (!y || !m || !day) throw new Error(`Invalid date "${d}"`)
+  if (!y || !m || !day || !Number.isInteger(m) || !Number.isInteger(day)) throw new Error(`Invalid date "${d}"`)
+  if (m < 1 || m > 12) throw new Error(`Invalid date "${d}": month out of range`)
+  if (day < 1 || day > 31) throw new Error(`Invalid date "${d}": day out of range`)
   return [y, m, day]
 }
 

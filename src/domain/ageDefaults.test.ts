@@ -19,6 +19,21 @@ describe('ageInMonths', () => {
     expect(ageInMonths('2023-09-14', '2026-09-14')).toBe(36)
     expect(ageInMonths('2023-09-14', '2026-09-13')).toBe(35)
   })
+  it('allows a future birthday, returning a negative age', () => {
+    expect(ageInMonths('2027-01-01', today)).toBeLessThan(0)
+  })
+  it('rejects a month outside 1-12', () => {
+    expect(() => ageInMonths('2025-00-10', today)).toThrow()
+    expect(() => ageInMonths('2025-13-10', today)).toThrow()
+  })
+  it('rejects a day outside 1-31', () => {
+    expect(() => ageInMonths('2025-05-00', today)).toThrow()
+    expect(() => ageInMonths('2025-05-32', today)).toThrow()
+  })
+  it('rejects a non-numeric date', () => {
+    expect(() => ageInMonths('2025-XX-10', today)).toThrow()
+    expect(() => ageInMonths('not-a-date', today)).toThrow()
+  })
 })
 
 describe('isFeatureEnabled', () => {
