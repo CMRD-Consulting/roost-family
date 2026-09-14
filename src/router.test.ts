@@ -77,6 +77,22 @@ describe('public routes', () => {
     expect(typeof route.matched[0]!.components!.default).toBe('function')
   })
 
+  it('passes Manage household the export request, so owners get a working Export button', () => {
+    const route = router.resolve('/manage')
+    const props = route.matched[0]!.props.default as { onRequestExport?: unknown }
+    expect(typeof props.onRequestExport).toBe('function')
+  })
+
+  it('serves the export download page at /manage/export/:id, lazily, in any browser without display guards', () => {
+    const route = router.resolve('/manage/export/eeeeeeee-0000-0000-0000-000000000001')
+    expect(route.matched).toHaveLength(1)
+    expect(route.params.id).toBe('eeeeeeee-0000-0000-0000-000000000001')
+    expect(isPublicRoute(route)).toBe(true)
+    expect(route.meta.requires).toBeUndefined()
+    expect(route.matched[0]!.props.default).toBe(true)
+    expect(typeof route.matched[0]!.components!.default).toBe('function')
+  })
+
   it('treats the household screens as guarded', () => {
     expect(isPublicRoute(router.resolve('/home'))).toBe(false)
     expect(isPublicRoute(router.resolve('/setup'))).toBe(false)

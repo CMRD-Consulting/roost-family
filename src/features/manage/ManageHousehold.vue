@@ -7,7 +7,8 @@
  *
  * Wiring for later steps:
  * - `onRequestExport` (prop, or `@request-export`): runs when an owner asks for an export, with the owner's client and
- *   household. Until it's given, Export shows a disabled placeholder.
+ *   household (the /manage route passes `requestManageExport`). Until it's given, Export shows a disabled placeholder.
+ *   When it resolves, the page says the link will be emailed to the signed-in address.
  * - `#calendars` (slot): the calendar settings, shown in My account for adults and above the owner sections for
  *   owners, with the signed-in adult's client, household and membership. Defaults to CalendarsSection.
  * - `?calendar=pending&attempt=…` (a Google / Microsoft connection coming back) is finished for the signed-in adult
@@ -16,6 +17,7 @@
 import { computed, nextTick, onMounted, ref, useTemplateRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { createCalendarSettingsApi, type CalendarSettingsApi } from '@/data/calendarApi'
+import { ExportError } from '@/data/exportApi'
 import type { AdultClient, MemberRow, SettingsApi } from '@/data/settingsApi'
 import AdultSignIn from '@/features/settings/AdultSignIn.vue'
 import CalendarsSection from '@/features/settings/sections/CalendarsSection.vue'
@@ -100,6 +102,7 @@ const { reloadKey: calendarsReloadKey, canRetry: calendarCanRetry, attempt: pend
 
 // ─── Export ──────────────────────────────────────────────────────────────
 const exportError = ref<string | null>(null)
+const exportNotice = ref<string | null>(null)
 
 async function requestExport(): Promise<void> {
   const host = ownerHost.value
@@ -107,12 +110,17 @@ async function requestExport(): Promise<void> {
   const householdId = host?.household.value?.id
   if (!host || !handler || !householdId || host.gate.busy.value || offline.value) return
   exportError.value = null
+  exportNotice.value = null
+  const email = adult.value?.email
   try {
     await host.gate.run(async (o) => {
       await handler({ client: o.client, householdId, membershipId: o.membershipId })
     })
+    exportNotice.value = email
+      ? `We’re preparing your export. We’ll email a link to ${email} when it’s ready.`
+      : 'We’re preparing your export. We’ll email you a link when it’s ready.'
   } catch (e) {
-    exportError.value = ownerActionMessage(e)
+    exportError.value = e instanceof ExportError ? e.message : ownerActionMessage(e)
   }
 }
 
@@ -121,8 +129,12 @@ watch(adult, (session) => {
   if (session) return
   clearCalendarStatus()
   exportError.value = null
+  exportNotice.value = null
 })
-watch(() => selected.value?.membershipId, () => (exportError.value = null))
+watch(() => selected.value?.membershipId, () => {
+  exportError.value = null
+  exportNotice.value = null
+})
 
 // ─── Demo sign-in ────────────────────────────────────────────────────────
 const demoAdults = ref<MemberRow[]>([])
@@ -283,6 +295,9 @@ watch([phase, () => selected.value?.membershipId], async () => {
                 <p class="text-[18px] text-ink-2">
                   A copy of everything in {{ selected.householdName }}: one spreadsheet file per log, plus all data and photos. The
                   download link is emailed to you.
+                </p>
+                <p v-if="exportNotice" role="status" data-testid="export-status" class="text-[18px] font-medium text-green-deep">
+                  {{ exportNotice }}
                 </p>
                 <p v-if="exportError" role="alert" class="text-[18px] text-warn-ink">{{ exportError }}</p>
                 <div>

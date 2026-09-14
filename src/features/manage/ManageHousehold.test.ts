@@ -4,6 +4,7 @@ import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import { defineComponent, h } from 'vue'
 import { createMemoryHistory, createRouter, type Router } from 'vue-router'
 import { CalendarError } from '@/data/calendarApi'
+import { ExportError } from '@/data/exportApi'
 import { SettingsError, type AdultMembershipRow, type SettingsApi } from '@/data/settingsApi'
 import ManageHousehold from './ManageHousehold.vue'
 import { CALENDAR_ATTEMPT_KEY } from './useCalendarAttempt'
@@ -363,7 +364,30 @@ describe('owner', () => {
     await buttonByText(wired, 'Export household data').trigger('click')
     await settle()
     expect(onRequestExport).toHaveBeenCalledWith({ client: { name: 'client-2' }, householdId: RIVERA, membershipId: SAM })
+    const status = wired.find('[data-testid="export-status"]')
+    expect(status.attributes('role')).toBe('status')
+    expect(status.text()).toBe('We’re preparing your export. We’ll email a link to sam@example.com when it’s ready.')
     wired.unmount()
+  })
+
+  it('shows the hourly limit and other export failures in the owner’s words, and clears the confirmation', async () => {
+    const onRequestExport = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new ExportError('rate_limited', 42))
+    const w = await mountPage('/manage', { onRequestExport })
+    await signIn(w)
+    await buttonByText(w, 'Export household data').trigger('click')
+    await settle()
+    expect(w.find('[data-testid="export-status"]').exists()).toBe(true)
+
+    await buttonByText(w, 'Export household data').trigger('click')
+    await settle()
+    expect(w.find('[data-testid="export-status"]').exists()).toBe(false)
+    expect(w.find('section[aria-labelledby="manage-export-title"] [role="alert"]').text()).toBe('You can request another export in 42 minutes.')
+
+    onRequestExport.mockRejectedValueOnce(new ExportError('not_configured'))
+    await buttonByText(w, 'Export household data').trigger('click')
+    await settle()
+    expect(w.find('section[aria-labelledby="manage-export-title"] [role="alert"]').text()).toBe('Export isn’t set up on this server yet.')
+    w.unmount()
   })
 
   it('goes back to sign-in when an action finds the sign-in expired', async () => {

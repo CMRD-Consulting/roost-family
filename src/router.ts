@@ -2,6 +2,7 @@ import { createRouter, createWebHistory, type RouteLocationNormalized } from 'vu
 import { recoverFromChunkError } from '@/app/appUpdates'
 import KidsCorner from '@/features/corner/KidsCorner.vue'
 import MainScreen from '@/features/main/MainScreen.vue'
+import { requestManageExport } from '@/features/manage/manageApi'
 import { hasPendingInvite } from '@/features/settings/pendingInvite'
 import { useDisplayStore, type DisplayStoreKind, type DisplayStoreState } from '@/session/displayStore'
 import { useSettingsSessionStore } from '@/stores/settingsSession'
@@ -72,7 +73,19 @@ export const router = createRouter({
     },
     // Manage household (spec §7.10): any browser, phone or laptop, that is not a display. It signs an adult in on a
     // temporary client of its own and never reads or starts the display session.
-    { path: '/manage', component: () => import('@/features/manage/ManageHousehold.vue'), meta: { public: true } },
+    {
+      path: '/manage',
+      component: () => import('@/features/manage/ManageHousehold.vue'),
+      props: { onRequestExport: requestManageExport },
+      meta: { public: true },
+    },
+    // The emailed export link (spec §11.3): the owner signs in again here to download.
+    {
+      path: '/manage/export/:id',
+      component: () => import('@/features/manage/ExportDownload.vue'),
+      props: true,
+      meta: { public: true },
+    },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
 })
