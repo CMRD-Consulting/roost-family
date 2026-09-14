@@ -1,10 +1,23 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { msUntilNextHouseholdMidnight } from '@/composables/householdMidnight'
+import { applyCommand } from '@/data/applyCommand'
 import type { HouseholdSource, RealtimeStatus } from '@/data/householdSource'
+import type { LogCommand } from '@/data/logCommands'
 import type { HouseholdSnapshot } from '@/data/snapshot'
 
 export type HouseholdStatus = 'idle' | 'loading' | 'ready' | 'error'
+
+export interface OverlayItem {
+  command: LogCommand
+  savedAt: string | null
+}
+
+/** Deep-value equality: overlay items must match commands round-tripped through the offline
+ *  queue's IndexedDB (plain JSON), which are structurally equal but not the same object. */
+function sameCommand(a: LogCommand, b: LogCommand): boolean {
+  return JSON.stringify(a) === JSON.stringify(b)
+}
 
 export const useHouseholdStore = defineStore('household', () => {
   const snapshot = ref<HouseholdSnapshot | null>(null)
@@ -14,6 +27,26 @@ export const useHouseholdStore = defineStore('household', () => {
   const realtime = ref<RealtimeStatus | 'unknown'>('unknown')
   /** ISO timestamp of the last successful load; used by `staleMinutes` while disconnected. */
   const freshAt = ref<string | null>(null)
+  /** Locally-applied log commands not yet reflected in `snapshot`, newest last. */
+  const overlay = ref<OverlayItem[]>([])
+  /** `snapshot` with every overlay command applied on top, for the UI to render. */
+  const view = computed<HouseholdSnapshot | null>(() => {
+    if (snapshot.value === null) return null
+    return overlay.value.reduce((s, o) => applyCommand(s, o.command, new Date()), snapshot.value)
+  })
+
+  function addOverlay(cmd: LogCommand): void {
+    overlay.value = [...overlay.value, { command: cmd, savedAt: null }]
+  }
+
+  function markSaved(cmd: LogCommand): void {
+    const savedAt = new Date().toISOString()
+    overlay.value = overlay.value.map((o) => (sameCommand(o.command, cmd) ? { ...o, savedAt } : o))
+  }
+
+  function removeOverlay(cmd: LogCommand): void {
+    overlay.value = overlay.value.filter((o) => !sameCommand(o.command, cmd))
+  }
 
   let currentHouseholdId: string | null = null
   let currentSource: HouseholdSource | null = null
@@ -53,6 +86,7 @@ export const useHouseholdStore = defineStore('household', () => {
     const householdId = currentHouseholdId
     const source = currentSource
     const seq = ++loadSeq
+    const loadStartedAt = new Date().toISOString()
     /** True once a newer load has started, this household was left, or the store stopped. */
     const isStale = () => seq !== loadSeq || currentHouseholdId !== householdId
     try {
@@ -62,6 +96,8 @@ export const useHouseholdStore = defineStore('household', () => {
       status.value = 'ready'
       error.value = null
       freshAt.value = next.loadedAt
+      // Overlay items saved before this reload started are already reflected in `next`; drop them.
+      overlay.value = overlay.value.filter((o) => o.savedAt === null || o.savedAt >= loadStartedAt)
       scheduleMidnightReload()
     } catch (e) {
       if (isStale()) return
@@ -79,6 +115,7 @@ export const useHouseholdStore = defineStore('household', () => {
     error.value = null
     realtime.value = 'unknown'
     freshAt.value = null
+    overlay.value = []
     status.value = 'loading'
     await reload()
     // A stop() or a switch to another household during that first load must not subscribe.
@@ -117,5 +154,8 @@ export const useHouseholdStore = defineStore('household', () => {
     return Math.floor((now.getTime() - Date.parse(freshAt.value)) / 60_000)
   }
 
-  return { snapshot, status, error, online, realtime, start, reload, stop, staleMinutes }
+  return {
+    snapshot, status, error, online, realtime, start, reload, stop, staleMinutes,
+    overlay, view, addOverlay, markSaved, removeOverlay,
+  }
 })

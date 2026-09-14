@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { buildDemoSnapshot } from '@/data/demo/demoFixture'
 import type { HouseholdSnapshot } from '@/data/snapshot'
 import type { HouseholdSource } from '@/data/householdSource'
+import type { LogCommand } from '@/data/logCommands'
 import { useHouseholdStore } from './householdStore'
 
 function fakeSource(loadImpl?: (id: string, now: Date) => Promise<HouseholdSnapshot>) {
@@ -336,6 +337,99 @@ describe('useHouseholdStore', () => {
       expect(removeSpy).toHaveBeenCalledWith('online', expect.any(Function))
       expect(removeSpy).toHaveBeenCalledWith('offline', expect.any(Function))
       removeSpy.mockRestore()
+    })
+  })
+
+  describe('overlay', () => {
+    function dinnerCmd(householdId: string, text: string): LogCommand {
+      return { kind: 'dinner.set', householdId, text, previous: null }
+    }
+
+    it('view is null before any snapshot has loaded', () => {
+      const store = newStore()
+      expect(store.view).toBeNull()
+    })
+
+    it('view applies overlay commands on top of the snapshot, without mutating it', async () => {
+      const { source } = fakeSource()
+      const store = newStore()
+      await store.start('h1', source)
+
+      const cmd = dinnerCmd(store.snapshot!.household.id, 'Pizza')
+      store.addOverlay(cmd)
+
+      expect(store.view?.household.dinnerTonight).toBe('Pizza')
+      expect(store.snapshot?.household.dinnerTonight).not.toBe('Pizza')
+    })
+
+    it('removeOverlay drops a command from the overlay', async () => {
+      const { source } = fakeSource()
+      const store = newStore()
+      await store.start('h1', source)
+
+      const cmd = dinnerCmd(store.snapshot!.household.id, 'Pizza')
+      store.addOverlay(cmd)
+      store.removeOverlay(cmd)
+
+      expect(store.overlay).toHaveLength(0)
+      expect(store.view?.household.dinnerTonight).not.toBe('Pizza')
+    })
+
+    it('keeps overlay items that have not been saved across a reload', async () => {
+      const { source } = fakeSource()
+      const store = newStore()
+      await store.start('h1', source)
+
+      const cmd = dinnerCmd(store.snapshot!.household.id, 'Pizza')
+      store.addOverlay(cmd)
+
+      await store.reload()
+
+      expect(store.overlay).toHaveLength(1)
+      expect(store.view?.household.dinnerTonight).toBe('Pizza')
+    })
+
+    it('drops overlay items saved before a later reload starts', async () => {
+      vi.useFakeTimers()
+      try {
+        vi.setSystemTime(new Date('2026-09-14T19:00:00Z'))
+        const { source } = fakeSource()
+        const store = newStore()
+        await store.start('h1', source)
+
+        const cmd = dinnerCmd(store.snapshot!.household.id, 'Pizza')
+        store.addOverlay(cmd)
+        store.markSaved(cmd)
+
+        vi.setSystemTime(new Date('2026-09-14T19:05:00Z'))
+        await store.reload()
+
+        expect(store.overlay).toHaveLength(0)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('keeps overlay items saved after the reload started', async () => {
+      vi.useFakeTimers()
+      try {
+        vi.setSystemTime(new Date('2026-09-14T19:00:00Z'))
+        const { source } = fakeSource()
+        const store = newStore()
+        await store.start('h1', source)
+
+        const cmd = dinnerCmd(store.snapshot!.household.id, 'Pizza')
+        store.addOverlay(cmd)
+
+        // Saved with a savedAt timestamp equal to or after the reload's own start time.
+        const reloadPromise = store.reload()
+        store.markSaved(cmd)
+        await reloadPromise
+
+        expect(store.overlay).toHaveLength(1)
+      } finally {
+        vi.useRealTimers()
+      }
     })
   })
 })
