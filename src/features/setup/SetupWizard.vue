@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { onBeforeUnmount, watch, type Component } from 'vue'
+import type { Component } from 'vue'
 import { createWizardState, nextStep, previousStep, type SetupStep } from './wizardState'
-import { startIdleTimer } from '@/session/idleTimer'
+import { useAdultSessionIdle } from '@/session/useAdultSessionIdle'
 import WelcomeStep from './steps/WelcomeStep.vue'
 import InviteStep from './steps/InviteStep.vue'
 import SignInStep from './steps/SignInStep.vue'
@@ -23,25 +23,14 @@ const components: Record<SetupStep, Component> = {
   display: DisplayStep,
 }
 
-let stopIdle: (() => void) | null = null
-watch(
-  () => state.adult,
-  (adult) => {
-    stopIdle?.()
-    stopIdle = null
-    if (!adult) return
-    stopIdle = startIdleTimer(async () => {
-      await adult.end()
-      state.adult = null
-      state.step = 'signIn'
-      state.error = 'You were signed out after 5 minutes without activity. Sign in again to continue.'
-    })
+useAdultSessionIdle({
+  session: () => state.adult,
+  busy: () => state.busy,
+  onExpired: () => {
+    state.adult = null
+    state.step = 'signIn'
+    state.error = 'You were signed out after 5 minutes without activity. Sign in again to continue.'
   },
-)
-
-onBeforeUnmount(() => {
-  stopIdle?.()
-  void state.adult?.end()
 })
 
 function go(step: SetupStep) {
@@ -54,7 +43,7 @@ function go(step: SetupStep) {
   <component
     :is="components[state.step]"
     :state="state"
-    @next="go(nextStep(state.step))"
-    @back="go(previousStep(state.step))"
+    @next="go(nextStep(state.step, { signedIn: !!state.adult }))"
+    @back="go(previousStep(state.step, { signedIn: !!state.adult }))"
   />
 </template>

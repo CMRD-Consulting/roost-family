@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onBeforeUnmount, ref } from 'vue'
 import WizardFrame from '../WizardFrame.vue'
 import RButton from '@/ui/RButton.vue'
 import RInput from '@/ui/RInput.vue'
-import { newAdultClient, sendEmailCode, verifyEmailCode } from '@/session/adultSession'
+import { disposeAdultClient, newAdultClient, sendEmailCode, verifyEmailCode } from '@/session/adultSession'
 import { validateCode, validateEmail } from '../validation'
 import type { WizardState } from '../wizardState'
 
@@ -14,6 +14,8 @@ const props = withDefaults(defineProps<{ state: WizardState; title?: string; can
 const emit = defineEmits<{ next: []; back: [] }>()
 
 const client = newAdultClient()
+// Once a session is produced, the wizard owns the client (and ends it); until then this step does.
+let producedSession = false
 const phase = ref<'email' | 'code'>('email')
 const code = ref('')
 const isDev = import.meta.env.DEV
@@ -38,6 +40,7 @@ async function verify() {
   props.state.busy = true
   try {
     props.state.adult = await verifyEmailCode(client, props.state.email.trim(), code.value.trim())
+    producedSession = true
     emit('next')
   } catch (e) {
     props.state.error = (e as Error).message
@@ -45,6 +48,10 @@ async function verify() {
     props.state.busy = false
   }
 }
+
+onBeforeUnmount(() => {
+  if (!producedSession) void disposeAdultClient(client)
+})
 </script>
 
 <template>

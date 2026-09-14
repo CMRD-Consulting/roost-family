@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref } from 'vue'
+import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import WizardFrame from './WizardFrame.vue'
 import SignInStep from './steps/SignInStep.vue'
@@ -9,6 +9,7 @@ import { createWizardState } from './wizardState'
 import { displayClient } from '@/data/supabase'
 import { claimDisplay } from '@/session/displaySession'
 import { useDisplayStore } from '@/session/displayStore'
+import { useAdultSessionIdle } from '@/session/useAdultSessionIdle'
 
 interface MembershipHouseholdRow {
   household_id: string
@@ -22,6 +23,17 @@ const phase = ref<'signIn' | 'pick' | 'name'>('signIn')
 const households = ref<{ id: string; name: string }[]>([])
 const chosen = ref<string | null>(null)
 
+useAdultSessionIdle({
+  session: () => state.adult,
+  busy: () => state.busy,
+  onExpired: () => {
+    state.adult = null
+    chosen.value = null
+    phase.value = 'signIn'
+    state.error = 'You were signed out after 5 minutes without activity. Sign in again to continue.'
+  },
+})
+
 function householdName(row: MembershipHouseholdRow): string {
   const h = Array.isArray(row.households) ? row.households[0] : row.households
   return h?.name ?? 'Household'
@@ -30,27 +42,42 @@ function householdName(row: MembershipHouseholdRow): string {
 async function loadHouseholds() {
   const adult = state.adult
   if (!adult) return
-  const { data, error } = await adult.client
-    .from('memberships')
-    .select('household_id, households(name)')
-    .eq('user_id', adult.userId)
-    .eq('role', 'owner')
-    .is('left_at', null)
-  if (error) {
-    state.error = error.message
-    return
+  state.busy = true
+  try {
+    const { data, error } = await adult.client
+      .from('memberships')
+      .select('household_id, households(name)')
+      .eq('user_id', adult.userId)
+      .eq('role', 'owner')
+      .is('left_at', null)
+    if (error) {
+      state.error = error.message
+      return
+    }
+    households.value = (data ?? []).map((m) => ({
+      id: m.household_id,
+      name: householdName(m as MembershipHouseholdRow),
+    }))
+    phase.value = 'pick'
+  } finally {
+    state.busy = false
   }
-  households.value = (data ?? []).map((m) => ({
-    id: m.household_id,
-    name: householdName(m as MembershipHouseholdRow),
-  }))
-  if (households.value.length === 0) state.error = 'This account isn’t an owner of any household.'
-  phase.value = 'pick'
+}
+
+async function cancel() {
+  const adult = state.adult
+  state.adult = null
+  await adult?.end()
+  await router.replace('/setup')
 }
 
 async function register() {
   const adult = state.adult
   if (!adult || !chosen.value) return
+  if (!state.displayLabel.trim()) {
+    state.error = 'Name this display.'
+    return
+  }
   state.busy = true
   state.error = null
   try {
@@ -62,8 +89,8 @@ async function register() {
     const token = data?.[0]?.out_claim_token
     if (!token) throw new Error('Display registration returned no token')
     await claimDisplay(displayClient, token)
-    await adult.end()
     state.adult = null
+    await adult.end()
     await displayStore.refresh()
     await router.replace('/home')
   } catch (e) {
@@ -72,8 +99,6 @@ async function register() {
     state.busy = false
   }
 }
-
-onBeforeUnmount(() => void state.adult?.end())
 </script>
 
 <template>
@@ -85,6 +110,9 @@ onBeforeUnmount(() => void state.adult?.end())
     @back="router.replace('/setup')"
   />
   <WizardFrame v-else-if="phase === 'pick'" title="Which household?" :error="state.error">
+    <p v-if="households.length === 0" class="text-[20px] text-ink-2">
+      This account isn’t an owner of any household. Sign in with an owner’s account to add this tablet.
+    </p>
     <RButton
       v-for="h in households"
       :key="h.id"
@@ -93,6 +121,7 @@ onBeforeUnmount(() => void state.adult?.end())
     >
       {{ h.name }}
     </RButton>
+    <RButton variant="ghost" @click="cancel">Cancel</RButton>
   </WizardFrame>
   <WizardFrame v-else title="Name this display" :error="state.error" can-go-back @back="phase = 'pick'">
     <RInput v-model="state.displayLabel" label="Display name" placeholder="Playroom" />

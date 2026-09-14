@@ -41,12 +41,16 @@ export function createWizardState() {
 
 export type WizardState = ReturnType<typeof createWizardState>
 
-export function nextStep(step: SetupStep): SetupStep {
+/** Invite → Consent skips Sign in while an adult is already signed in (after going Back past it). */
+export function nextStep(step: SetupStep, opts: { signedIn?: boolean } = {}): SetupStep {
+  if (step === 'invite' && opts.signedIn) return 'consent'
   const i = SETUP_STEPS.indexOf(step)
   return SETUP_STEPS[Math.min(i + 1, SETUP_STEPS.length - 1)]!
 }
 
-export function previousStep(step: SetupStep): SetupStep {
+/** Back from Consent skips Sign in while an adult is already signed in. */
+export function previousStep(step: SetupStep, opts: { signedIn?: boolean } = {}): SetupStep {
+  if (step === 'consent' && opts.signedIn) return 'invite'
   const i = SETUP_STEPS.indexOf(step)
   return SETUP_STEPS[Math.max(i - 1, 0)]!
 }

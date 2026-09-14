@@ -8,7 +8,6 @@ import { displayClient } from '@/data/supabase'
 import { claimDisplay } from '@/session/displaySession'
 import { useDisplayStore } from '@/session/displayStore'
 import { adultOwnsHousehold, completeSetup, isInvalidInviteError } from '../completeSetup'
-import type { AdultSession } from '@/session/adultSession'
 import type { WizardState } from '../wizardState'
 
 const props = defineProps<{ state: WizardState }>()
@@ -18,10 +17,7 @@ const displayStore = useDisplayStore()
 const alreadyOwner = ref(false)
 
 async function finish() {
-  // Reactive proxies of class instances (the Supabase client inside AdultSession)
-  // lose their private members in Vue's UnwrapRef type, so re-assert the plain
-  // interface here rather than relying on narrowing through the reactive property.
-  const adult = props.state.adult as AdultSession | null
+  const adult = props.state.adult
   if (!adult) return
   if (!props.state.displayLabel.trim()) {
     props.state.error = 'Name this display.'
@@ -47,7 +43,7 @@ async function finish() {
 }
 
 async function goToJoin() {
-  const adult = props.state.adult as AdultSession | null
+  const adult = props.state.adult
   props.state.adult = null
   await adult?.end()
   await router.replace('/join')
