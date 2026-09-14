@@ -82,6 +82,9 @@ describe('MainScreen (demo source)', () => {
     // The demo household is a lazily-built singleton keyed off the URL at first access;
     // reset it so each test's own ?manyKids/?conflict params (set after this hook runs) take effect.
     resetDemoForTests()
+    // modesStore persists Nap Mode to localStorage; without this a nap left on by one test would
+    // leak into the next (which creates a fresh Pinia, but not fresh localStorage).
+    localStorage.clear()
     // Leave setImmediate real so flushPromises can resolve.
     vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
     vi.setSystemTime(new Date('2026-09-14T19:00:00Z'))
@@ -92,6 +95,7 @@ describe('MainScreen (demo source)', () => {
   afterEach(async () => {
     window.history.replaceState({}, '', '/')
     setOnline(true)
+    localStorage.clear()
     vi.unstubAllGlobals()
     vi.useRealTimers()
     // The real offline queue lives in (fake) IndexedDB across tests; empty it.
@@ -330,5 +334,88 @@ describe('MainScreen (demo source)', () => {
     await expect(saving).resolves.toBe('saved')
     wrapper.unmount()
     expect(stop).toHaveBeenCalled()
+  })
+
+  describe('Night screen and Nap overlay', () => {
+    it('shows the Night screen and hides the log row during the household night window', async () => {
+      vi.setSystemTime(new Date('2026-09-15T02:00:00Z')) // 10pm household time (night window 8pm-6am)
+      const wrapper = await mountMain()
+
+      expect(wrapper.find('[data-testid="night-screen"]').exists()).toBe(true)
+      expect(wrapper.find('[data-log-kind]').exists()).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('tapping the Night screen peeks at the main screen with a countdown, then returns to Night', async () => {
+      vi.setSystemTime(new Date('2026-09-15T02:00:00Z'))
+      const wrapper = await mountMain()
+
+      await wrapper.get('[data-testid="night-screen"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="night-screen"]').exists()).toBe(false)
+      expect(wrapper.find('[data-log-kind]').exists()).toBe(true)
+      expect(wrapper.get('[data-testid="night-peek-chip"]').text()).toContain('Night Mode')
+
+      await vi.advanceTimersByTimeAsync(60_000)
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="night-screen"]').exists()).toBe(true)
+      wrapper.unmount()
+    })
+
+    it('the moon button toggles Nap Mode and reports it with aria-pressed', async () => {
+      const wrapper = await mountMain()
+      const moon = wrapper.get('button[aria-label="Nap Mode"]')
+      expect(moon.attributes('aria-pressed')).toBe('false')
+      expect(wrapper.find('[data-testid="nap-overlay"]').exists()).toBe(false)
+
+      await moon.trigger('click')
+      await flushPromises()
+      expect(moon.attributes('aria-pressed')).toBe('true')
+      expect(wrapper.get('[data-testid="nap-overlay"]').text()).toContain('Nap Mode')
+
+      await moon.trigger('click')
+      await flushPromises()
+      expect(moon.attributes('aria-pressed')).toBe('false')
+      expect(wrapper.find('[data-testid="nap-overlay"]').exists()).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('the Nap overlay does not block a log button long-press', async () => {
+      const wrapper = await mountMain()
+      await wrapper.get('button[aria-label="Nap Mode"]').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('[data-testid="nap-overlay"]').exists()).toBe(true)
+
+      await hold(wrapper.get('[data-log-kind="feeding"]').element)
+      expect(wrapper.get('[role="dialog"]').text()).toContain('Feeding')
+      wrapper.unmount()
+    })
+
+    it('nap ends automatically once the sleep open when it started has ended', async () => {
+      mutateDemo((s) => ({
+        ...s,
+        sleeps: [...s.sleeps, { id: 'sleep-nap-live', childId: THEO, startAt: '2026-09-14T18:30:00.000Z', endAt: null, type: 'nap' as const }],
+      }))
+      const wrapper = await mountMain()
+
+      await wrapper.get('button[aria-label="Nap Mode"]').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('[data-testid="nap-overlay"]').exists()).toBe(true)
+
+      const ending = useLogStore(pinia).submit({
+        kind: 'sleep.end',
+        householdId: HOUSEHOLD_ID,
+        entryId: 'sleep-nap-live',
+        endAt: new Date().toISOString(),
+        previousEndAt: null,
+      })
+      await settle()
+      await ending
+
+      expect(wrapper.find('[data-testid="nap-overlay"]').exists()).toBe(false)
+      wrapper.unmount()
+    })
   })
 })

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch, watchEffect } from 'vue'
 import { useRouter } from 'vue-router'
 import { useNow } from '@/composables/useNow'
 import { DEMO_DISPLAY, isDemo, selectSource, selectWriter, type HouseholdSource } from '@/data/householdSource'
@@ -16,10 +16,13 @@ import SleepSheet from '@/features/logs/SleepSheet.vue'
 import StaleSleepSheet from '@/features/logs/StaleSleepSheet.vue'
 import StickerSheet from '@/features/logs/StickerSheet.vue'
 import UndoToast from '@/features/logs/UndoToast.vue'
+import NapOverlay from '@/features/modes/NapOverlay.vue'
+import NightScreen from '@/features/modes/NightScreen.vue'
 import { checkStillRegistered } from '@/session/displaySession'
 import { useDisplayStore } from '@/session/displayStore'
 import { useHouseholdStore } from '@/stores/householdStore'
 import { STUCK_COMMAND_MESSAGE, useLogStore } from '@/stores/logStore'
+import { isNight, napShouldEnd, useModesStore } from '@/stores/modesStore'
 import RLogo from '@/ui/RLogo.vue'
 import ConflictBanner from './ConflictBanner.vue'
 import DinnerLine from './DinnerLine.vue'
@@ -37,6 +40,7 @@ const router = useRouter()
 const store = useHouseholdStore()
 const displayStore = useDisplayStore()
 const logStore = useLogStore()
+const modes = useModesStore()
 const now = useNow(15_000)
 
 // The view has locally-applied (not yet confirmed) logs on top of the loaded snapshot. The model is rebuilt
@@ -72,6 +76,31 @@ const cacheBadge = computed(() => {
 const bootFailed = ref(false)
 const unreachable = computed(() => bootFailed.value || (store.status === 'error' && !store.snapshot))
 
+/** True while it's within the household's night window but a tap has suppressed the Night screen for the
+ *  60 s peek (spec §7.7); the main screen shows through a dark, click-through overlay with a countdown. */
+const peekingAtNight = computed(() => {
+  const household = store.view?.household
+  return household !== undefined && !modes.nightActive && isNight(now.value, household)
+})
+
+/** "0:42" countdown until the peek ends and Night Mode resumes. */
+const peekCountdownLabel = computed(() => {
+  const until = modes.nightPeekUntil
+  if (until === null) return '0:00'
+  const totalSeconds = Math.ceil(Math.max(0, until - now.value.getTime()) / 1000)
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return `${minutes}:${String(seconds).padStart(2, '0')}`
+})
+
+// Nap Mode isn't ended from inside the store on its own — the store only knows the rule (napShouldEnd);
+// the main screen is what watches the live view and clock and calls endNap() when the rule fires.
+watchEffect(() => {
+  const nap = modes.nap
+  const view = store.view
+  if (nap !== null && view !== null && napShouldEnd(nap, view, now.value)) modes.endNap()
+})
+
 /** The log sheet opened from the log row. */
 const openLog = ref<LogKind | null>(null)
 /** The child whose forgotten open sleep is being fixed ("Still sleeping?"). */
@@ -81,6 +110,19 @@ const editingDinner = ref(false)
 const acknowledgingDoseId = ref<string | null>(null)
 /** The just-logged dose an adult is undoing with their PIN. */
 const undoingDoseId = ref<string | null>(null)
+
+// Night Mode is a full takeover: nothing left open on the main screen should still be showing once it starts.
+watch(
+  () => modes.nightActive,
+  (active) => {
+    if (!active) return
+    openLog.value = null
+    fixingSleepChildId.value = null
+    editingDinner.value = false
+    acknowledgingDoseId.value = null
+    undoingDoseId.value = null
+  },
+)
 
 /** Replay failures, worded for the banner. */
 const failureMessages = computed(() =>
@@ -178,8 +220,8 @@ onBeforeUnmount(() => {
   store.stop()
 })
 
+/** The moon (Nap Mode) button is wired up below; these three are still placeholders for later phases. */
 const MODE_BUTTONS = [
-  { label: 'Nap Mode', paths: ['M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z'] },
   { label: "Kids' Corner", paths: ['M12 3l9 8h-3v9h-4v-6H10v6H6v-9H3z'] },
   { label: 'Sitter Mode', paths: ['M16 8a4 4 0 1 1-8 0 4 4 0 0 1 8 0z', 'M4 21c0-4 3.6-7 8-7s8 3 8 7'] },
   {
@@ -195,9 +237,11 @@ const MODE_BUTTONS = [
 <template>
   <!-- Focusable so a closing sheet whose opener has gone can return focus here. -->
   <main tabindex="-1" class="relative h-dvh overflow-hidden bg-app text-ink outline-none">
+    <NightScreen v-if="model && modes.nightActive" :clock="model.clock" :date="model.dateLabel" @peek="modes.peek()" />
+
     <!-- Rows: header, zones, the undo toast's own fixed-height row (so it never covers the medicine zone
          or a dose alert), and the log row. -->
-    <div v-if="model" class="main-grid grid h-full grid-rows-[auto_minmax(0,1fr)_60px_auto] gap-4 px-10 pb-8 pt-9">
+    <div v-else-if="model" class="main-grid grid h-full grid-rows-[auto_minmax(0,1fr)_60px_auto] gap-4 px-10 pb-8 pt-9">
       <header class="flex min-w-0 items-start justify-between gap-6">
         <div class="flex min-w-0 items-baseline gap-6">
           <p class="whitespace-nowrap font-semibold leading-none tracking-[-0.03em] tabular-nums">
@@ -231,6 +275,28 @@ const MODE_BUTTONS = [
           >
             Syncing {{ logStore.pendingCount }}…
           </span>
+          <button
+            type="button"
+            aria-label="Nap Mode"
+            :aria-pressed="modes.napActive"
+            class="flex h-[60px] w-[60px] items-center justify-center rounded-2xl focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-ink"
+            :class="modes.napActive ? 'bg-ink text-app' : 'bg-surface-2 text-ink'"
+            @click="modes.toggleNap()"
+          >
+            <svg
+              width="26"
+              height="26"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" />
+            </svg>
+          </button>
           <button
             v-for="b in MODE_BUTTONS"
             :key="b.label"
@@ -312,6 +378,21 @@ const MODE_BUTTONS = [
     <div v-else class="flex h-full items-center justify-center text-orange" aria-label="Loading" role="status">
       <RLogo :size="64" />
     </div>
+
+    <!-- Dimmed peek (spec §7.7): a tap on the Night screen shows the main screen through a dark,
+         click-through overlay for 60 s, with a live countdown until the Night screen returns. -->
+    <template v-if="model && peekingAtNight">
+      <div class="pointer-events-none absolute inset-0 z-10" style="background: rgba(43, 33, 28, 0.55)" aria-hidden="true" />
+      <span
+        data-testid="night-peek-chip"
+        role="status"
+        class="pointer-events-none absolute left-1/2 top-9 z-20 -translate-x-1/2 rounded-lg bg-surface-2 px-3 py-1.5 text-[16px] font-medium text-ink-2"
+      >
+        Night Mode · back in {{ peekCountdownLabel }}
+      </span>
+    </template>
+
+    <NapOverlay v-if="model && modes.napActive" />
 
     <SleepSheet :open="openLog === 'sleep'" @close="openLog = null" />
     <FeedingSheet :open="openLog === 'feeding'" @close="openLog = null" />
