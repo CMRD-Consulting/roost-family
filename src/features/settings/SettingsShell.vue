@@ -19,6 +19,7 @@ import ChildrenSection from './sections/ChildrenSection.vue'
 import ComingSoonSection from './sections/ComingSoonSection.vue'
 import HouseholdSection from './sections/HouseholdSection.vue'
 import MedicinesSection from './sections/MedicinesSection.vue'
+import RoutinesSection from './sections/RoutinesSection.vue'
 import SitterInfoSection from './sections/SitterInfoSection.vue'
 import StickersSection from './sections/StickersSection.vue'
 import { findSection, SETTINGS_SECTIONS, type SettingsSectionId } from './settingsNav'
@@ -27,6 +28,7 @@ import { useSettingsOffline } from './useSettingsSave'
 const SECTION_COMPONENTS: Partial<Record<SettingsSectionId, Component>> = {
   household: HouseholdSection,
   children: ChildrenSection,
+  routines: RoutinesSection,
   medicines: MedicinesSection,
   stickers: StickersSection,
   'sitter-info': SitterInfoSection,

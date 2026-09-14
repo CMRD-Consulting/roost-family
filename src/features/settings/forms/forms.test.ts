@@ -8,6 +8,7 @@ import Stepper from './Stepper.vue'
 import TimeField from './TimeField.vue'
 import ToggleField from './ToggleField.vue'
 import TriStateToggle from './TriStateToggle.vue'
+import WeekdayPicker from './WeekdayPicker.vue'
 
 describe('Stepper', () => {
   it('steps up and down within the bounds', async () => {
@@ -88,5 +89,21 @@ describe('IconPicker', () => {
     const dressed = radios.find((r) => r.attributes('aria-label') === 'Getting Dressed')!
     await dressed.trigger('click')
     expect(w.emitted('update:modelValue')).toEqual([['getting-dressed']])
+  })
+})
+
+describe('WeekdayPicker', () => {
+  it('toggles days on and off, keeping them sorted Sunday first', async () => {
+    const w = mount(WeekdayPicker, { props: { label: 'Weekdays', modelValue: [3] } })
+    const buttons = w.findAll('[role="group"][aria-label="Weekdays"] button')
+    expect(buttons.map((b) => b.text())).toEqual(['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'])
+    expect(buttons[3]!.attributes('aria-pressed')).toBe('true')
+    expect(buttons[0]!.attributes('aria-label')).toBe('Sunday')
+
+    await buttons[0]!.trigger('click')
+    expect(w.emitted('update:modelValue')).toEqual([[[0, 3]]])
+    await w.setProps({ modelValue: [0, 3] })
+    await buttons[3]!.trigger('click')
+    expect(w.emitted('update:modelValue')!.at(-1)).toEqual([[0]])
   })
 })

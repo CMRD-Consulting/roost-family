@@ -52,7 +52,8 @@ type FakeSettingsApi = SettingsApi & Record<
   | 'settingsVerify' | 'updateHouseholdSettings' | 'updateSitterInfo'
   | 'addChild' | 'updateChild' | 'setFeatureOverride'
   | 'upsertMedicine' | 'archiveMedicine'
-  | 'upsertStickerCategory' | 'archiveStickerCategory',
+  | 'upsertStickerCategory' | 'archiveStickerCategory'
+  | 'upsertRoutine' | 'deleteRoutine' | 'setRoutineDayOverride',
   ReturnType<typeof vi.fn>
 >
 
@@ -68,6 +69,9 @@ function fakeApi(): FakeSettingsApi {
     archiveMedicine: vi.fn().mockResolvedValue(undefined),
     upsertStickerCategory: vi.fn().mockResolvedValue('new-category-id'),
     archiveStickerCategory: vi.fn().mockResolvedValue(undefined),
+    upsertRoutine: vi.fn().mockResolvedValue('new-routine-id'),
+    deleteRoutine: vi.fn().mockResolvedValue(undefined),
+    setRoutineDayOverride: vi.fn().mockResolvedValue(undefined),
   } as never
 }
 
@@ -205,8 +209,8 @@ describe('SettingsShell', () => {
   })
 
   it('sections that are not built yet show Coming soon', async () => {
-    const w = await openShell(fakeApi(), 'routines')
-    expect(w.find('h2').text()).toBe('Routines')
+    const w = await openShell(fakeApi(), 'members')
+    expect(w.find('h2').text()).toBe('Members')
     expect(w.text()).toContain('Coming soon')
     w.unmount()
   })
@@ -451,6 +455,161 @@ describe('SettingsShell', () => {
       await settle()
 
       expect(settingsApi.setFeatureOverride).not.toHaveBeenCalled()
+      w.unmount()
+    })
+  })
+
+  describe('Routines', () => {
+    const IVY = 'cccccccc-0000-0000-0000-000000000001'
+    const HOME_DAY = 'routine-ivy-homeday'
+    const WEEKEND = 'routine-ivy-weekend'
+
+    function routineRow(w: VueWrapper, name: string) {
+      const row = w.findAll('[data-testid="routine-row"]').find((r) => r.text().includes(name))
+      if (!row) throw new Error(`No routine row "${name}"`)
+      return row
+    }
+
+    it("lists the child's routines with their weekdays and shows which routine runs today", async () => {
+      const w = await openShell(fakeApi(), 'routines')
+
+      expect(w.find('h2').text()).toBe('Routines')
+      expect(routineRow(w, 'Home day').text()).toContain('Mon')
+      expect(routineRow(w, 'Home day').text()).toContain('Fri')
+      expect(routineRow(w, 'Weekend').text()).toContain('Sun')
+      expect(routineRow(w, 'Weekend').text()).toContain('Sat')
+      const today = inputByLabel(w, 'Switch today’s routine')
+      expect((today.element as HTMLSelectElement).value).toBe('')
+      expect(today.findAll('option').map((o) => o.text())).toEqual(['Use the weekday default (Home day)', 'Home day', 'Weekend'])
+
+      await w.find('[role="radiogroup"][aria-label="Child"]').findAll('[role="radio"]').find((r) => r.text() === 'Theo')!.trigger('click')
+      await settle()
+      expect(w.text()).toContain('No routines yet for Theo.')
+      w.unmount()
+    })
+
+    it("switches today's routine and back to the weekday default", async () => {
+      const settingsApi = fakeApi()
+      const w = await openShell(settingsApi, 'routines')
+
+      await inputByLabel(w, 'Switch today’s routine').setValue(WEEKEND)
+      await settle()
+      expect(settingsApi.setRoutineDayOverride).toHaveBeenLastCalledWith(SAM_AUTH, IVY, '2026-09-14', WEEKEND)
+
+      await inputByLabel(w, 'Switch today’s routine').setValue('')
+      await settle()
+      expect(settingsApi.setRoutineDayOverride).toHaveBeenLastCalledWith(SAM_AUTH, IVY, '2026-09-14', null)
+      w.unmount()
+    })
+
+    it('creates a routine, warning about a weekday another routine already uses', async () => {
+      const settingsApi = fakeApi()
+      const w = await openShell(settingsApi, 'routines')
+
+      await buttonByText(w, '+ New routine').trigger('click')
+      await settle()
+      await inputByLabel(w, 'Routine name').setValue('  Grandma day ')
+      await w.find('[role="group"][aria-label="Weekdays"] button[aria-label="Saturday"]').trigger('click')
+      await settle()
+      expect(w.text()).toContain('Weekend already uses Saturday — the first routine wins.')
+
+      await buttonByText(w, '+ Add step').trigger('click')
+      await settle()
+      await inputByLabel(w, 'Step 1 label').setValue('Pancakes')
+      await w.find('button[aria-label="Choose an icon for step 1"]').trigger('click')
+      await w.find('[role="radiogroup"][aria-label="Icon for step 1"] [role="radio"][aria-label="Breakfast"]').trigger('click')
+      await w.find('button[role="switch"][aria-label="Step 1 has a time"]').trigger('click')
+      await inputByLabel(w, 'Step 1 time').setValue('08:15')
+      await buttonByText(w, 'Save').trigger('click')
+      await settle()
+
+      expect(settingsApi.upsertRoutine).toHaveBeenCalledWith(SAM_AUTH, {
+        routineId: null,
+        childId: IVY,
+        name: 'Grandma day',
+        weekdays: [6],
+        steps: [{ iconKey: 'breakfast', photoId: null, label: 'Pancakes', time: '08:15' }],
+      })
+      w.unmount()
+    })
+
+    it('does not save a routine without a name or with an unlabelled step', async () => {
+      const settingsApi = fakeApi()
+      const w = await openShell(settingsApi, 'routines')
+
+      await buttonByText(w, '+ New routine').trigger('click')
+      await settle()
+      await buttonByText(w, '+ Add step').trigger('click')
+      await buttonByText(w, 'Save').trigger('click')
+      await settle()
+
+      expect(w.text()).toContain('Give this routine a name.')
+      expect(w.text()).toContain('Give this step a label.')
+      expect(settingsApi.upsertRoutine).not.toHaveBeenCalled()
+      w.unmount()
+    })
+
+    it('edits a routine: reordering steps saves them in the new order, and out-of-order times warn', async () => {
+      const settingsApi = fakeApi()
+      const w = await openShell(settingsApi, 'routines')
+
+      await routineRow(w, 'Weekend').find('button').trigger('click')
+      await settle()
+      expect((inputByLabel(w, 'Routine name').element as HTMLInputElement).value).toBe('Weekend')
+      expect(w.text()).not.toContain('Some timed steps are out of order')
+
+      // Weekend: Breakfast, Park, Bath 18:15, Bed 19:00. Move Bed above Bath.
+      await w.find('button[aria-label="Move step 4 up"]').trigger('click')
+      await settle()
+      expect(w.text()).toContain('Some timed steps are out of order')
+      await w.find('button[aria-label="Remove step 2"]').trigger('click')
+      await buttonByText(w, 'Save').trigger('click')
+      await settle()
+
+      expect(settingsApi.upsertRoutine).toHaveBeenCalledWith(SAM_AUTH, {
+        routineId: WEEKEND,
+        childId: IVY,
+        name: 'Weekend',
+        weekdays: [0, 6],
+        steps: [
+          { iconKey: 'breakfast', photoId: null, label: 'Breakfast', time: null },
+          { iconKey: 'bed', photoId: null, label: 'Bed', time: '19:00' },
+          { iconKey: 'bath', photoId: null, label: 'Bath', time: '18:15' },
+        ],
+      })
+      w.unmount()
+    })
+
+    it('deletes a routine after confirming', async () => {
+      const settingsApi = fakeApi()
+      const w = await openShell(settingsApi, 'routines')
+
+      await routineRow(w, 'Home day').find('button').trigger('click')
+      await settle()
+      await buttonByText(w, 'Delete routine').trigger('click')
+      await settle()
+      expect(w.text()).toContain('Delete Home day?')
+      expect(settingsApi.deleteRoutine).not.toHaveBeenCalled()
+      await buttonByText(w, 'Delete').trigger('click')
+      await settle()
+
+      expect(settingsApi.deleteRoutine).toHaveBeenCalledWith(SAM_AUTH, HOME_DAY)
+      w.unmount()
+    })
+
+    it('saves against the demo household so Kids’ Corner sees the change', async () => {
+      const demo = (await import('@/data/demo/demoSettingsApi')).createDemoSettingsApi()
+      const w = await openShell(demo, 'routines')
+
+      await routineRow(w, 'Home day').find('button').trigger('click')
+      await settle()
+      await buttonByText(w, '+ Add step').trigger('click')
+      await inputByLabel(w, 'Step 10 label').setValue('Wash hands')
+      await buttonByText(w, 'Save').trigger('click')
+      await settle()
+
+      const homeDay = useHouseholdStore().view!.routines.find((r) => r.id === HOME_DAY)!
+      expect(homeDay.steps.at(-1)).toEqual({ iconKey: null, photoId: null, label: 'Wash hands', time: null })
       w.unmount()
     })
   })
