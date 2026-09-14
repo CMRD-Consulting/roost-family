@@ -11,7 +11,7 @@
 
 ## What's built
 
-Branch `phase-1-foundation` (60 commits on top of the specs and design). Nothing is merged or deployed.
+Branch `phase-1-foundation`. Nothing is merged or deployed.
 
 **Phase 1: Foundation** (plan: `plans/2026-09-14-roost-phase-1-foundation.md`)
 - Vue 3 + Vite + Tailwind 4 app with design tokens from the Claude Design handoff (Outfit, cream/orange palette, Gable logo)
@@ -59,6 +59,18 @@ Branch `phase-1-foundation` (60 commits on top of the specs and design). Nothing
 - **Dose alerts** are acknowledged with an adult PIN.
 - **Accessibility:** focus stays inside open sheets, and every field and control has a proper label for screen readers.
 
+**Phase 3a: Offline restart, Night & Nap Mode, Kids' Corner** (plan: `plans/2026-09-14-roost-phase-3a-offline-night-corner.md`)
+- **Installable app:** there's a service worker and manifest, and the app updates itself only at safe moments (Night Mode, or 5 minutes idle, and never while a Kids' Corner timer is running).
+- **Offline restart:** the tablet saves its last household snapshot and display identity (7-day limit; cleared when the display is revoked or started over). After a restart with no network it opens the saved main screen immediately, with a dated "Showing saved info from…" badge. Medicine lines stop showing "allowed" and say "Can't check recent doses — confirm before giving medicine."
+- **Night Mode** runs on the household schedule: a dim clock, tap to peek for 60 s (each tap extends it), silent all night, and never interrupts an open sheet.
+- **Nap Mode:** the moon button dims the screen and silences sounds while everything stays usable. It ends by itself when the naps it started with are logged as over, or after 3 hours.
+- **Kids' Corner** (`/corner`):
+  - Picture schedule: a big check completes the current step, and tapping a step reads it aloud.
+  - Visual timer: 1, 2, 5 or 10 minutes as a shrinking circle.
+  - Sticker chart.
+  - Routine steps are saved one at a time through a server function, so two displays can't overwrite each other.
+  - Leaving takes a 2-second hold plus an adult PIN. Offline, it takes the hold plus "tap 1, 2, 3, 4 in order". Back navigation is blocked.
+
 ## See it now
 
 No backend needed:
@@ -95,9 +107,17 @@ Open http://localhost:5173/home. Try `?conflict`, `?manyKids`, or both. On the i
    ```
    Use Postgres.app's `bin` directory for `initdb` and `pg_ctl`. Then run `bash supabase/manual-checks/validate-local.sh`.
 5. **Open follow-ups:**
-   - **Offline boot:** a tablet that restarts while the network is down shows "Can't reach Roost Family" instead of its last data, because nothing is cached on the device yet (spec §13 says it should keep working from local data). Planned for Phase 3.
-   - **Undo window:** 10 seconds (spec §7.3) is easy to miss. Decide whether to lengthen it.
+   - **Kids' Corner icons:** final artwork is pending from Claude Design (prompt in `docs/design/2026-09-14-claude-design-update-2.md`).
+   - **Update timing:** a running Kids' Corner timer also blocks app updates during Night Mode. This is a deliberate reading of spec §5.8 and easy to change.
+   - **Flaky test:** "long-pressing tonight's dinner edits it" in `MainScreen.test.ts` fails when run alone, but passes in the full suite.
    - **"Log wake-up" with no data:** the prompt shows for a child with no sleep data at all; consider hiding it until the first sleep log.
+
+**Phase 3a end-to-end on local Supabase:**
+- **Offline restart:** paused the API gateway and reloaded → splash, then the saved main screen with the Offline and saved-info badges.
+- **Night Mode:** changing the household's night window turned it on live; a tap showed the dimmed main screen with a countdown.
+- **Nap Mode:** turned on while Theo slept; ending the sleep in the database ended Nap Mode by itself.
+- **Kids' Corner as Ivy:** completing Park stored step 3 for today and advanced to Snack; the timer and sticker chart work; the 2-second hold plus PIN 1234 returned to the main screen.
+- **Follow-up fixes** from the independent review and this run are all committed.
 
 **Phase 2b end-to-end on local Supabase** (as `sam@roost.test`):
 - **Feeding:** saved; the card updated and the row is credited to "Kitchen".
@@ -132,7 +152,7 @@ Open http://localhost:5173/home. Try `?conflict`, `?manyKids`, or both. On the i
 
 ## Verification
 
-- `pnpm test`: 587 tests, all passing
+- `pnpm test`: 766 tests, all passing
 - `pnpm typecheck`, `pnpm build`: clean
 - `rls_smoke.sql` on local Supabase: `ALL RLS SMOKE CHECKS PASSED`
 - End-to-end runs on local Supabase for Phase 1, 2a and 2b (above)
@@ -148,4 +168,4 @@ Open http://localhost:5173/home. Try `?conflict`, `?manyKids`, or both. On the i
 
 ## Next up
 
-**Phase 3:** Kids' Corner (picture schedule, visual timer, sticker chart), Sitter Mode with the "While You Were Out" summary, Night and Nap Mode, Settings through PIN-checked RPCs (children, routines, medicines, members, displays), and caching the snapshot on the device for offline boot.
+**Phase 3b:** Sitter Mode with the "While You Were Out" summary. **Phase 3c:** Settings through PIN-checked RPCs (children, routines, medicines, stickers, sitter info, household, members, displays, photos).
