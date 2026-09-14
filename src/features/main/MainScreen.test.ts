@@ -18,6 +18,7 @@ vi.mock('@/data/householdSource', async () => {
     DEMO_DISPLAY: { displayId: 'demo-display', householdId: 'aaaaaaaa-0000-0000-0000-000000000001', name: 'Kitchen' },
     selectSource: async () => demoSource,
     selectWriter: async () => (await import('@/data/demo/demoLogWriter')).createDemoLogWriter(),
+    selectSettingsApi: async () => (await import('@/data/demo/demoSettingsApi')).createDemoSettingsApi(),
   }
 })
 // MainScreen must not touch Supabase in demo mode; fail loudly if it does.
@@ -67,6 +68,7 @@ async function mountMain() {
       { path: '/', component: { render: () => null } },
       { path: '/home', component: MainScreen },
       { path: '/removed', component: { render: () => null } },
+      { path: '/settings', component: { render: () => null } },
     ],
   })
   await router.push('/home')
@@ -409,6 +411,37 @@ describe('MainScreen (demo source)', () => {
     await expect(saving).resolves.toBe('saved')
     wrapper.unmount()
     expect(stop).toHaveBeenCalled()
+  })
+
+  describe('Settings gear', () => {
+    it('opens behind a long-press and an adult PIN, then routes to /settings', async () => {
+      const wrapper = await mountMain()
+      await hold(wrapper.get('button[aria-label="Settings"]').element)
+      const dialog = wrapper.get('[role="dialog"]')
+      expect(dialog.text()).toContain('Open Settings')
+
+      await wrapper.get('[role="dialog"] button[aria-label="Sam"]').trigger('click')
+      await flushPromises()
+      for (const digit of '0000') {
+        await wrapper.get(`[role="dialog"] button[aria-label="${digit}"]`).trigger('click')
+        await flushPromises()
+      }
+      for (let i = 0; i < 5; i++) {
+        await vi.dynamicImportSettled()
+        await settle()
+      }
+      expect(wrapper.vm.$router.currentRoute.value.path).toBe('/home')
+
+      for (const digit of '1234') {
+        await wrapper.get(`[role="dialog"] button[aria-label="${digit}"]`).trigger('click')
+        await flushPromises()
+      }
+      for (let i = 0; i < 5; i++) {
+        await vi.dynamicImportSettled()
+        await settle()
+      }
+      expect(wrapper.vm.$router.currentRoute.value.path).toBe('/settings')
+    })
   })
 
   describe('Sitter Mode', () => {

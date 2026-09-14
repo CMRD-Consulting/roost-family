@@ -17,6 +17,8 @@ import NapOverlay from '@/features/modes/NapOverlay.vue'
 import NightPeek from '@/features/modes/NightPeek.vue'
 import NightScreen from '@/features/modes/NightScreen.vue'
 import { useNightPeekTaps } from '@/features/modes/useNightPeekTaps'
+import SettingsPinGate from '@/features/settings/SettingsPinGate.vue'
+import { useOpenSettings } from '@/features/settings/useOpenSettings'
 import CareInfoPanel from '@/features/sitter/CareInfoPanel.vue'
 import SitterExitDialog from '@/features/sitter/SitterExitDialog.vue'
 import SitterStartSheet from '@/features/sitter/SitterStartSheet.vue'
@@ -201,7 +203,8 @@ function dismissFailure(index: number): void {
   logStore.failures = logStore.failures.filter((_, i) => i !== index)
 }
 
-/** The Settings button is still a placeholder for a later phase. */
+/** Settings opens behind a long-press and an adult PIN (spec §7.3); hidden during Sitter Mode. */
+const { openSettings } = useOpenSettings()
 const SETTINGS_BUTTON = {
   label: 'Settings',
   paths: [
@@ -344,26 +347,28 @@ const SETTINGS_BUTTON = {
                 </svg>
               </span>
             </RLongPress>
-            <button
-              type="button"
+            <RLongPress
               :aria-label="SETTINGS_BUTTON.label"
-              aria-disabled="true"
-              class="flex h-[60px] w-[60px] cursor-default items-center justify-center rounded-2xl bg-surface-2 text-ink"
+              class="flex h-[60px] w-[60px] items-center justify-center rounded-2xl bg-surface-2 text-ink focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-ink"
+              @complete="openSettings()"
             >
-              <svg
-                width="26"
-                height="26"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                aria-hidden="true"
-              >
-                <path v-for="d in SETTINGS_BUTTON.paths" :key="d" :d="d" />
-              </svg>
-            </button>
+              <span class="relative flex h-10 w-10 items-center justify-center">
+                <span class="r-longpress-ring absolute -inset-1" aria-hidden="true" />
+                <svg
+                  width="26"
+                  height="26"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <path v-for="d in SETTINGS_BUTTON.paths" :key="d" :d="d" />
+                </svg>
+              </span>
+            </RLongPress>
           </template>
         </div>
       </header>
@@ -472,6 +477,7 @@ const SETTINGS_BUTTON = {
       :dose-id="acknowledgingDoseId"
       @close="acknowledgingDoseId = null"
     />
+    <SettingsPinGate />
     <SitterStartSheet :open="startingSitter" @close="startingSitter = false" @notice="showNotice" />
     <SitterExitDialog :open="endingSitter" action="end" @close="endingSitter = false" @done="onSitterEnded" />
     <SitterExitDialog
