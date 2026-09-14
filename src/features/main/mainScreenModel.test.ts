@@ -16,6 +16,7 @@ function minimalSnapshot(overrides: Partial<HouseholdSnapshot> = {}): HouseholdS
       leaveByBufferMin: 20,
       diaperLogEnabled: false,
       dinnerTonight: null,
+      sitterInfo: {},
     },
     members: [],
     children: [],
@@ -32,6 +33,7 @@ function minimalSnapshot(overrides: Partial<HouseholdSnapshot> = {}): HouseholdS
     jots: [],
     groceries: [],
     activeSitterSession: null,
+    recentSitterSession: null,
     loadedAt: now.toISOString(),
     ...overrides,
   }

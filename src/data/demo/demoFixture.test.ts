@@ -140,10 +140,43 @@ describe('buildDemoSnapshot', () => {
     expect(s.jots.every((j) => j.doneAt === null)).toBe(true)
   })
 
-  it('has no active sitter session and loadedAt equal to now', () => {
+  it('has no active or recent sitter session and loadedAt equal to now', () => {
     const s = buildDemoSnapshot(now)
     expect(s.activeSitterSession).toBeNull()
+    expect(s.recentSitterSession).toBeNull()
     expect(s.loadedAt).toBe(now.toISOString())
+  })
+
+  it('has sitter info matching the seed', () => {
+    const s = buildDemoSnapshot(now)
+    expect(s.household.sitterInfo).toMatchObject({
+      napInstructions: 'Theo naps in the crib with the sound machine on.',
+      bedtime: 'Ivy 7:00 PM, Theo 6:30 PM',
+      pediatrician: 'Dr. Patel 704-555-0199',
+      address: '12 Maple St',
+      whereThings: 'Spare diapers: hall closet',
+    })
+  })
+
+  it('starts an active sitter session named Jess 2h ago with sitter-attributed logs, with { sitter: true }', () => {
+    const base = buildDemoSnapshot(now)
+    const s = buildDemoSnapshot(now, { sitter: true })
+    const session = s.activeSitterSession
+    expect(session).toEqual({
+      id: expect.any(String), sitterName: 'Jess', startedAt: new Date(now.getTime() - 2 * 3_600_000).toISOString(),
+      endedAt: null, summaryShownAt: null,
+    })
+    expect(s.recentSitterSession).toBeNull()
+
+    const inSession = (at: string) => Date.parse(at) >= Date.parse(session!.startedAt) && Date.parse(at) <= now.getTime()
+    const newDoses = s.doses.filter((d) => !base.doses.some((b) => b.id === d.id))
+    expect(newDoses.length).toBeGreaterThan(0)
+    expect(newDoses.every((d) => d.loggedByName === 'Jess (sitter)' && inSession(d.at))).toBe(true)
+    const newFeedings = s.feedings.filter((f) => !base.feedings.some((b) => b.id === f.id))
+    const newStickers = s.stickers.filter((st) => !base.stickers.some((b) => b.id === st.id))
+    expect(newFeedings.length + newStickers.length).toBeGreaterThan(0)
+    expect([...newFeedings, ...newStickers].every((e) => inSession(e.at))).toBe(true)
+    expect(unacknowledgedConflicts(s.medicines, s.doses)).toEqual([])
   })
 
   it('adds an offline conflicting dose with { conflict: true }', () => {

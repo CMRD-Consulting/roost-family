@@ -56,6 +56,64 @@ describe('createDemoLogWriter', () => {
     expect(dose?.voidedAt).not.toBeNull()
   })
 
+  it('rejects sitter.start with the wrong PIN and does not mutate', async () => {
+    vi.useFakeTimers()
+    const writer = createDemoLogWriter()
+    const start = writer.execute({
+      kind: 'sitter.start', householdId: 'h', sessionId: 's1', membershipId: SAM_ID, pin: '0000',
+      sitterName: 'Jess', displayId: null, startedAt: new Date().toISOString(),
+    })
+    const startAssertion = expect(start).rejects.toMatchObject({ message: 'Wrong PIN', network: false, code: '42501' })
+    await vi.advanceTimersByTimeAsync(150)
+    await startAssertion
+    expect(getDemoSnapshot(new Date()).activeSitterSession).toBeNull()
+  })
+
+  it('rejects sitter.start while a session is already active, like the server', async () => {
+    vi.useFakeTimers()
+    const writer = createDemoLogWriter()
+    const cmd = {
+      kind: 'sitter.start' as const, householdId: 'h', sessionId: 's1', membershipId: SAM_ID, pin: '1234',
+      sitterName: null, displayId: null, startedAt: new Date().toISOString(),
+    }
+    const first = writer.execute(cmd)
+    await vi.advanceTimersByTimeAsync(150)
+    await first
+    const second = writer.execute({ ...cmd, sessionId: 's2' })
+    const assertion = expect(second).rejects.toMatchObject({ network: false, code: '23505' })
+    await vi.advanceTimersByTimeAsync(150)
+    await assertion
+    expect(getDemoSnapshot(new Date()).activeSitterSession?.id).toBe('s1')
+  })
+
+  it('starts, ends and marks a sitter session shown with the correct PIN', async () => {
+    vi.useFakeTimers()
+    const writer = createDemoLogWriter()
+    const run = async (promise: Promise<void>) => {
+      await vi.advanceTimersByTimeAsync(150)
+      await promise
+    }
+    const startedAt = new Date().toISOString()
+    await run(writer.execute({
+      kind: 'sitter.start', householdId: 'h', sessionId: 's1', membershipId: ALEX_ID, pin: '5678',
+      sitterName: 'Jess', displayId: null, startedAt,
+    }))
+    expect(getDemoSnapshot(new Date()).activeSitterSession).toMatchObject({ id: 's1', sitterName: 'Jess', startedAt })
+
+    const wrongEnd = writer.execute({ kind: 'sitter.end', householdId: 'h', sessionId: 's1', membershipId: SAM_ID, pin: '9999', endedAt: startedAt })
+    const endAssertion = expect(wrongEnd).rejects.toMatchObject({ message: 'Wrong PIN', code: '42501' })
+    await vi.advanceTimersByTimeAsync(150)
+    await endAssertion
+    expect(getDemoSnapshot(new Date()).activeSitterSession?.id).toBe('s1')
+
+    await run(writer.execute({ kind: 'sitter.end', householdId: 'h', sessionId: 's1', membershipId: SAM_ID, pin: '1234', endedAt: startedAt }))
+    await run(writer.execute({ kind: 'sitter.summaryShown', householdId: 'h', sessionId: 's1' }))
+    const snap = getDemoSnapshot(new Date())
+    expect(snap.activeSitterSession).toBeNull()
+    expect(snap.recentSitterSession).toMatchObject({ id: 's1', endedAt: startedAt })
+    expect(snap.recentSitterSession?.summaryShownAt).not.toBeNull()
+  })
+
   it('verifyPin resolves true/false against the stored demo PINs', async () => {
     const writer = createDemoLogWriter()
     await expect(writer.verifyPin(ALEX_ID, '5678')).resolves.toBe(true)

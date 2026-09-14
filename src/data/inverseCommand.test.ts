@@ -93,6 +93,12 @@ describe('inverseCommand', () => {
     ['entry.delete', { kind: 'entry.delete', householdId, table: 'jots', entryId: 'jot-1' }],
     ['dose.void', { kind: 'dose.void', householdId, doseId: base.doses[0]!.id, membershipId: sam.id, pin: '1234', reason: 'x' }],
     ['dose.acknowledge', { kind: 'dose.acknowledge', householdId, doseId: base.doses[0]!.id, membershipId: sam.id, pin: '1234' }],
+    ['sitter.start', {
+      kind: 'sitter.start', householdId, sessionId: 's1', membershipId: sam.id, pin: '1234', sitterName: 'Jess', displayId: null,
+      startedAt: now.toISOString(),
+    }],
+    ['sitter.end', { kind: 'sitter.end', householdId, sessionId: 's1', membershipId: sam.id, pin: '1234', endedAt: now.toISOString() }],
+    ['sitter.summaryShown', { kind: 'sitter.summaryShown', householdId, sessionId: 's1' }],
   ] as const)('%s -> null', (_kind, cmd) => {
     expect(inverseCommand(cmd as LogCommand)).toBeNull()
   })

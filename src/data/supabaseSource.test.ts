@@ -207,6 +207,7 @@ describe('createSupabaseSource load', () => {
       leaveByBufferMin: 20,
       diaperLogEnabled: false,
       dinnerTonight: 'Tacos',
+      sitterInfo: {},
     })
     expect(snapshot.members).toEqual([{ id: 'mem1', displayName: 'Sam', color: '#653437', role: 'owner' }])
     expect(snapshot.children).toEqual([
@@ -216,6 +217,7 @@ describe('createSupabaseSource load', () => {
       },
     ])
     expect(snapshot.activeSitterSession).toBeNull()
+    expect(snapshot.recentSitterSession).toBeNull()
     expect(snapshot.loadedAt).toBe(now.toISOString())
 
     const householdsCall = calls.find((c) => c.table === 'households')
@@ -269,8 +271,10 @@ describe('createSupabaseSource load', () => {
     expect(calls.find((c) => c.table === 'grocery_items')?.ops).toEqual([
       'select:*', 'eq:household_id=h1', `or:checked_at.is.null,checked_at.gte.${cutoff24h}`,
     ])
-    expect(calls.find((c) => c.table === 'sitter_sessions')?.ops).toEqual([
-      'select:*', 'eq:household_id=h1', 'is:ended_at=null', 'order:started_at:desc', 'limit:1', 'maybeSingle',
+    const cutoff12h = new Date(now.getTime() - 12 * 3_600_000).toISOString()
+    expect(calls.filter((c) => c.table === 'sitter_sessions').map((c) => c.ops)).toEqual([
+      ['select:*', 'eq:household_id=h1', 'is:ended_at=null', 'order:started_at:desc', 'limit:1', 'maybeSingle'],
+      ['select:*', 'eq:household_id=h1', `gte:ended_at=${cutoff12h}`, 'order:ended_at:desc', 'limit:1', 'maybeSingle'],
     ])
   })
 
@@ -373,8 +377,36 @@ describe('createSupabaseSource load', () => {
       const snapshot = await source.load('h1', now)
 
       expect(snapshot.activeSitterSession).toEqual({
-        id: 'sess-2', sitterName: 'Priya', startedAt: '2026-09-14T18:00:00Z', endedAt: null,
+        id: 'sess-2', sitterName: 'Priya', startedAt: '2026-09-14T18:00:00Z', endedAt: null, summaryShownAt: null,
       })
+    })
+  })
+
+  describe('recently ended sitter session', () => {
+    it('maps the latest session ended in the last 12 hours, alongside no active one', async () => {
+      const ended = {
+        id: 'sess-1', household_id: 'h1', display_id: null, sitter_name: 'Jess',
+        started_at: '2026-09-14T12:00:00Z', ended_at: '2026-09-14T16:00:00Z', summary_shown_at: null,
+      }
+      const { client } = createFakeClient({
+        ...baseTableData(),
+        // The active query runs first, then the recent one.
+        sitter_sessions: [{ data: [], error: null }, { data: [ended], error: null }],
+      })
+      const snapshot = await createSupabaseSource(client).load('h1', now)
+
+      expect(snapshot.activeSitterSession).toBeNull()
+      expect(snapshot.recentSitterSession).toEqual({
+        id: 'sess-1', sitterName: 'Jess', startedAt: '2026-09-14T12:00:00Z', endedAt: '2026-09-14T16:00:00Z', summaryShownAt: null,
+      })
+    })
+
+    it('rejects when the recent sitter session query errors', async () => {
+      const { client } = createFakeClient({
+        ...baseTableData(),
+        sitter_sessions: [{ data: [], error: null }, { data: null, error: { message: 'recent failed' } }],
+      })
+      await expect(createSupabaseSource(client).load('h1', now)).rejects.toThrow('recent failed')
     })
   })
 

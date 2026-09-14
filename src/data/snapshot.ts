@@ -3,6 +3,17 @@ import type {
   Medicine, Routine, SleepEntry, StickerEntry, TimeWindow,
 } from '@/domain/types'
 
+/** Care notes a sitter sees in Sitter Mode (spec §7.6), edited in Settings. Every field is optional free text. */
+export interface SitterInfo {
+  napInstructions?: string
+  bedtime?: string
+  foodRules?: string
+  emergencyContacts?: string
+  pediatrician?: string
+  address?: string
+  whereThings?: string
+}
+
 export interface HouseholdInfo {
   id: string
   name: string
@@ -12,6 +23,7 @@ export interface HouseholdInfo {
   leaveByBufferMin: number
   diaperLogEnabled: boolean
   dinnerTonight: string | null
+  sitterInfo: SitterInfo
 }
 
 export interface Member {
@@ -65,6 +77,8 @@ export interface SitterSession {
   sitterName: string | null
   startedAt: IsoTimestamp
   endedAt: IsoTimestamp | null
+  /** When a display showed this session's "While You Were Out" summary; null until then. */
+  summaryShownAt: IsoTimestamp | null
 }
 
 export interface HouseholdSnapshot {
@@ -84,5 +98,7 @@ export interface HouseholdSnapshot {
   jots: Jot[]
   groceries: GroceryItem[]
   activeSitterSession: SitterSession | null
+  /** The latest session that ended within the last 12 hours (drives the "see summary" banner). */
+  recentSitterSession: SitterSession | null
   loadedAt: IsoTimestamp
 }

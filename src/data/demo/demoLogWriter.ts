@@ -1,7 +1,7 @@
 import { applyCommand } from '../applyCommand'
 import type { LogCommand } from '../logCommands'
 import { LogWriteError, type LogWriter } from '../logWriter'
-import { mutateDemo } from './demoHousehold'
+import { getDemoSnapshot, mutateDemo } from './demoHousehold'
 
 /** Simulated network latency, so optimistic UI has something to be optimistic about. */
 const DELAY_MS = 150
@@ -24,8 +24,12 @@ function pinOk(membershipId: string, pin: string): boolean {
 export function createDemoLogWriter(): LogWriter {
   async function execute(cmd: LogCommand): Promise<void> {
     await delay(DELAY_MS)
-    if ((cmd.kind === 'dose.void' || cmd.kind === 'dose.acknowledge') && !pinOk(cmd.membershipId, cmd.pin)) {
+    // Voiding and acknowledging doses and starting and ending Sitter Mode all carry an adult's PIN.
+    if ('pin' in cmd && !pinOk(cmd.membershipId, cmd.pin)) {
       throw new LogWriteError('Wrong PIN', false, '42501')
+    }
+    if (cmd.kind === 'sitter.start' && getDemoSnapshot(new Date()).activeSitterSession !== null) {
+      throw new LogWriteError('a sitter session is already active', false, '23505')
     }
     mutateDemo((s) => applyCommand(s, cmd, new Date()))
   }

@@ -13,6 +13,8 @@ import {
 const HOUR_MS = 3_600_000
 const DAY_MS = 24 * HOUR_MS
 const DEBOUNCE_MS = 300
+/** How long after a sitter session ends its summary is still offered on the other displays. */
+const RECENT_SITTER_SESSION_MS = 12 * HOUR_MS
 /** How far around the oldest unresolved conflict dose to pull context doses for checkDose(). */
 const CONFLICT_CONTEXT_WINDOW_MS = 72 * HOUR_MS
 
@@ -154,11 +156,13 @@ export function createSupabaseSource(client: RoostClient): HouseholdSource {
     const cutoff48h = new Date(now.getTime() - 2 * DAY_MS).toISOString()
     const cutoff8d = new Date(now.getTime() - 8 * DAY_MS).toISOString()
     const cutoff24h = new Date(now.getTime() - DAY_MS).toISOString()
+    const cutoff12h = new Date(now.getTime() - RECENT_SITTER_SESSION_MS).toISOString()
 
     const [
       membershipResult, childrenAndOverrides, medicineResult, doseRows, sleepResult,
       feedingResult, diaperResult, stickerCategoryResult, stickerResult, routineResult,
       routineProgressResult, routineOverrideResult, jotResult, groceryResult, sitterSessionResult,
+      recentSitterSessionResult,
     ] = await Promise.all([
       client.from('memberships').select('id, display_name, color, role').eq('household_id', householdId).is('left_at', null),
       loadChildrenAndOverrides(client, householdId),
@@ -187,9 +191,18 @@ export function createSupabaseSource(client: RoostClient): HouseholdSource {
         .order('started_at', { ascending: false })
         .limit(1)
         .maybeSingle(),
+      client
+        .from('sitter_sessions')
+        .select('*')
+        .eq('household_id', householdId)
+        .gte('ended_at', cutoff12h)
+        .order('ended_at', { ascending: false })
+        .limit(1)
+        .maybeSingle(),
     ])
 
     if (sitterSessionResult.error) throw new Error(sitterSessionResult.error.message)
+    if (recentSitterSessionResult.error) throw new Error(recentSitterSessionResult.error.message)
 
     const medicineRows = await loadMedicineRows(client, householdId, unwrap(medicineResult), doseRows)
     const { childRows, overridesByChild } = childrenAndOverrides
@@ -211,6 +224,7 @@ export function createSupabaseSource(client: RoostClient): HouseholdSource {
       jots: unwrap(jotResult).map(toJot),
       groceries: unwrap(groceryResult).map(toGrocery),
       activeSitterSession: sitterSessionResult.data ? toSitterSession(sitterSessionResult.data) : null,
+      recentSitterSession: recentSitterSessionResult.data ? toSitterSession(recentSitterSessionResult.data) : null,
       loadedAt: now.toISOString(),
     }
   }

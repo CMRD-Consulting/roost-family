@@ -38,10 +38,33 @@ export type LogCommand =
       stepIndex: number
       done: boolean
     }
+  | {
+      /** Starts Sitter Mode for the household with an adult's PIN. `sessionId` is a client id for the optimistic
+       *  view only: the server creates the real id, and the snapshot has it after the next reload. */
+      kind: 'sitter.start'
+      householdId: string
+      sessionId: string
+      membershipId: string
+      pin: string
+      sitterName: string | null
+      displayId: string | null
+      startedAt: IsoTimestamp
+    }
+  | { kind: 'sitter.end'; householdId: string; sessionId: string; membershipId: string; pin: string; endedAt: IsoTimestamp }
+  | { kind: 'sitter.summaryShown'; householdId: string; sessionId: string }
 
 /** Commands that need a live connection (PIN checks happen on the server). */
 export function requiresOnline(cmd: LogCommand): boolean {
-  return cmd.kind === 'dose.void' || cmd.kind === 'dose.acknowledge'
+  switch (cmd.kind) {
+    case 'dose.void':
+    case 'dose.acknowledge':
+    case 'sitter.start':
+    case 'sitter.end':
+    case 'sitter.summaryShown':
+      return true
+    default:
+      return false
+  }
 }
 
 export function newId(): string {

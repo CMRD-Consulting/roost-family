@@ -217,6 +217,57 @@ describe('applyCommand', () => {
     })
   })
 
+  describe('sitter.start / sitter.end / sitter.summaryShown', () => {
+    const householdId = base.household.id
+    const startedAt = '2026-09-14T17:00:00.000Z'
+    const endedAt = '2026-09-14T18:30:00.000Z'
+    const start: LogCommand = {
+      kind: 'sitter.start', householdId, sessionId: 'sitter-client-id', membershipId: sam.id, pin: '1234',
+      sitterName: 'Jess', displayId: 'demo-display', startedAt,
+    }
+    const end: LogCommand = { kind: 'sitter.end', householdId, sessionId: 'sitter-client-id', membershipId: sam.id, pin: '1234', endedAt }
+    const shown: LogCommand = { kind: 'sitter.summaryShown', householdId, sessionId: 'sitter-client-id' }
+
+    it('start sets the active session optimistically with the client id', () => {
+      const next = applyCommand(base, start, now)
+      expect(next.activeSitterSession).toEqual({ id: 'sitter-client-id', sitterName: 'Jess', startedAt, endedAt: null, summaryShownAt: null })
+      expect(base.activeSitterSession).toBeNull()
+    })
+
+    it('start keeps a session that is already active (the server allows only one) and is idempotent', () => {
+      const active = { id: 'server-id', sitterName: 'Robin', startedAt, endedAt: null, summaryShownAt: null }
+      const withActive = { ...base, activeSitterSession: active }
+      expect(applyCommand(withActive, start, now).activeSitterSession).toEqual(active)
+      expectIdempotent(base, start)
+    })
+
+    it('end moves the active session to recentSitterSession with endedAt', () => {
+      const next = applyCommand(applyCommand(base, start, now), end, now)
+      expect(next.activeSitterSession).toBeNull()
+      expect(next.recentSitterSession).toEqual({ id: 'sitter-client-id', sitterName: 'Jess', startedAt, endedAt, summaryShownAt: null })
+    })
+
+    it('end is a no-op when the active session is a different one, and idempotent', () => {
+      const started = applyCommand(base, start, now)
+      expect(applyCommand(started, { ...end, sessionId: 'other' }, now)).toEqual(started)
+      expectIdempotent(started, end)
+    })
+
+    it('summaryShown sets summaryShownAt on the recent session, keeping the first time', () => {
+      const ended = applyCommand(applyCommand(base, start, now), end, now)
+      const next = applyCommand(ended, shown, now)
+      expect(next.recentSitterSession?.summaryShownAt).toBe(now.toISOString())
+      const later = new Date(now.getTime() + 60_000)
+      expect(applyCommand(next, shown, later).recentSitterSession?.summaryShownAt).toBe(now.toISOString())
+    })
+
+    it('summaryShown is a no-op without a matching recent session', () => {
+      expect(applyCommand(base, shown, now)).toEqual(base)
+      const ended = applyCommand(applyCommand(base, start, now), end, now)
+      expect(applyCommand(ended, { ...shown, sessionId: 'other' }, now)).toEqual(ended)
+    })
+  })
+
   describe('routine.step', () => {
     const routine = base.routines[0]!
     const existing = base.routineProgress.find((p) => p.childId === ivy.id && p.routineId === routine.id)!

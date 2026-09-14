@@ -186,6 +186,21 @@ export function createSupabaseLogWriter(client: RoostClient): LogWriter {
         return runWrite(client, () => client.rpc('acknowledge_dose_conflict', { p_dose_id: cmd.doseId, p_membership_id: cmd.membershipId, p_pin: cmd.pin }))
       case 'dinner.set':
         return runWrite(client, () => client.rpc('set_dinner_tonight', { p_household_id: cmd.householdId, p_text: cmd.text ?? '' }))
+      // Sitter Mode: PIN-checked on the server. For start, the server creates the session id (the client's
+      // sessionId is optimistic only), and a sitter name or display left out defaults to null.
+      case 'sitter.start':
+        return runWrite(client, () =>
+          client.rpc('start_sitter_session', {
+            p_household_id: cmd.householdId, p_membership_id: cmd.membershipId, p_pin: cmd.pin,
+            p_sitter_name: cmd.sitterName ?? undefined, p_display_id: cmd.displayId ?? undefined,
+          }),
+        )
+      case 'sitter.end':
+        return runWrite(client, () =>
+          client.rpc('end_sitter_session', { p_session_id: cmd.sessionId, p_membership_id: cmd.membershipId, p_pin: cmd.pin }),
+        )
+      case 'sitter.summaryShown':
+        return runWrite(client, () => client.rpc('mark_sitter_summary_shown', { p_session_id: cmd.sessionId }))
       // The server adds or removes just this step inside one locked upsert, so concurrent steps are all kept.
       case 'routine.step':
         return runWrite(client, () =>

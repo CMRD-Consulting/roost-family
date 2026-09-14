@@ -38,6 +38,9 @@ export function inverseCommand(cmd: LogCommand): LogCommand | null {
     case 'entry.delete':
     case 'dose.void':
     case 'dose.acknowledge':
+    case 'sitter.start':
+    case 'sitter.end':
+    case 'sitter.summaryShown':
       return null
   }
 }

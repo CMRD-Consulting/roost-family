@@ -1,7 +1,7 @@
 import { personColor } from '@/ui/personPalette'
 import { householdDate } from '@/domain/time'
 import type { Medicine, Routine, RoutineStep } from '@/domain/types'
-import type { HouseholdSnapshot, Member, SnapshotChild } from '../snapshot'
+import type { HouseholdSnapshot, Member, SitterSession, SnapshotChild } from '../snapshot'
 
 const HOUR_MS = 3_600_000
 const MIN_MS = 60_000
@@ -9,6 +9,8 @@ const MIN_MS = 60_000
 export interface DemoOptions {
   conflict?: boolean
   manyKids?: boolean
+  /** Starts with Sitter Mode on: "Jess" since 2 hours ago, with a few logs attributed to her. */
+  sitter?: boolean
 }
 
 const step = (iconKey: string | null, label: string, time: string | null): RoutineStep => ({
@@ -203,6 +205,32 @@ export function buildDemoSnapshot(now: Date, options: DemoOptions = {}): Househo
   }
   const routines: Routine[] = [homeDay, weekend]
 
+  let activeSitterSession: SitterSession | null = null
+  if (options.sitter) {
+    activeSitterSession = {
+      id: '99999999-0000-0000-0000-000000000001',
+      sitterName: 'Jess',
+      startedAt: ago(2 * HOUR_MS),
+      endedAt: null,
+      summaryShownAt: null,
+    }
+    feedings.push({ id: 'feed-theo-sitter-meal', childId: theo.id, at: ago(90 * MIN_MS), type: 'meal', amount: null, note: 'Pasta and peas' })
+    stickers.push({ id: 'sticker-ivy-sitter-teeth', childId: ivy.id, categoryId: stickerCategories[1]!.id, at: ago(40 * MIN_MS) })
+    doses.push({
+      id: 'ffffffff-0000-0000-0000-000000000003',
+      childId: theo.id,
+      medicineId: acetaminophenTheo.id,
+      at: ago(50 * MIN_MS),
+      loggedByName: 'Jess (sitter)',
+      loggedOffline: false,
+      voidedAt: null,
+      conflictAcknowledgedAt: null,
+      createdAt: ago(50 * MIN_MS),
+      note: '5 ml',
+      warningsConfirmed: [],
+    })
+  }
+
   const routineProgress: HouseholdSnapshot['routineProgress'] = [
     { childId: ivy.id, routineId: homeDay.id, day: today, completed: [0, 1, 2] },
   ]
@@ -226,6 +254,14 @@ export function buildDemoSnapshot(now: Date, options: DemoOptions = {}): Househo
       leaveByBufferMin: 20,
       diaperLogEnabled: false,
       dinnerTonight: 'Tacos',
+      sitterInfo: {
+        napInstructions: 'Theo naps in the crib with the sound machine on.',
+        bedtime: 'Ivy 7:00 PM, Theo 6:30 PM',
+        emergencyContacts: 'Sam 704-555-0101 · Alex 704-555-0102',
+        pediatrician: 'Dr. Patel 704-555-0199',
+        address: '12 Maple St',
+        whereThings: 'Spare diapers: hall closet',
+      },
     },
     members: [sam, alex],
     children,
@@ -241,7 +277,8 @@ export function buildDemoSnapshot(now: Date, options: DemoOptions = {}): Househo
     routineOverrides: [],
     jots,
     groceries,
-    activeSitterSession: null,
+    activeSitterSession,
+    recentSitterSession: null,
     loadedAt: now.toISOString(),
   }
 }

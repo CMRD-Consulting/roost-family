@@ -3,7 +3,7 @@ import type {
   SleepEntry, StickerEntry,
 } from '@/domain/types'
 import type {
-  GroceryItem, HouseholdInfo, Jot, Member, RoutineDayOverride, RoutineProgress, SitterSession,
+  GroceryItem, HouseholdInfo, Jot, Member, RoutineDayOverride, RoutineProgress, SitterInfo, SitterSession,
   SnapshotChild, StickerCategory,
 } from './snapshot'
 import type { Tables } from './database.types'
@@ -41,6 +41,22 @@ export function toRoutineStep(raw: unknown): RoutineStep | null {
   }
 }
 
+const SITTER_INFO_FIELDS = [
+  'napInstructions', 'bedtime', 'foodRules', 'emergencyContacts', 'pediatrician', 'address', 'whereThings',
+] as const satisfies readonly (keyof SitterInfo)[]
+
+/** `households.sitter_info` is free-form JSON: keep only the known fields that are strings. */
+export function toSitterInfo(raw: unknown): SitterInfo {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return {}
+  const source = raw as Record<string, unknown>
+  const info: SitterInfo = {}
+  for (const field of SITTER_INFO_FIELDS) {
+    const value = source[field]
+    if (typeof value === 'string') info[field] = value
+  }
+  return info
+}
+
 export function toHousehold(row: Tables<'households'>): HouseholdInfo {
   return {
     id: row.id,
@@ -51,6 +67,7 @@ export function toHousehold(row: Tables<'households'>): HouseholdInfo {
     leaveByBufferMin: row.leave_by_buffer_min,
     diaperLogEnabled: row.diaper_log_enabled,
     dinnerTonight: row.dinner_tonight,
+    sitterInfo: toSitterInfo(row.sitter_info),
   }
 }
 
@@ -203,6 +220,7 @@ export function toSitterSession(row: Tables<'sitter_sessions'>): SitterSession {
     sitterName: row.sitter_name,
     startedAt: row.started_at,
     endedAt: row.ended_at,
+    summaryShownAt: row.summary_shown_at,
   }
 }
 

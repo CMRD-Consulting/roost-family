@@ -78,6 +78,26 @@ export function applyCommand(snapshot: HouseholdSnapshot, cmd: LogCommand, now: 
     case 'dinner.set':
       return { ...snapshot, household: { ...snapshot.household, dinnerTonight: cmd.text } }
 
+    case 'sitter.start':
+      // The server allows one open session per household, so an active one (e.g. the server's copy) wins.
+      if (snapshot.activeSitterSession !== null) return snapshot
+      return {
+        ...snapshot,
+        activeSitterSession: {
+          id: cmd.sessionId, sitterName: cmd.sitterName, startedAt: cmd.startedAt, endedAt: null, summaryShownAt: null,
+        },
+      }
+    case 'sitter.end': {
+      const active = snapshot.activeSitterSession
+      if (active === null || active.id !== cmd.sessionId) return snapshot
+      return { ...snapshot, activeSitterSession: null, recentSitterSession: { ...active, endedAt: cmd.endedAt } }
+    }
+    case 'sitter.summaryShown': {
+      const recent = snapshot.recentSitterSession
+      if (recent === null || recent.id !== cmd.sessionId || recent.summaryShownAt !== null) return snapshot
+      return { ...snapshot, recentSitterSession: { ...recent, summaryShownAt: now.toISOString() } }
+    }
+
     case 'routine.step': {
       const matches = (p: { childId: string; routineId: string; day: string }) =>
         p.childId === cmd.childId && p.routineId === cmd.routineId && p.day === cmd.day

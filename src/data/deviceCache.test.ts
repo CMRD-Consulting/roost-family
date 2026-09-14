@@ -27,6 +27,7 @@ function fixture(householdId: string, loadedAt: string): HouseholdSnapshot {
       leaveByBufferMin: 15,
       diaperLogEnabled: true,
       dinnerTonight: null,
+      sitterInfo: {},
     },
     members: [],
     children: [],
@@ -43,6 +44,7 @@ function fixture(householdId: string, loadedAt: string): HouseholdSnapshot {
     jots: [],
     groceries: [],
     activeSitterSession: null,
+    recentSitterSession: null,
     loadedAt,
   }
 }

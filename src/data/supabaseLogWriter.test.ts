@@ -443,6 +443,62 @@ describe('createSupabaseLogWriter', () => {
       expect(calls).toEqual([{ op: 'rpc', name: 'set_dinner_tonight', args: { p_household_id: householdId, p_text: '' } }])
     })
 
+    it('sitter.start -> start_sitter_session (the server makes the id; the client id is not sent)', async () => {
+      const { client, calls } = createFakeClient({ responses: { 'rpc.start_sitter_session': { error: null, data: 'server-id' } } })
+      const writer = createSupabaseLogWriter(client)
+      await writer.execute({
+        kind: 'sitter.start', householdId, sessionId: 'client-id', membershipId: 'mem-1', pin: '1234',
+        sitterName: 'Jess', displayId: 'display-1', startedAt: '2026-09-14T19:00:00Z',
+      })
+      await writer.execute({
+        kind: 'sitter.start', householdId, sessionId: 'client-id-2', membershipId: 'mem-1', pin: '1234',
+        sitterName: null, displayId: null, startedAt: '2026-09-14T19:00:00Z',
+      })
+
+      expect(calls).toEqual([
+        {
+          op: 'rpc', name: 'start_sitter_session',
+          args: { p_household_id: householdId, p_membership_id: 'mem-1', p_pin: '1234', p_sitter_name: 'Jess', p_display_id: 'display-1' },
+        },
+        {
+          op: 'rpc', name: 'start_sitter_session',
+          // Omitted (undefined) rather than null: the RPC defaults both to null.
+          args: { p_household_id: householdId, p_membership_id: 'mem-1', p_pin: '1234', p_sitter_name: undefined, p_display_id: undefined },
+        },
+      ])
+    })
+
+    it('sitter.end -> end_sitter_session', async () => {
+      const { client, calls } = createFakeClient()
+      const writer = createSupabaseLogWriter(client)
+      await writer.execute({ kind: 'sitter.end', householdId, sessionId: 'sess-1', membershipId: 'mem-1', pin: '1234', endedAt: '2026-09-14T19:00:00Z' })
+
+      expect(calls).toEqual([
+        { op: 'rpc', name: 'end_sitter_session', args: { p_session_id: 'sess-1', p_membership_id: 'mem-1', p_pin: '1234' } },
+      ])
+    })
+
+    it('sitter.summaryShown -> mark_sitter_summary_shown', async () => {
+      const { client, calls } = createFakeClient()
+      const writer = createSupabaseLogWriter(client)
+      await writer.execute({ kind: 'sitter.summaryShown', householdId, sessionId: 'sess-1' })
+
+      expect(calls).toEqual([{ op: 'rpc', name: 'mark_sitter_summary_shown', args: { p_session_id: 'sess-1' } }])
+    })
+
+    it('a second sitter.start while one is active fails permanently (23505)', async () => {
+      const { client } = createFakeClient({
+        responses: { 'rpc.start_sitter_session': { error: { message: 'a sitter session is already active', code: '23505' }, status: 409 } },
+      })
+      const err = await createSupabaseLogWriter(client).execute({
+        kind: 'sitter.start', householdId, sessionId: 'client-id', membershipId: 'mem-1', pin: '1234',
+        sitterName: null, displayId: null, startedAt: '2026-09-14T19:00:00Z',
+      }).catch((e: unknown) => e)
+      expect(err).toBeInstanceOf(LogWriteError)
+      expect((err as LogWriteError).network).toBe(false)
+      expect((err as LogWriteError).code).toBe('23505')
+    })
+
     it('verifyPin calls verify_pin and returns the boolean', async () => {
       const { client } = createFakeClient({ responses: { 'rpc.verify_pin': { error: null, data: true } } })
       const writer = createSupabaseLogWriter(client)

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import type { Tables } from './database.types'
 import {
   toChild, toDiaper, toDose, toFeeding, toGrocery, toHousehold, toJot, toMedicine, toMember,
-  toRoutine, toRoutineOverride, toRoutineProgress, toSitterSession, toSleep, toSticker,
+  toRoutine, toRoutineOverride, toRoutineProgress, toSitterInfo, toSitterSession, toSleep, toSticker,
   toStickerCategory,
 } from './mappers'
 
@@ -235,11 +235,36 @@ describe('toHousehold', () => {
       leaveByBufferMin: 20,
       diaperLogEnabled: false,
       dinnerTonight: 'Tacos',
+      sitterInfo: {},
     })
   })
 
   it('passes a null dinner_tonight through', () => {
     expect(toHousehold(household({ dinner_tonight: null })).dinnerTonight).toBeNull()
+  })
+
+  it('maps sitter_info through toSitterInfo', () => {
+    expect(toHousehold(household({ sitter_info: { bedtime: '7:00 PM', notes: 1 } })).sitterInfo).toEqual({ bedtime: '7:00 PM' })
+  })
+})
+
+describe('toSitterInfo', () => {
+  it('keeps every known string field', () => {
+    const info = {
+      napInstructions: 'Crib, sound machine on', bedtime: '7:00 PM', foodRules: 'No nuts', emergencyContacts: 'Sam 555-0101',
+      pediatrician: 'Dr. Patel', address: '12 Maple St', whereThings: 'Diapers: hall closet',
+    }
+    expect(toSitterInfo(info)).toEqual(info)
+  })
+
+  it('drops non-string and unknown fields', () => {
+    expect(toSitterInfo({ bedtime: 7, address: null, pediatrician: ['x'], whereThings: 'Hall closet', extra: 'nope' })).toEqual({
+      whereThings: 'Hall closet',
+    })
+  })
+
+  it.each([null, 'text', 42, ['bedtime'], undefined])('returns {} for a non-object (%s)', (raw) => {
+    expect(toSitterInfo(raw)).toEqual({})
   })
 })
 
@@ -479,6 +504,14 @@ describe('toSitterSession', () => {
       sitterName: 'Jess',
       startedAt: '2026-09-14T10:00:00Z',
       endedAt: null,
+      summaryShownAt: null,
+    })
+  })
+
+  it('maps ended_at and summary_shown_at', () => {
+    expect(toSitterSession(sitterSessionRow({ ended_at: '2026-09-14T12:00:00Z', summary_shown_at: '2026-09-14T12:01:00Z' }))).toMatchObject({
+      endedAt: '2026-09-14T12:00:00Z',
+      summaryShownAt: '2026-09-14T12:01:00Z',
     })
   })
 })
