@@ -93,9 +93,14 @@ export function createSupabaseSource(client: RoostClient): HouseholdSource {
     }
   }
 
-  function subscribe(householdId: string, onChange: () => void): () => void {
+  function subscribe(
+    householdId: string,
+    onChange: () => void,
+    onStatus?: (status: 'connected' | 'disconnected') => void,
+  ): () => void {
     const channel = client.channel(`household:${householdId}`)
     let timer: ReturnType<typeof setTimeout> | undefined
+    let hasConnectedBefore = false
 
     const scheduleChange = () => {
       if (timer) clearTimeout(timer)
@@ -112,7 +117,16 @@ export function createSupabaseSource(client: RoostClient): HouseholdSource {
     for (const table of UNFILTERED_TABLES) {
       channel.on('postgres_changes', { event: '*', schema: 'public', table }, scheduleChange)
     }
-    channel.subscribe()
+    channel.subscribe((status: string) => {
+      if (status === 'SUBSCRIBED') {
+        onStatus?.('connected')
+        // Reconnecting (not the initial connect) may have missed events; reload to catch up.
+        if (hasConnectedBefore) onChange()
+        hasConnectedBefore = true
+      } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+        onStatus?.('disconnected')
+      }
+    })
 
     return () => {
       if (timer) clearTimeout(timer)

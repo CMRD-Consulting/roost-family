@@ -18,8 +18,9 @@ interface RecordedRegistration {
 interface FakeChannel {
   name: string
   registrations: RecordedRegistration[]
+  statusCallback: ((status: string) => void) | undefined
   on: (type: string, config: { table: string; filter?: string }, cb: () => void) => FakeChannel
-  subscribe: () => FakeChannel
+  subscribe: (cb?: (status: string) => void) => FakeChannel
 }
 
 function createFakeClient(tableData: Record<string, QueryResult>) {
@@ -86,11 +87,13 @@ function createFakeClient(tableData: Record<string, QueryResult>) {
     const chan: FakeChannel = {
       name,
       registrations: [],
+      statusCallback: undefined,
       on(type, config, cb) {
         chan.registrations.push({ table: config.table, filter: config.filter, callback: cb })
         return chan
       },
-      subscribe() {
+      subscribe(cb) {
+        chan.statusCallback = cb
         return chan
       },
     }
@@ -332,6 +335,57 @@ describe('createSupabaseSource subscribe', () => {
       vi.advanceTimersByTime(300)
 
       expect(onChange).toHaveBeenCalledTimes(2)
+    })
+  })
+
+  describe('connection status', () => {
+    it('reports connected on SUBSCRIBED, without reloading the first time', () => {
+      const { client, channels } = createFakeClient(baseTableData())
+      const source = createSupabaseSource(client)
+      const onChange = vi.fn()
+      const onStatus = vi.fn()
+      source.subscribe('h1', onChange, onStatus)
+
+      channels[0]!.statusCallback?.('SUBSCRIBED')
+
+      expect(onStatus).toHaveBeenCalledWith('connected')
+      expect(onChange).not.toHaveBeenCalled()
+    })
+
+    it('reloads on a reconnect (a second SUBSCRIBED), since events may have been missed', () => {
+      const { client, channels } = createFakeClient(baseTableData())
+      const source = createSupabaseSource(client)
+      const onChange = vi.fn()
+      const onStatus = vi.fn()
+      source.subscribe('h1', onChange, onStatus)
+
+      channels[0]!.statusCallback?.('SUBSCRIBED')
+      channels[0]!.statusCallback?.('CHANNEL_ERROR')
+      channels[0]!.statusCallback?.('SUBSCRIBED')
+
+      expect(onChange).toHaveBeenCalledTimes(1)
+      expect(onStatus).toHaveBeenNthCalledWith(1, 'connected')
+      expect(onStatus).toHaveBeenNthCalledWith(2, 'disconnected')
+      expect(onStatus).toHaveBeenNthCalledWith(3, 'connected')
+    })
+
+    it.each(['CHANNEL_ERROR', 'TIMED_OUT', 'CLOSED'])('reports disconnected on %s', (status) => {
+      const { client, channels } = createFakeClient(baseTableData())
+      const source = createSupabaseSource(client)
+      const onStatus = vi.fn()
+      source.subscribe('h1', () => {}, onStatus)
+
+      channels[0]!.statusCallback?.(status)
+
+      expect(onStatus).toHaveBeenCalledWith('disconnected')
+    })
+
+    it('works without an onStatus callback', () => {
+      const { client, channels } = createFakeClient(baseTableData())
+      const source = createSupabaseSource(client)
+      source.subscribe('h1', () => {})
+
+      expect(() => channels[0]!.statusCallback?.('SUBSCRIBED')).not.toThrow()
     })
   })
 })

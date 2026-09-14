@@ -10,7 +10,8 @@ export const demoSource: HouseholdSource = {
   async load(_householdId, now) {
     return buildDemoSnapshot(now, optionsFromUrl())
   },
-  subscribe() {
+  subscribe(_householdId, _onChange, onStatus) {
+    onStatus?.('connected')
     return () => {}
   },
 }

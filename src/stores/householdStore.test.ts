@@ -7,14 +7,23 @@ import { useHouseholdStore } from './householdStore'
 
 function fakeSource(loadImpl?: (id: string, now: Date) => Promise<HouseholdSnapshot>) {
   let onChangeCb: (() => void) | null = null
+  let onStatusCb: ((status: 'connected' | 'disconnected') => void) | null = null
   const unsubscribe = vi.fn()
   const load = vi.fn(loadImpl ?? (async (_id: string, now: Date) => buildDemoSnapshot(now)))
-  const subscribe = vi.fn((_id: string, cb: () => void) => {
+  const subscribe = vi.fn((_id: string, cb: () => void, onStatus?: (status: 'connected' | 'disconnected') => void) => {
     onChangeCb = cb
+    onStatusCb = onStatus ?? null
     return unsubscribe
   })
   const source: HouseholdSource = { load, subscribe }
-  return { source, load, subscribe, unsubscribe, triggerChange: () => onChangeCb?.() }
+  return {
+    source,
+    load,
+    subscribe,
+    unsubscribe,
+    triggerChange: () => onChangeCb?.(),
+    triggerStatus: (status: 'connected' | 'disconnected') => onStatusCb?.(status),
+  }
 }
 
 /** A source whose `load` calls resolve only when the test tells them to, in any order. */
@@ -61,7 +70,7 @@ describe('useHouseholdStore', () => {
     await store.start('h1', source)
 
     expect(load).toHaveBeenCalledWith('h1', expect.any(Date))
-    expect(subscribe).toHaveBeenCalledWith('h1', expect.any(Function))
+    expect(subscribe).toHaveBeenCalledWith('h1', expect.any(Function), expect.any(Function))
     expect(store.status).toBe('ready')
     expect(store.snapshot).not.toBeNull()
     expect(store.error).toBeNull()
@@ -158,6 +167,43 @@ describe('useHouseholdStore', () => {
     expect(store.staleMinutes(new Date(now.getTime() + 7 * 60_000))).toBe(7)
   })
 
+  describe('freshness', () => {
+    it('realtime starts unknown and updates as the source reports status', async () => {
+      const { source, triggerStatus } = fakeSource()
+      const store = newStore()
+      expect(store.realtime).toBe('unknown')
+
+      await store.start('h1', source)
+      expect(store.realtime).toBe('unknown')
+
+      triggerStatus('connected')
+      expect(store.realtime).toBe('connected')
+
+      triggerStatus('disconnected')
+      expect(store.realtime).toBe('disconnected')
+    })
+
+    it('staleMinutes is always 0 while connected, regardless of how old the last load was', async () => {
+      const now = new Date('2026-09-14T19:00:00Z')
+      const { source, triggerStatus } = fakeSource(async () => buildDemoSnapshot(now))
+      const store = newStore()
+      await store.start('h1', source)
+      triggerStatus('connected')
+
+      expect(store.staleMinutes(new Date(now.getTime() + 45 * 60_000))).toBe(0)
+    })
+
+    it('staleMinutes counts minutes since the last successful load while disconnected', async () => {
+      const now = new Date('2026-09-14T19:00:00Z')
+      const { source, triggerStatus } = fakeSource(async () => buildDemoSnapshot(now))
+      const store = newStore()
+      await store.start('h1', source)
+      triggerStatus('disconnected')
+
+      expect(store.staleMinutes(new Date(now.getTime() + 12 * 60_000))).toBe(12)
+    })
+  })
+
   describe('races', () => {
     it('ignores an out-of-order response: an older request resolving after a newer one is dropped', async () => {
       const { source, resolve } = deferredSource()
@@ -215,6 +261,17 @@ describe('useHouseholdStore', () => {
 
       await switching
       expect(store.error).toBe('nope')
+    })
+
+    it('stop resets realtime to unknown', async () => {
+      const { source, triggerStatus } = fakeSource()
+      const store = newStore()
+      await store.start('h1', source)
+      triggerStatus('connected')
+      expect(store.realtime).toBe('connected')
+
+      store.stop()
+      expect(store.realtime).toBe('unknown')
     })
 
     it('stop removes the online listener', async () => {

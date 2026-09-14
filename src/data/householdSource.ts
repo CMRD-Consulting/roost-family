@@ -1,10 +1,16 @@
 import type { HouseholdSnapshot } from './snapshot'
 
+export type RealtimeStatus = 'connected' | 'disconnected'
+
 export interface HouseholdSource {
   /** Load the current snapshot for a household. */
   load(householdId: string, now: Date): Promise<HouseholdSnapshot>
-  /** Call `onChange` whenever household data may have changed. Returns an unsubscribe function. */
-  subscribe(householdId: string, onChange: () => void): () => void
+  /**
+   * Call `onChange` whenever household data may have changed, and `onStatus` (if given)
+   * whenever the realtime connection transitions between connected and disconnected.
+   * Returns an unsubscribe function.
+   */
+  subscribe(householdId: string, onChange: () => void, onStatus?: (status: RealtimeStatus) => void): () => void
 }
 
 export const isDemo = import.meta.env.VITE_DATA_SOURCE === 'demo'

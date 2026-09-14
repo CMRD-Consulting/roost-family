@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type { HouseholdSource } from '@/data/householdSource'
+import type { HouseholdSource, RealtimeStatus } from '@/data/householdSource'
 import type { HouseholdSnapshot } from '@/data/snapshot'
 
 export type HouseholdStatus = 'idle' | 'loading' | 'ready' | 'error'
@@ -10,6 +10,9 @@ export const useHouseholdStore = defineStore('household', () => {
   const status = ref<HouseholdStatus>('idle')
   const error = ref<string | null>(null)
   const online = ref(typeof navigator === 'undefined' ? true : navigator.onLine)
+  const realtime = ref<RealtimeStatus | 'unknown'>('unknown')
+  /** ISO timestamp of the last successful load; used by `staleMinutes` while disconnected. */
+  const freshAt = ref<string | null>(null)
 
   let currentHouseholdId: string | null = null
   let currentSource: HouseholdSource | null = null
@@ -39,6 +42,7 @@ export const useHouseholdStore = defineStore('household', () => {
       snapshot.value = next
       status.value = 'ready'
       error.value = null
+      freshAt.value = next.loadedAt
     } catch (e) {
       if (isStale()) return
       error.value = e instanceof Error ? e.message : String(e)
@@ -53,13 +57,21 @@ export const useHouseholdStore = defineStore('household', () => {
     currentSource = source
     snapshot.value = null
     error.value = null
+    realtime.value = 'unknown'
+    freshAt.value = null
     status.value = 'loading'
     await reload()
     // A stop() or a switch to another household during that first load must not subscribe.
     if (currentHouseholdId !== householdId) return
-    unsubscribe = source.subscribe(householdId, () => {
-      void reload()
-    })
+    unsubscribe = source.subscribe(
+      householdId,
+      () => {
+        void reload()
+      },
+      (s) => {
+        realtime.value = s
+      },
+    )
     window.addEventListener('online', handleOnline)
     window.addEventListener('offline', handleOffline)
   }
@@ -71,12 +83,15 @@ export const useHouseholdStore = defineStore('household', () => {
     window.removeEventListener('offline', handleOffline)
     currentHouseholdId = null
     currentSource = null
+    realtime.value = 'unknown'
   }
 
+  /** Minutes of staleness for the header's "Updated N min ago" badge. Always 0 while realtime is connected. */
   function staleMinutes(now: Date): number {
-    if (snapshot.value === null) return 0
-    return Math.floor((now.getTime() - Date.parse(snapshot.value.loadedAt)) / 60_000)
+    if (realtime.value === 'connected') return 0
+    if (freshAt.value === null) return 0
+    return Math.floor((now.getTime() - Date.parse(freshAt.value)) / 60_000)
   }
 
-  return { snapshot, status, error, online, start, reload, stop, staleMinutes }
+  return { snapshot, status, error, online, realtime, start, reload, stop, staleMinutes }
 })
