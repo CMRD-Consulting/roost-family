@@ -526,3 +526,22 @@ alter publication supabase_realtime add table
   public.medicines, public.dose_entries, public.sticker_categories, public.sticker_entries,
   public.diaper_entries, public.routines, public.routine_progress, public.routine_day_overrides,
   public.jots, public.grocery_items;
+
+-- Row-level filters on Realtime DELETE events (household_id=eq.…) require the old row's
+-- filter column, so tables that clients can delete from keep full replica identity.
+-- With RLS enabled, Realtime still sends only the primary key in old_record.
+do $$
+declare t text;
+begin
+  foreach t in array array[
+    'sleep_entries', 'feeding_entries', 'sticker_entries', 'diaper_entries', 'routine_progress',
+    'routine_day_overrides', 'feature_overrides', 'jots', 'grocery_items', 'sitter_sessions',
+    'children', 'child_households', 'medicines', 'routines', 'sticker_categories', 'memberships', 'displays'
+  ] loop
+    execute format('alter table public.%I replica identity full', t);
+  end loop;
+end $$;
+
+-- At most one open sitter session per household.
+create unique index sitter_sessions_one_open_per_household
+  on public.sitter_sessions (household_id) where ended_at is null;
