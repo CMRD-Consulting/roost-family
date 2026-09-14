@@ -386,6 +386,23 @@ describe('useLogStore', () => {
       expect(householdStore.overlay).toHaveLength(0)
     })
 
+    it('does not replay while the writer is not ready (no user session yet)', async () => {
+      const { logStore, writer, queue } = await setup()
+      await queue.enqueue(dinnerCmd('Pizza'))
+      let ready = false
+      writer.ready = async () => ready
+
+      await logStore.init(writer, queue)
+      await logStore.replay()
+      expect(writer.calls).toEqual([])
+      expect(await queue.count()).toBe(1)
+
+      ready = true
+      await logStore.replay()
+      expect(writer.calls).toEqual([dinnerCmd('Pizza')])
+      expect(await queue.count()).toBe(0)
+    })
+
     it('re-adds queued commands to the overlay on init so they display after a reload', async () => {
       const { householdStore, logStore, writer, queue } = await setup()
       await queue.enqueue(dinnerCmd('Pizza'))

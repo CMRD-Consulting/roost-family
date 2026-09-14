@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { RoostClient } from './supabase'
-import { createSupabaseLogWriter } from './supabaseLogWriter'
+import { createSupabaseLogWriter, isRetryableWriteError } from './supabaseLogWriter'
 import { LogWriteError } from './logWriter'
 import type { Attribution, LogCommand } from './logCommands'
 
@@ -15,10 +15,15 @@ interface RecordedCall {
   args?: unknown
 }
 
-type Resp = { error: { message: string; code?: string } | null; data?: unknown }
+type Resp = { error: { message: string; code?: string } | null; data?: unknown; status?: number }
 
-function createFakeClient(opts: { responses?: Record<string, Resp>; throwOn?: Set<string> } = {}) {
+function createFakeClient(opts: { responses?: Record<string, Resp>; throwOn?: Set<string>; session?: boolean } = {}) {
   const calls: RecordedCall[] = []
+  const auth = {
+    async getSession() {
+      return { data: { session: opts.session === false ? null : { access_token: 't' } }, error: null }
+    },
+  }
 
   /** `rows` is the default `data` for a successful update/delete ... select('id'): the one matched row. */
   function resultFor(key: string, rows?: unknown[]): Promise<Resp> {
@@ -70,7 +75,7 @@ function createFakeClient(opts: { responses?: Record<string, Resp>; throwOn?: Se
     return resultFor(`rpc.${name}`)
   }
 
-  const client = { from, rpc } as unknown as RoostClient
+  const client = { from, rpc, auth } as unknown as RoostClient
   return { client, calls }
 }
 
@@ -404,6 +409,72 @@ describe('createSupabaseLogWriter', () => {
       const { client } = createFakeClient({ responses: { 'rpc.verify_pin': { error: null, data: false } } })
       const writer = createSupabaseLogWriter(client)
       await expect(writer.verifyPin('mem-1', '0000')).resolves.toBe(false)
+    })
+  })
+
+  describe('retryable vs permanent classification', () => {
+    const cases: Array<{ name: string; status: number | null; code: string | null; hasSession: boolean; retryable: boolean }> = [
+      { name: 'fetch failure (no status, no code)', status: null, code: null, hasSession: true, retryable: true },
+      { name: 'fetch failure (status 0, empty code)', status: 0, code: '', hasSession: true, retryable: true },
+      { name: '401 expired JWT', status: 401, code: 'PGRST301', hasSession: true, retryable: true },
+      { name: '408 timeout', status: 408, code: null, hasSession: true, retryable: true },
+      { name: '429 rate limited', status: 429, code: null, hasSession: true, retryable: true },
+      { name: '500 with a Postgres code', status: 500, code: 'XX000', hasSession: true, retryable: true },
+      { name: '503 unavailable', status: 503, code: null, hasSession: true, retryable: true },
+      { name: 'PGRST3xx JWT error without a status', status: null, code: 'PGRST303', hasSession: true, retryable: true },
+      { name: '42501 without a user session', status: 401, code: '42501', hasSession: false, retryable: true },
+      { name: '42501 without a user session (403)', status: 403, code: '42501', hasSession: false, retryable: true },
+      { name: '42501 with a session (RLS says no)', status: 403, code: '42501', hasSession: true, retryable: false },
+      { name: '23514 check violation', status: 400, code: '23514', hasSession: true, retryable: false },
+      { name: '23503 foreign key', status: 409, code: '23503', hasSession: true, retryable: false },
+      { name: '22P02 invalid input', status: 400, code: '22P02', hasSession: true, retryable: false },
+      { name: 'P0001 raised exception', status: 400, code: 'P0001', hasSession: true, retryable: false },
+      { name: 'PGRST116 (PostgREST 1xx)', status: 406, code: 'PGRST116', hasSession: true, retryable: false },
+      { name: 'PGRST204 (PostgREST 2xx)', status: 400, code: 'PGRST204', hasSession: true, retryable: false },
+      { name: '404 with no code', status: 404, code: null, hasSession: true, retryable: false },
+    ]
+
+    it.each(cases)('$name -> retryable=$retryable', ({ status, code, hasSession, retryable }) => {
+      expect(isRetryableWriteError({ status, code, hasSession })).toBe(retryable)
+    })
+
+    it('execute maps a 401 JWT error to network=true with its status', async () => {
+      const { client } = createFakeClient({
+        responses: { 'rpc.set_dinner_tonight': { error: { message: 'JWT expired', code: 'PGRST303' }, status: 401 } },
+      })
+      const err = await createSupabaseLogWriter(client).execute({ kind: 'dinner.set', householdId, text: 'x', previous: null }).catch((e: unknown) => e)
+      expect(err).toBeInstanceOf(LogWriteError)
+      expect((err as LogWriteError).network).toBe(true)
+      expect((err as LogWriteError).status).toBe(401)
+      expect((err as LogWriteError).code).toBe('PGRST303')
+    })
+
+    it('execute maps 42501 to network=true when the client has no session, network=false when it does', async () => {
+      const responses = { 'rpc.set_dinner_tonight': { error: { message: 'permission denied', code: '42501' }, status: 403 } }
+      const cmd: LogCommand = { kind: 'dinner.set', householdId, text: 'x', previous: null }
+
+      const noSession = createFakeClient({ responses, session: false })
+      const e1 = await createSupabaseLogWriter(noSession.client).execute(cmd).catch((e: unknown) => e)
+      expect((e1 as LogWriteError).network).toBe(true)
+
+      const withSession = createFakeClient({ responses, session: true })
+      const e2 = await createSupabaseLogWriter(withSession.client).execute(cmd).catch((e: unknown) => e)
+      expect((e2 as LogWriteError).network).toBe(false)
+    })
+
+    it('execute maps a 400 check violation to network=false', async () => {
+      const { client } = createFakeClient({
+        responses: { 'jots.upsert': { error: { message: 'violates check', code: '23514' }, status: 400 } },
+      })
+      const jot = { id: 'jot-1', text: '', createdAt: '2026-09-14T19:00:00Z', doneAt: null }
+      const err = await createSupabaseLogWriter(client).execute({ kind: 'jot.add', householdId, jot, displayId: null }).catch((e: unknown) => e)
+      expect((err as LogWriteError).network).toBe(false)
+      expect((err as LogWriteError).status).toBe(400)
+    })
+
+    it('ready() reports whether the client has a user session', async () => {
+      await expect(createSupabaseLogWriter(createFakeClient({ session: true }).client).ready!()).resolves.toBe(true)
+      await expect(createSupabaseLogWriter(createFakeClient({ session: false }).client).ready!()).resolves.toBe(false)
     })
   })
 

@@ -83,10 +83,36 @@ function groceryRow(item: GroceryItem, householdId: string, displayId: string | 
   return { id: item.id, household_id: householdId, text: item.text, display_id: displayId }
 }
 
-type OpResult = { error: { message: string; code?: string } | null; data?: unknown }
+type OpResult = { error: { message: string; code?: string } | null; data?: unknown; status?: number }
+
+/**
+ * Whether a failed write is worth retrying later (queued) rather than dropped.
+ * Retryable: the request never got an answer (no status, no code), 401/408/429/5xx, PostgREST JWT errors
+ * (PGRST3xx), and 42501 sent without a user session (it will pass once the session is back).
+ * Permanent: other 4xx answers (constraint, input, raised exceptions, PostgREST 1xx/2xx) and 42501 with a session.
+ */
+export function isRetryableWriteError(e: { status: number | null; code: string | null; hasSession: boolean }): boolean {
+  const code = e.code || null
+  const status = e.status || null
+  if (status === null && code === null) return true
+  if (status === 401 || status === 408 || status === 429 || (status !== null && status >= 500)) return true
+  if (code?.startsWith('PGRST3')) return true
+  if (code === '42501') return !e.hasSession
+  return false
+}
+
+async function hasSession(client: RoostClient): Promise<boolean> {
+  try {
+    const { data } = await client.auth.getSession()
+    return data.session !== null
+  } catch {
+    return false
+  }
+}
 
 /** Runs a Postgrest/RPC call and maps failures to LogWriteError. Returns the response data. */
-async function run(op: () => PromiseLike<OpResult>): Promise<unknown> {
+async function run(client: RoostClient, op: () => PromiseLike<OpResult>): Promise<unknown> {
+  const sessionBefore = await hasSession(client)
   let result: OpResult
   try {
     result = await op()
@@ -95,7 +121,8 @@ async function run(op: () => PromiseLike<OpResult>): Promise<unknown> {
   }
   if (result.error) {
     const code = result.error.code || null
-    throw new LogWriteError(result.error.message, !code, code)
+    const status = result.status || null
+    throw new LogWriteError(result.error.message, isRetryableWriteError({ status, code, hasSession: sessionBefore }), code, status)
   }
   return result.data
 }
@@ -105,13 +132,13 @@ function rowCount(data: unknown): number {
 }
 
 /** An update (with `.select('id')`) that matched no row: the row may not have synced yet, so retry later. */
-async function runUpdate(op: () => PromiseLike<OpResult>): Promise<void> {
-  if (rowCount(await run(op)) === 0) throw new LogWriteError('Not found yet', true, 'NOT_FOUND')
+async function runUpdate(client: RoostClient, op: () => PromiseLike<OpResult>): Promise<void> {
+  if (rowCount(await run(client, op)) === 0) throw new LogWriteError('Not found yet', true, 'NOT_FOUND')
 }
 
 /** Inserts, RPCs and deletes. (A delete matching no row means it's already gone, which is success.) */
-async function runWrite(op: () => PromiseLike<OpResult>): Promise<void> {
-  await run(op)
+async function runWrite(client: RoostClient, op: () => PromiseLike<OpResult>): Promise<void> {
+  await run(client, op)
 }
 
 export function createSupabaseLogWriter(client: RoostClient): LogWriter {
@@ -119,50 +146,49 @@ export function createSupabaseLogWriter(client: RoostClient): LogWriter {
     switch (cmd.kind) {
       case 'sleep.start':
       case 'sleep.restore':
-        return runWrite(() => client.from('sleep_entries').upsert(sleepRow(cmd.entry, cmd.householdId, cmd.attribution), UPSERT_OPTS))
+        return runWrite(client, () => client.from('sleep_entries').upsert(sleepRow(cmd.entry, cmd.householdId, cmd.attribution), UPSERT_OPTS))
       case 'sleep.end':
-        return runUpdate(() => client.from('sleep_entries').update({ end_at: cmd.endAt }).eq('id', cmd.entryId).select('id'))
+        return runUpdate(client, () => client.from('sleep_entries').update({ end_at: cmd.endAt }).eq('id', cmd.entryId).select('id'))
       case 'sleep.discard':
-        return runWrite(() => client.from('sleep_entries').delete().eq('id', cmd.entry.id).select('id'))
+        return runWrite(client, () => client.from('sleep_entries').delete().eq('id', cmd.entry.id).select('id'))
 
       case 'feeding.add':
-        return runWrite(() => client.from('feeding_entries').upsert(feedingRow(cmd.entry, cmd.householdId, cmd.attribution), UPSERT_OPTS))
+        return runWrite(client, () => client.from('feeding_entries').upsert(feedingRow(cmd.entry, cmd.householdId, cmd.attribution), UPSERT_OPTS))
       case 'sticker.add':
-        return runWrite(() => client.from('sticker_entries').upsert(stickerRow(cmd.entry, cmd.householdId, cmd.attribution), UPSERT_OPTS))
+        return runWrite(client, () => client.from('sticker_entries').upsert(stickerRow(cmd.entry, cmd.householdId, cmd.attribution), UPSERT_OPTS))
       case 'diaper.add':
-        return runWrite(() => client.from('diaper_entries').upsert(diaperRow(cmd.entry, cmd.householdId, cmd.attribution), UPSERT_OPTS))
+        return runWrite(client, () => client.from('diaper_entries').upsert(diaperRow(cmd.entry, cmd.householdId, cmd.attribution), UPSERT_OPTS))
       case 'dose.add':
-        return runWrite(() => client.from('dose_entries').upsert(doseRow(cmd.entry, cmd.householdId, cmd.attribution), UPSERT_OPTS))
+        return runWrite(client, () => client.from('dose_entries').upsert(doseRow(cmd.entry, cmd.householdId, cmd.attribution), UPSERT_OPTS))
 
       case 'jot.add':
-        return runWrite(() => client.from('jots').upsert(jotRow(cmd.jot, cmd.householdId, cmd.displayId), UPSERT_OPTS))
+        return runWrite(client, () => client.from('jots').upsert(jotRow(cmd.jot, cmd.householdId, cmd.displayId), UPSERT_OPTS))
 
       case 'grocery.add':
-        return runWrite(() => client.from('grocery_items').upsert(groceryRow(cmd.item, cmd.householdId, cmd.displayId), UPSERT_OPTS))
+        return runWrite(client, () => client.from('grocery_items').upsert(groceryRow(cmd.item, cmd.householdId, cmd.displayId), UPSERT_OPTS))
       case 'grocery.check':
-        return runUpdate(() => client.from('grocery_items').update({ checked_at: cmd.checkedAt }).eq('id', cmd.itemId).select('id'))
+        return runUpdate(client, () => client.from('grocery_items').update({ checked_at: cmd.checkedAt }).eq('id', cmd.itemId).select('id'))
       case 'grocery.delete':
-        return runWrite(() => client.from('grocery_items').delete().eq('id', cmd.item.id).select('id'))
+        return runWrite(client, () => client.from('grocery_items').delete().eq('id', cmd.item.id).select('id'))
 
       case 'entry.delete':
-        return runWrite(() => client.from(cmd.table).delete().eq('id', cmd.entryId).select('id'))
+        return runWrite(client, () => client.from(cmd.table).delete().eq('id', cmd.entryId).select('id'))
 
       case 'dose.void':
-        return runWrite(() =>
+        return runWrite(client, () =>
           client.rpc('void_dose', { p_dose_id: cmd.doseId, p_membership_id: cmd.membershipId, p_pin: cmd.pin, p_reason: cmd.reason }),
         )
       case 'dose.acknowledge':
-        return runWrite(() => client.rpc('acknowledge_dose_conflict', { p_dose_id: cmd.doseId, p_membership_id: cmd.membershipId, p_pin: cmd.pin }))
+        return runWrite(client, () => client.rpc('acknowledge_dose_conflict', { p_dose_id: cmd.doseId, p_membership_id: cmd.membershipId, p_pin: cmd.pin }))
       case 'dinner.set':
-        return runWrite(() => client.rpc('set_dinner_tonight', { p_household_id: cmd.householdId, p_text: cmd.text ?? '' }))
+        return runWrite(client, () => client.rpc('set_dinner_tonight', { p_household_id: cmd.householdId, p_text: cmd.text ?? '' }))
     }
   }
 
   async function verifyPin(membershipId: string, pin: string): Promise<boolean> {
-    const { data, error } = await client.rpc('verify_pin', { p_membership_id: membershipId, p_pin: pin })
-    if (error) throw new LogWriteError(error.message, !error.code, error.code || null)
+    const data = await run(client, () => client.rpc('verify_pin', { p_membership_id: membershipId, p_pin: pin }))
     return data === true
   }
 
-  return { execute, verifyPin }
+  return { execute, verifyPin, ready: () => hasSession(client) }
 }

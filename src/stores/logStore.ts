@@ -218,6 +218,8 @@ export const useLogStore = defineStore('log', () => {
   async function runReplay(): Promise<void> {
     const { writer, queue } = requireWriterAndQueue()
     while (directSend !== null) await directSend.catch(() => {})
+    // E.g. no user session yet: sending now would only fail. The online event or the retry timer tries again.
+    if (writer.ready && !(await writer.ready())) return
 
     while (queued.length > 0 && !isOffline()) {
       const item = queued[0]!
