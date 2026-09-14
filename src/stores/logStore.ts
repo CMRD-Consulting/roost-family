@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { ref, toRaw } from 'vue'
 import { inverseCommand } from '@/data/inverseCommand'
 import { requiresOnline, type LogCommand } from '@/data/logCommands'
 import { LogWriteError, type LogWriter } from '@/data/logWriter'
@@ -30,6 +30,11 @@ function offlineError(): LogWriteError {
 
 function isNetworkError(e: unknown): e is LogWriteError {
   return e instanceof LogWriteError && e.network
+}
+
+/** A deep plain-JSON copy: no Vue proxies (IndexedDB can't clone them) and no shared references with the UI. */
+function plainCopy(cmd: LogCommand): LogCommand {
+  return JSON.parse(JSON.stringify(toRaw(cmd))) as LogCommand
 }
 
 function markDoseLoggedOffline(cmd: LogCommand & { kind: 'dose.add' }): LogCommand {
@@ -101,12 +106,17 @@ export const useLogStore = defineStore('log', () => {
     syncPendingCount()
   }
 
+  /** Adds `cmd` to the offline queue. If the queue refuses it, removes its overlay and throws a QUEUE error. */
   async function enqueue(cmd: LogCommand, opts: { triggerReplay: boolean }): Promise<'queued'> {
     const { queue } = requireWriterAndQueue()
     enqueuing++
     let key: number
     try {
       key = await queue.enqueue(cmd)
+    } catch (e) {
+      console.warn('Offline queue refused a command', e)
+      householdStore.removeOverlay(cmd)
+      throw new LogWriteError("Couldn't save offline on this device.", false, 'QUEUE')
     } finally {
       enqueuing--
     }
@@ -153,7 +163,7 @@ export const useLogStore = defineStore('log', () => {
 
     if (requiresOnline(cmd) && offline) throw offlineError()
 
-    let working = cmd
+    let working = plainCopy(cmd)
     if (working.kind === 'dose.add' && offline) {
       if (!opts.confirmOffline) throw new NeedsOfflineDoseConfirmation()
       working = markDoseLoggedOffline(working)
@@ -167,14 +177,7 @@ export const useLogStore = defineStore('log', () => {
     // each wait, so no other submit can slip in between the check and the decision below.)
     while (directSend !== null) await directSend.catch(() => {})
 
-    if (isOffline() || queueBusy()) {
-      try {
-        return await enqueue(working, { triggerReplay: true })
-      } catch (e) {
-        householdStore.removeOverlay(working)
-        throw e
-      }
-    }
+    if (isOffline() || queueBusy()) return enqueue(working, { triggerReplay: true })
 
     const send = sendDirect(working, opts).finally(() => {
       if (directSend === send) directSend = null

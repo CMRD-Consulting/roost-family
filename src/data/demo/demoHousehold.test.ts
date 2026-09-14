@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { reactive } from 'vue'
 import { getDemoSnapshot, mutateDemo, onDemoChange, resetDemoForTests } from './demoHousehold'
 
 afterEach(() => resetDemoForTests())
@@ -21,6 +22,15 @@ describe('demoHousehold', () => {
   it('mutateDemo applies a transform that getDemoSnapshot then reflects', () => {
     mutateDemo((s) => ({ ...s, household: { ...s.household, dinnerTonight: 'Pizza' } }))
     expect(getDemoSnapshot(new Date()).household.dinnerTonight).toBe('Pizza')
+  })
+
+  it('stores plain copies, so reactive values passed in still clone (and later edits to them do not leak in)', () => {
+    const item = reactive({ id: 'g-new', text: 'Eggs', createdAt: '2026-09-14T19:00:00.000Z', checkedAt: null })
+    mutateDemo((s) => ({ ...s, groceries: [...s.groceries, item] }))
+    item.text = 'Changed later'
+
+    const snap = getDemoSnapshot(new Date())
+    expect(snap.groceries.find((g) => g.id === 'g-new')?.text).toBe('Eggs')
   })
 
   it('onDemoChange notifies listeners on mutateDemo; unsubscribe stops notifications', () => {

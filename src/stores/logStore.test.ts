@@ -1,5 +1,8 @@
+import 'fake-indexeddb/auto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
+import { isProxy, reactive, toRaw } from 'vue'
+import { createOfflineQueue } from '@/data/offlineQueue'
 import { buildDemoSnapshot } from '@/data/demo/demoFixture'
 import type { HouseholdSnapshot } from '@/data/snapshot'
 import type { HouseholdSource } from '@/data/householdSource'
@@ -282,6 +285,65 @@ describe('useLogStore', () => {
       expect(householdStore.view!.doses.find((d) => d.id === doseId)?.voidedAt).toBeNull()
       expect(enqueue).not.toHaveBeenCalled()
       expect(logStore.pendingCount).toBe(0)
+    })
+  })
+
+  describe('plain data', () => {
+    it('queues a command holding a reactive item in the real IndexedDB queue, as a plain snapshot', async () => {
+      vi.useRealTimers() // fake-indexeddb schedules its work with real timers
+      const { householdStore, logStore, writer } = await setup()
+      const queue = createOfflineQueue(`roost-logstore-${Math.random().toString(36).slice(2)}`)
+      await logStore.init(writer, queue)
+      setOnline(false)
+      const item = reactive({ id: 'grocery-r', text: 'Eggs', createdAt: '2026-09-14T19:00:00.000Z', checkedAt: null })
+
+      const result = await logStore.submit({ kind: 'grocery.add', householdId: HOUSEHOLD_ID, item, displayId: null })
+      item.text = 'Edited after submit'
+
+      expect(result).toBe('queued')
+      const [queued] = await queue.list()
+      expect((queued!.command as { item: { text: string } }).item.text).toBe('Eggs')
+      const overlayCmd = toRaw(householdStore.overlay)[0]!.command as { item: object }
+      expect(isProxy(overlayCmd.item)).toBe(false)
+      expect(householdStore.view?.groceries.find((g) => g.id === 'grocery-r')?.text).toBe('Eggs')
+    })
+
+    it('sends the writer a plain copy', async () => {
+      const { logStore, writer, queue } = await setup()
+      await logStore.init(writer, queue)
+      const item = reactive({ id: 'grocery-r', text: 'Eggs', createdAt: '2026-09-14T19:00:00.000Z', checkedAt: null })
+
+      await logStore.submit({ kind: 'grocery.add', householdId: HOUSEHOLD_ID, item, displayId: null })
+
+      expect(isProxy((writer.calls[0] as { item: object }).item)).toBe(false)
+    })
+
+    it('when the queue refuses the command, removes the overlay and throws a QUEUE error', async () => {
+      const { householdStore, logStore, writer, queue } = await setup()
+      await logStore.init(writer, queue)
+      vi.spyOn(queue, 'enqueue').mockRejectedValue(new DOMException('quota', 'QuotaExceededError'))
+      setOnline(false)
+
+      const err = await logStore.submit(dinnerCmd('Pizza')).catch((e: unknown) => e)
+
+      expect(err).toBeInstanceOf(LogWriteError)
+      expect((err as LogWriteError).message).toBe("Couldn't save offline on this device.")
+      expect((err as LogWriteError).network).toBe(false)
+      expect((err as LogWriteError).code).toBe('QUEUE')
+      expect(householdStore.overlay).toHaveLength(0)
+      expect(logStore.pendingCount).toBe(0)
+    })
+
+    it('when a network failure falls back to a queue that refuses the command, removes the overlay and throws QUEUE', async () => {
+      const { householdStore, logStore, writer, queue } = await setup()
+      await logStore.init(writer, queue)
+      vi.spyOn(queue, 'enqueue').mockRejectedValue(new Error('boom'))
+      writer.failNextWith = new LogWriteError('fetch failed', true, null)
+
+      const err = await logStore.submit(dinnerCmd('Pizza')).catch((e: unknown) => e)
+
+      expect((err as LogWriteError).code).toBe('QUEUE')
+      expect(householdStore.overlay).toHaveLength(0)
     })
   })
 

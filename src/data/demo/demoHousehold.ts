@@ -21,9 +21,10 @@ export function getDemoSnapshot(now: Date): HouseholdSnapshot {
   return clone
 }
 
-/** Replaces the shared demo snapshot with `fn(current)` and notifies listeners. */
+/** Replaces the shared demo snapshot with a plain copy of `fn(current)` and notifies listeners.
+ *  (Plain, so reactive values from the UI can't leak in and break `structuredClone`.) */
 export function mutateDemo(fn: (snapshot: HouseholdSnapshot) => HouseholdSnapshot): void {
-  snapshot = fn(ensureSnapshot())
+  snapshot = JSON.parse(JSON.stringify(fn(ensureSnapshot()))) as HouseholdSnapshot
   for (const listener of listeners) listener()
 }
 
