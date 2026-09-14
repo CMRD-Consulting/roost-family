@@ -360,6 +360,35 @@ describe("Kids' Corner (demo source)", () => {
       wrapper.unmount()
     })
 
+    it('an exit PIN pad open at the night boundary stays open; Night Mode starts once it closes', async () => {
+      vi.setSystemTime(new Date('2026-09-14T23:59:00Z')) // 7:59 PM household time
+      const wrapper = await mountAt('/corner')
+      await hold(wrapper.get('button[aria-label^="Exit Kids"]').element, 2_000)
+      expect(wrapper.find('[role="dialog"]').exists()).toBe(true)
+
+      await vi.advanceTimersByTimeAsync(2 * 60_000)
+      expect(wrapper.find('[role="dialog"]').exists()).toBe(true)
+      expect(wrapper.find('[data-testid="night-screen"]').exists()).toBe(false)
+
+      await wrapper.get('[role="dialog"]').trigger('keydown', { key: 'Escape' })
+      await flushPromises()
+      expect(wrapper.find('[data-testid="night-screen"]').exists()).toBe(true)
+      wrapper.unmount()
+    })
+
+    it('a tap in the Corner during a peek restarts the 60 second peek', async () => {
+      vi.setSystemTime(new Date('2026-09-15T02:00:00Z'))
+      const wrapper = await mountAt('/corner')
+      await wrapper.get('[data-testid="night-screen"]').trigger('click')
+      await vi.advanceTimersByTimeAsync(50_000)
+      wrapper.get('[data-testid="picture-schedule"]').element.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+      await vi.advanceTimersByTimeAsync(50_000)
+      expect(wrapper.find('[data-testid="night-screen"]').exists()).toBe(false)
+      await vi.advanceTimersByTimeAsync(20_000)
+      expect(wrapper.find('[data-testid="night-screen"]').exists()).toBe(true)
+      wrapper.unmount()
+    })
+
     it('shows the Nap overlay while napping', async () => {
       localStorage.setItem('roost-nap', JSON.stringify({ startedAt: new Date().toISOString(), openSleepIds: [] }))
       const wrapper = await mountAt('/corner')

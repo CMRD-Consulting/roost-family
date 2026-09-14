@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useNow } from '@/composables/useNow'
 import DiaperSheet from '@/features/logs/DiaperSheet.vue'
@@ -16,10 +16,11 @@ import UndoToast from '@/features/logs/UndoToast.vue'
 import NapOverlay from '@/features/modes/NapOverlay.vue'
 import NightPeek from '@/features/modes/NightPeek.vue'
 import NightScreen from '@/features/modes/NightScreen.vue'
+import { useNightPeekTaps } from '@/features/modes/useNightPeekTaps'
 import { useDisplayStore } from '@/session/displayStore'
 import { useHouseholdStore } from '@/stores/householdStore'
 import { STUCK_COMMAND_MESSAGE, useLogStore } from '@/stores/logStore'
-import { isNight, useModesStore } from '@/stores/modesStore'
+import { useModesStore } from '@/stores/modesStore'
 import RLogo from '@/ui/RLogo.vue'
 import ConflictBanner from './ConflictBanner.vue'
 import DinnerLine from './DinnerLine.vue'
@@ -75,12 +76,6 @@ const cacheBadge = computed(() => {
   return savedInfoLabel(new Date(store.snapshot.loadedAt), now.value, store.snapshot.household.timeZone)
 })
 
-/** True while it's within the household's night window but a tap has suppressed the Night screen for the
- *  60 s peek (spec §7.7); the main screen shows through a dark, click-through overlay with a countdown. */
-const peekingAtNight = computed(() => {
-  const household = store.view?.household
-  return household !== undefined && !modes.nightActive && isNight(now.value, household)
-})
 
 /** The log sheet opened from the log row. */
 const openLog = ref<LogKind | null>(null)
@@ -92,18 +87,24 @@ const acknowledgingDoseId = ref<string | null>(null)
 /** The just-logged dose an adult is undoing with their PIN. */
 const undoingDoseId = ref<string | null>(null)
 
-// Night Mode is a full takeover: nothing left open on the main screen should still be showing once it starts.
-watch(
-  () => modes.nightActive,
-  (active) => {
-    if (!active) return
-    openLog.value = null
-    fixingSleepChildId.value = null
-    editingDinner.value = false
-    acknowledgingDoseId.value = null
-    undoingDoseId.value = null
-  },
+// Night Mode never interrupts an adult mid-task (spec §7.7): while any sheet, dialog or PIN pad is open it
+// holds Night Mode off, and it takes over once the last one closes.
+const NIGHT_HOLD = 'main-screen-sheet'
+const anythingOpen = computed(
+  () =>
+    openLog.value !== null ||
+    fixingSleepChildId.value !== null ||
+    editingDinner.value ||
+    acknowledgingDoseId.value !== null ||
+    undoingDoseId.value !== null,
 )
+watch(
+  anythingOpen,
+  (open) => (open ? modes.holdNight(NIGHT_HOLD) : modes.releaseNight(NIGHT_HOLD)),
+  { immediate: true, flush: 'sync' },
+)
+onBeforeUnmount(() => modes.releaseNight(NIGHT_HOLD))
+useNightPeekTaps()
 
 /** Replay failures, worded for the banner. */
 const failureMessages = computed(() =>
@@ -303,7 +304,7 @@ const MODE_BUTTONS = [
     </div>
 
     <!-- Dimmed peek (spec §7.7): the main screen shows through a dark, click-through overlay for 60 s. -->
-    <NightPeek v-if="model && peekingAtNight" :until="modes.nightPeekUntil" :now="now" />
+    <NightPeek v-if="model && modes.peeking" :until="modes.nightPeekUntil" :now="now" />
 
     <NapOverlay v-if="model && modes.napActive" />
 

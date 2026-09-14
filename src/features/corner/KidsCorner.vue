@@ -16,9 +16,10 @@ import { useHouseholdSession } from '@/features/main/useHouseholdSession'
 import NapOverlay from '@/features/modes/NapOverlay.vue'
 import NightPeek from '@/features/modes/NightPeek.vue'
 import NightScreen from '@/features/modes/NightScreen.vue'
+import { useNightPeekTaps } from '@/features/modes/useNightPeekTaps'
 import { useHouseholdStore } from '@/stores/householdStore'
 import { useLogStore } from '@/stores/logStore'
-import { isNight, useModesStore } from '@/stores/modesStore'
+import { useModesStore } from '@/stores/modesStore'
 import RAvatar from '@/ui/RAvatar.vue'
 import RLogo from '@/ui/RLogo.vue'
 import RLongPress from '@/ui/RLongPress.vue'
@@ -91,10 +92,6 @@ const TABS: { id: Tab; label: string; paths: string[] }[] = [
 // Night and Nap Mode (spec §7.7), as on the main screen.
 const nightClock = computed(() => (view.value ? formatClock(now.value, view.value.household.timeZone) : ''))
 const nightDate = computed(() => (view.value ? formatDateLabel(now.value, view.value.household.timeZone) : ''))
-const peekingAtNight = computed(() => {
-  const household = view.value?.household
-  return household !== undefined && !modes.nightActive && isNight(tick.value, household)
-})
 
 // Exit (spec §7.3): hold 2 s, then an adult PIN — or, when PINs can't be checked, a second 2 s hold.
 const exiting = ref(false)
@@ -123,12 +120,11 @@ function leave(): void {
   void router.push('/home')
 }
 
-watch(
-  () => modes.nightActive,
-  (active) => {
-    if (active) exiting.value = false
-  },
-)
+// Night Mode never interrupts an adult leaving the Corner: the exit sheet holds it off while open (spec §7.7).
+const NIGHT_HOLD = 'corner-exit'
+watch(exiting, (open) => (open ? modes.holdNight(NIGHT_HOLD) : modes.releaseNight(NIGHT_HOLD)), { flush: 'sync' })
+onBeforeUnmount(() => modes.releaseNight(NIGHT_HOLD))
+useNightPeekTaps()
 </script>
 
 <template>
@@ -220,7 +216,7 @@ watch(
       <RLogo :size="64" />
     </div>
 
-    <NightPeek v-if="view && peekingAtNight" :until="modes.nightPeekUntil" :now="tick" />
+    <NightPeek v-if="view && modes.peeking" :until="modes.nightPeekUntil" :now="tick" />
     <NapOverlay v-if="view && modes.napActive" />
 
     <RSheet title="Exit Kids' Corner" :open="exiting" @close="exiting = false">

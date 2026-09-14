@@ -438,6 +438,61 @@ describe('MainScreen (demo source)', () => {
       wrapper.unmount()
     })
 
+    it('a sheet open at the night boundary stays open, and Night Mode starts once it closes', async () => {
+      vi.setSystemTime(new Date('2026-09-14T23:59:50Z')) // 7:59:50 PM household time
+      const wrapper = await mountMain()
+      await hold(wrapper.get('[data-testid="dinner-line"]').element)
+      expect(wrapper.get('[role="dialog"]').text()).toContain('Dinner')
+
+      await vi.advanceTimersByTimeAsync(60_000)
+      await flushPromises()
+      expect(wrapper.find('[role="dialog"]').exists()).toBe(true)
+      expect(wrapper.find('[data-testid="night-screen"]').exists()).toBe(false)
+      expect(wrapper.get('[data-testid="night-peek-chip"]').text()).toBe("Night Mode · when you're done")
+
+      // Closed without a tap on the screen (Escape), so no peek is started: Night Mode takes over at once.
+      await wrapper.get('[role="dialog"]').trigger('keydown', { key: 'Escape' })
+      await flushPromises()
+      expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="night-screen"]').exists()).toBe(true)
+      wrapper.unmount()
+    })
+
+    it('a PIN dialog open when a peek runs out keeps Night Mode away', async () => {
+      window.history.replaceState({}, '', '/home?conflict')
+      vi.setSystemTime(new Date('2026-09-15T02:00:00Z'))
+      const wrapper = await mountMain()
+      await wrapper.get('[data-testid="night-screen"]').trigger('click')
+      await flushPromises()
+      await wrapper.get('[data-testid="conflict"] button').trigger('click')
+      await flushPromises()
+
+      await vi.advanceTimersByTimeAsync(5 * 60_000)
+      await flushPromises()
+      expect(wrapper.get('[role="dialog"]').text()).toContain('Acknowledge dose alert')
+      expect(wrapper.find('[data-testid="night-screen"]').exists()).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('each tap during a peek keeps the main screen up for 60 seconds from that tap', async () => {
+      vi.setSystemTime(new Date('2026-09-15T02:00:00Z'))
+      const wrapper = await mountMain()
+      await wrapper.get('[data-testid="night-screen"]').trigger('click')
+      await flushPromises()
+
+      await vi.advanceTimersByTimeAsync(50_000)
+      wrapper.get('[data-testid="clock-line"]').element.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+      await vi.advanceTimersByTimeAsync(50_000)
+      await flushPromises()
+      expect(wrapper.find('[data-testid="night-screen"]').exists()).toBe(false)
+      expect(wrapper.get('[data-testid="night-peek-chip"]').text()).toMatch(/^Night Mode · back in 0:\d\d$/)
+
+      await vi.advanceTimersByTimeAsync(20_000)
+      await flushPromises()
+      expect(wrapper.find('[data-testid="night-screen"]').exists()).toBe(true)
+      wrapper.unmount()
+    })
+
     it('the moon button toggles Nap Mode and reports it with aria-pressed', async () => {
       const wrapper = await mountMain()
       const moon = wrapper.get('button[aria-label="Nap Mode"]')

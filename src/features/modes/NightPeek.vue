@@ -1,19 +1,24 @@
 <script setup lang="ts">
 /**
  * Dimmed peek (spec §7.7): after a tap on the Night screen, the screen underneath shows through a dark,
- * click-through overlay for 60 s, with a live countdown until the Night screen returns.
+ * click-through overlay for 60 s (restarted by each tap), with a live countdown until the Night screen returns.
+ * An open sheet holds Night Mode off past the countdown.
  */
 import { computed } from 'vue'
 
 const props = defineProps<{ until: number | null; now: Date }>()
 
-/** "0:42" countdown until the peek ends and Night Mode resumes. */
-const countdown = computed(() => {
-  if (props.until === null) return '0:00'
-  const totalSeconds = Math.ceil(Math.max(0, props.until - props.now.getTime()) / 1000)
+/**
+ * "back in 0:42" until the peek ends and Night Mode resumes; once the peek has run out while an open sheet
+ * still holds Night Mode off, "when you're done".
+ */
+const status = computed(() => {
+  const remainingMs = props.until === null ? 0 : props.until - props.now.getTime()
+  if (remainingMs <= 0) return "when you're done"
+  const totalSeconds = Math.ceil(remainingMs / 1000)
   const minutes = Math.floor(totalSeconds / 60)
   const seconds = totalSeconds % 60
-  return `${minutes}:${String(seconds).padStart(2, '0')}`
+  return `back in ${minutes}:${String(seconds).padStart(2, '0')}`
 })
 </script>
 
@@ -24,6 +29,6 @@ const countdown = computed(() => {
     role="status"
     class="pointer-events-none absolute left-1/2 top-9 z-20 -translate-x-1/2 rounded-lg bg-surface-2 px-3 py-1.5 text-[16px] font-medium text-ink-2"
   >
-    Night Mode · back in {{ countdown }}
+    Night Mode · {{ status }}
   </span>
 </template>

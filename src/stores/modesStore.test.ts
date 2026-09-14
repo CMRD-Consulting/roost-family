@@ -170,6 +170,86 @@ describe('useModesStore', () => {
     })
   })
 
+  describe('night holds (an open sheet keeps Night Mode away)', () => {
+    it('a hold taken before the night boundary keeps Night Mode off until it is released', () => {
+      withHousehold(new Date('2026-09-14T23:59:45Z'), { timeZone: TZ, nightMode: NIGHT_MODE })
+      const modes = useModesStore()
+      modes.holdNight('sheet')
+
+      vi.advanceTimersByTime(15_000)
+      expect(modes.nightActive).toBe(false)
+      expect(modes.peeking).toBe(true)
+
+      modes.releaseNight('sheet')
+      expect(modes.nightActive).toBe(true)
+      expect(modes.peeking).toBe(false)
+    })
+
+    it('needs every hold released, and releasing an unknown key is harmless', () => {
+      withHousehold(new Date('2026-09-15T03:00:00Z'), { timeZone: TZ, nightMode: NIGHT_MODE })
+      const modes = useModesStore()
+      modes.holdNight('a')
+      modes.holdNight('b')
+      modes.releaseNight('a')
+      modes.releaseNight('nope')
+      expect(modes.nightActive).toBe(false)
+      modes.releaseNight('b')
+      expect(modes.nightActive).toBe(true)
+    })
+
+    it('a hold outlasts the peek: Night Mode waits for the release', () => {
+      withHousehold(new Date('2026-09-15T03:00:00Z'), { timeZone: TZ, nightMode: NIGHT_MODE })
+      const modes = useModesStore()
+      modes.peek()
+      modes.holdNight('sheet')
+      vi.advanceTimersByTime(120_000)
+      expect(modes.nightActive).toBe(false)
+      modes.releaseNight('sheet')
+      expect(modes.nightActive).toBe(true)
+    })
+  })
+
+  describe('extendPeek (a tap on the peeked screen)', () => {
+    it('restarts the 60 second peek from the tap', () => {
+      withHousehold(new Date('2026-09-15T03:00:00Z'), { timeZone: TZ, nightMode: NIGHT_MODE })
+      const modes = useModesStore()
+      modes.peek()
+      vi.advanceTimersByTime(50_000)
+      modes.extendPeek()
+      expect(modes.nightPeekUntil).toBe(Date.now() + 60_000)
+
+      vi.advanceTimersByTime(50_000)
+      expect(modes.nightActive).toBe(false)
+      vi.advanceTimersByTime(20_000)
+      expect(modes.nightActive).toBe(true)
+    })
+
+    it('does nothing while the Night screen is showing or outside the night window', () => {
+      withHousehold(new Date('2026-09-15T03:00:00Z'), { timeZone: TZ, nightMode: NIGHT_MODE })
+      const modes = useModesStore()
+      modes.extendPeek()
+      expect(modes.nightPeekUntil).toBeNull()
+      expect(modes.nightActive).toBe(true)
+
+      setActivePinia(createPinia())
+      withHousehold(new Date('2026-09-14T18:00:00Z'), { timeZone: TZ, nightMode: NIGHT_MODE })
+      const day = useModesStore()
+      day.extendPeek()
+      expect(day.nightPeekUntil).toBeNull()
+    })
+
+    it('starts a peek when a hold is keeping Night Mode away, so closing the sheet with a tap is not abrupt', () => {
+      withHousehold(new Date('2026-09-15T03:00:00Z'), { timeZone: TZ, nightMode: NIGHT_MODE })
+      const modes = useModesStore()
+      modes.holdNight('sheet')
+      modes.extendPeek()
+      modes.releaseNight('sheet')
+      expect(modes.nightActive).toBe(false)
+      vi.advanceTimersByTime(75_000)
+      expect(modes.nightActive).toBe(true)
+    })
+  })
+
   describe('nap', () => {
     it('toggleNap starts a nap that tracks currently open sleeps, and again ends it', () => {
       const householdStore = withHousehold(new Date('2026-09-14T18:00:00Z'))

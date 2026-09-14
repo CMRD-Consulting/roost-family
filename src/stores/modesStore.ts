@@ -71,18 +71,42 @@ export const useModesStore = defineStore('modes', () => {
   const nightPeekUntil = ref<number | null>(null)
   const nap = ref<NapState | null>(loadNap())
 
-  const nightActive = computed<boolean>(() => {
+  /** Open sheets, dialogs and PIN pads that keep Night Mode from taking over (it never interrupts one). */
+  const nightHolds = ref(new Set<string>())
+
+  /** Inside the household's night window, whether or not a peek is showing the main screen. */
+  const nightWindow = computed<boolean>(() => {
     const household = householdStore.view?.household
-    if (household === undefined) return false
-    if (!isNight(now.value, household)) return false
+    return household !== undefined && isNight(now.value, household)
+  })
+
+  const nightActive = computed<boolean>(() => {
+    if (!nightWindow.value) return false
+    if (nightHolds.value.size > 0) return false
     const until = nightPeekUntil.value
     return !(until !== null && until > now.value.getTime())
   })
 
+  /** True while the (dimmed) household screen shows during the night window: a peek, or a hold. */
+  const peeking = computed<boolean>(() => nightWindow.value && !nightActive.value)
+
   const napActive = computed<boolean>(() => nap.value !== null)
 
   function peek(): void {
-    nightPeekUntil.value = now.value.getTime() + PEEK_MS
+    nightPeekUntil.value = Date.now() + PEEK_MS
+  }
+
+  /** A tap on the peeked screen: the peek runs for another 60 s from now. No-op unless peeking. */
+  function extendPeek(): void {
+    if (peeking.value) peek()
+  }
+
+  function holdNight(key: string): void {
+    nightHolds.value.add(key)
+  }
+
+  function releaseNight(key: string): void {
+    nightHolds.value.delete(key)
   }
 
   function endNap(): void {
@@ -101,16 +125,10 @@ export const useModesStore = defineStore('modes', () => {
     saveNap(nap.value)
   }
 
-  /** Inside the household's night window, whether or not a peek is showing the main screen. */
-  const nightWindow = computed<boolean>(() => {
-    const household = householdStore.view?.household
-    return household !== undefined && isNight(now.value, household)
-  })
-
   // All sounds stay silent for the whole night window, peeks included (spec §7.7), and during a nap.
   // `flush: 'sync'` so sound is muted/unmuted in the same tick as the mode change, not on the next
   // microtask — a chime triggered right after toggling nap must never slip through unmuted.
   watch(() => napActive.value || nightWindow.value, (muted) => setMuted(muted), { immediate: true, flush: 'sync' })
 
-  return { nightPeekUntil, nightActive, nap, napActive, peek, toggleNap, endNap }
+  return { nightPeekUntil, nightActive, peeking, nap, napActive, peek, extendPeek, holdNight, releaseNight, toggleNap, endNap }
 })
