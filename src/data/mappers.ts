@@ -201,7 +201,7 @@ export function toSitterSession(row: Tables<'sitter_sessions'>): SitterSession {
   }
 }
 
-export function toMember(row: Tables<'memberships'>): Member {
+export function toMember(row: Pick<Tables<'memberships'>, 'id' | 'display_name' | 'color' | 'role'>): Member {
   return {
     id: row.id,
     displayName: row.display_name,

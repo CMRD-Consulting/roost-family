@@ -14,3 +14,12 @@ export const DEMO_DISPLAY = {
   householdId: 'aaaaaaaa-0000-0000-0000-000000000001',
   name: 'Kitchen',
 } as const
+
+export async function selectSource(): Promise<HouseholdSource> {
+  if (isDemo) return (await import('./demo/demoSource')).demoSource
+  const [{ displayClient }, { createSupabaseSource }] = await Promise.all([
+    import('./supabase'),
+    import('./supabaseSource'),
+  ])
+  return createSupabaseSource(displayClient)
+}
