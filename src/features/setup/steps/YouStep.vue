@@ -4,7 +4,7 @@ import WizardFrame from '../WizardFrame.vue'
 import RButton from '@/ui/RButton.vue'
 import RInput from '@/ui/RInput.vue'
 import RAvatar from '@/ui/RAvatar.vue'
-import { PERSON_COLORS } from '@/ui/personPalette'
+import { PERSON_COLORS, PERSON_COLOR_NAMES } from '@/ui/personPalette'
 import { LIMITS, validateMemberName, validatePin } from '../validation'
 import type { WizardState } from '../wizardState'
 
@@ -27,13 +27,13 @@ function submit() {
     </div>
     <div class="flex flex-wrap gap-2" role="radiogroup" aria-label="Your color">
       <button
-        v-for="c in PERSON_COLORS"
+        v-for="(c, j) in PERSON_COLORS"
         :key="c"
         type="button"
         role="radio"
         :aria-checked="state.color === c"
-        :aria-label="`Color ${c}`"
-        class="size-11 rounded-full border-4"
+        :aria-label="PERSON_COLOR_NAMES[j]"
+        class="size-11 rounded-full border-4 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-orange-deep"
         :class="state.color === c ? 'border-ink' : 'border-transparent'"
         :style="{ background: c }"
         @click="state.color = c"

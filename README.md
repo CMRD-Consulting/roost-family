@@ -24,6 +24,14 @@ pnpm dev               # http://localhost:5173
 - Seed household "Rivera": owner `sam@roost.test` (PIN 1234), adult `alex@roost.test` (PIN 5678)
 - Unused invite codes: `ROOST1`, `ROOST2`, `ROOST3`
 
+## Offline and demo
+
+- If the tablet can't read its display state at boot (no network, server down), it shows **/offline**
+  ("Can't reach Roost Family", retrying every 15 s and when the browser comes back online) and then
+  routes to the right screen. A tablet already known to be registered stays on its main screen.
+- `VITE_DATA_SOURCE=demo` in `.env.local` selects the built-in demo household data source
+  (`src/data/demo/`) instead of Supabase for household data.
+
 ## Commands
 
 | Command | What it does |

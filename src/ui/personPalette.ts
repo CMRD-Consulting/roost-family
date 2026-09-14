@@ -29,6 +29,26 @@ export const PERSON_COLORS = [
   '#982A5D', // berry
 ] as const
 
+/** Human-readable names for PERSON_COLORS, in the same order (for aria-labels). */
+export const PERSON_COLOR_NAMES = [
+  'Brick',
+  'Teal',
+  'Ochre',
+  'Indigo',
+  'Forest',
+  'Umber',
+  'Denim',
+  'Plum',
+  'Pine',
+  'Berry',
+] as const
+
+/** The name of a person color, or the hex value when it isn't in the palette. */
+export function personColorName(color: string): string {
+  const i = PERSON_COLORS.findIndex((c) => c.toLowerCase() === color.toLowerCase())
+  return i === -1 ? color : PERSON_COLOR_NAMES[i]!
+}
+
 export function personColor(index: number): string {
   return PERSON_COLORS[((index % PERSON_COLORS.length) + PERSON_COLORS.length) % PERSON_COLORS.length]!
 }

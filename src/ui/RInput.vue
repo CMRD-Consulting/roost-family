@@ -24,7 +24,7 @@ const model = defineModel<string>({ required: true })
       :maxlength="maxlength"
       :class="masked && 'r-masked'"
       :style="masked ? '-webkit-text-security: disc' : undefined"
-      class="min-h-[56px] rounded-[var(--radius-control)] border border-line bg-surface px-4 text-[22px] text-ink outline-none focus:border-orange"
+      class="min-h-[56px] rounded-[var(--radius-control)] border-2 border-ink-3 bg-surface px-4 text-[22px] text-ink focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-orange-deep"
     />
   </label>
 </template>

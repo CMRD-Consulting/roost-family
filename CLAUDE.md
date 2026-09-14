@@ -7,13 +7,20 @@
 ## Architecture
 - `src/domain/` — pure business rules, no Vue or Supabase imports; every file has a colocated `*.test.ts`.
 - `src/data/supabase.ts` — `displayClient` (persisted anonymous device identity) and `createAdultClient()` (in-memory, temporary). Never persist an adult session.
-- `src/session/` — display state, adult email-code sign-in, idle timer.
+- `src/session/` — display state (`displayStore`: `unregistered | registered | revoked | offline`), adult email-code sign-in, idle expiry (`useAdultSessionIdle`). Adult sessions end after 5 min idle, on replacement and on unmount; `end()` never throws.
 - `src/features/<feature>/` — screens and feature logic; `src/ui/` — shared components (`R*` prefix).
 
 ## Database
-- Migrations in `supabase/migrations/`; regenerate types with `pnpm db:types` after schema changes.
-- Every household-owned table has RLS through `public.is_household_member(household_id)`. New tables: enable RLS, add policies, and re-run `revoke all on <table> from anon` (default privileges grant anon).
+- Migrations in `supabase/migrations/`; regenerate types with `pnpm db:types` after schema changes. Until Docker works, `src/data/database.types.ts` is hand-maintained in Supabase CLI shape: update Args/Returns for every RPC change.
+- Helpers live in the `private` schema (not exposed by the API): `private.is_household_member(household_id)`, `private.is_household_owner`, `private.require_adult`, and write helpers such as `private.create_household_for` that only security-definer RPCs call (never grant those to a client role).
+- Every household-owned table has RLS through `private.is_household_member(household_id)`. New tables: enable RLS, add policies, and re-run `revoke all on <table> from anon` (default privileges grant anon).
+- New RPCs: `security definer set search_path = ''`, then `revoke execute on function … from public, anon` and `grant execute on function … to authenticated` (add it to the final grant list in the RLS migration).
+- Configuration tables (households, children, medicines, routines, sticker categories, …) are read directly but written only through RPCs; don't add insert/update policies for them.
+- Setup is one call: `setup_household` creates the household, kids and owner PIN in a single transaction.
+- Validate RLS changes with `supabase/manual-checks/rls_smoke.sql` (must print `ALL RLS SMOKE CHECKS PASSED`).
 - Entry ids are client-generated UUIDs (offline replay). Doses are never deleted — void them.
+- Auth email: Supabase's default email sender is rate-limited (about 2 emails per hour). Configure custom SMTP before launch.
+- `[auth.email] enable_confirmations = true` in `supabase/config.toml` is unverified against real Supabase: once Docker works, confirm the email-code sign-in still works for a brand-new email address.
 - Status: local Supabase requires Docker; migrations can be validated without Docker via `supabase/manual-checks/validate-local.sh` (plain Postgres + `local_shim.sql`).
 
 ## UI rules (spec §4)

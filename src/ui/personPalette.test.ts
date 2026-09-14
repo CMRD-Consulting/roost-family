@@ -1,11 +1,19 @@
 import { describe, it, expect } from 'vitest'
-import { PERSON_COLORS, LOG_BUTTON_COLORS, personColor } from './personPalette'
+import { PERSON_COLORS, PERSON_COLOR_NAMES, LOG_BUTTON_COLORS, personColor, personColorName } from './personPalette'
 import { contrastRatio } from './contrast'
 import { hexDeltaE2000, simulateCvd } from './colorMath'
 
 describe('person palette', () => {
   it('has 10 colors', () => {
     expect(PERSON_COLORS).toHaveLength(10)
+  })
+
+  it('names every color, in order', () => {
+    expect(PERSON_COLOR_NAMES).toHaveLength(PERSON_COLORS.length)
+    expect(new Set(PERSON_COLOR_NAMES).size).toBe(PERSON_COLOR_NAMES.length)
+    expect(personColorName(PERSON_COLORS[1])).toBe('Teal')
+    expect(personColorName(PERSON_COLORS[1].toLowerCase())).toBe('Teal')
+    expect(personColorName('#123456')).toBe('#123456')
   })
 
   it('shares no color with log buttons', () => {
