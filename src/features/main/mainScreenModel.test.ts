@@ -121,6 +121,45 @@ describe('buildMainScreenModel', () => {
       expect(card.sleep).not.toBeNull()
       expect(card.sleep?.kind).toBe('sleeping')
     })
+
+    it('hides the sleep line for a child over 3 once an open sleep is more than 18h old', () => {
+      const snapshot = minimalSnapshot({
+        children: [makeChild({ id: 'kid2', birthday: '2022-01-01' })], // well over 3 years old
+        sleeps: [{ id: 's1', childId: 'kid2', startAt: new Date(now.getTime() - 20 * 3_600_000).toISOString(), endAt: null, type: 'night' }],
+      })
+      const card = buildMainScreenModel(snapshot, now).kidCards[0]!
+      expect(card.sleep).toBeNull()
+    })
+
+    it('hides the sleep line (rather than "Log wake-up") for a child over 3 whose recent entry resolves to unknown status', () => {
+      // A closed entry whose end is slightly in the future (e.g. clock skew between
+      // devices) is neither "open" nor a valid latest-end, so sleepStatus is 'unknown'.
+      const snapshot = minimalSnapshot({
+        children: [makeChild({ id: 'kid2', birthday: '2022-01-01' })], // well over 3, wakeWindow off
+        sleeps: [{
+          id: 's1', childId: 'kid2',
+          startAt: new Date(now.getTime() - 2 * 3_600_000).toISOString(),
+          endAt: new Date(now.getTime() + 5 * 60_000).toISOString(),
+          type: 'nap',
+        }],
+      })
+      const card = buildMainScreenModel(snapshot, now).kidCards[0]!
+      expect(card.sleep).toBeNull()
+    })
+
+    it('still shows "Log wake-up" for an unknown status when wakeWindow is on', () => {
+      const snapshot = minimalSnapshot({
+        children: [makeChild()], // default birthday: under 3, wakeWindow on
+        sleeps: [{
+          id: 's1', childId: 'kid1',
+          startAt: new Date(now.getTime() - 2 * 3_600_000).toISOString(),
+          endAt: new Date(now.getTime() + 5 * 60_000).toISOString(),
+          type: 'nap',
+        }],
+      })
+      const card = buildMainScreenModel(snapshot, now).kidCards[0]!
+      expect(card.sleep).toEqual({ kind: 'unknown', label: 'Log wake-up' })
+    })
   })
 
   describe('ageLabel', () => {

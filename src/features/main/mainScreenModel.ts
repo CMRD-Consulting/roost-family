@@ -80,17 +80,24 @@ export function buildMainScreenModel(s: HouseholdSnapshot, now: Date): MainScree
   const t = now.getTime()
 
   const kidCards = children.map((child): KidCardModel => {
+    // "Recent" regardless of open/closed: an entry started long ago and never closed
+    // shouldn't keep showing a sleep line forever on a child whose wakeWindow is off.
     const recentSleep = s.sleeps.some(
-      (e) => e.childId === child.id && (e.endAt === null || t - Date.parse(e.startAt) <= SLEEP_LINE_LOOKBACK_MS),
+      (e) => e.childId === child.id && t - Date.parse(e.startAt) <= SLEEP_LINE_LOOKBACK_MS,
     )
+    const wakeWindowOn = enabled(child, 'wakeWindow')
     let sleep: KidCardModel['sleep'] = null
-    if (enabled(child, 'wakeWindow') || recentSleep) {
+    if (wakeWindowOn || recentSleep) {
       const st = sleepStatus(s.sleeps, child.id, now)
-      sleep =
-        st.kind === 'awake' ? { kind: 'awake', label: `Awake ${formatDuration(st.durationMs)}` }
-        : st.kind === 'sleeping' ? { kind: 'sleeping', label: `Sleeping ${formatDuration(st.durationMs)}` }
-        : st.kind === 'stale' ? { kind: 'stale', label: 'Still sleeping?' }
-        : { kind: 'unknown', label: 'Log wake-up' }
+      // With the feature off, an "unknown" status (no sleep data in range) isn't worth
+      // a "Log wake-up" prompt on an older kid's card — just hide the line.
+      if (!(st.kind === 'unknown' && !wakeWindowOn)) {
+        sleep =
+          st.kind === 'awake' ? { kind: 'awake', label: `Awake ${formatDuration(st.durationMs)}` }
+          : st.kind === 'sleeping' ? { kind: 'sleeping', label: `Sleeping ${formatDuration(st.durationMs)}` }
+          : st.kind === 'stale' ? { kind: 'stale', label: 'Still sleeping?' }
+          : { kind: 'unknown', label: 'Log wake-up' }
+      }
     }
 
     let feeding: string | null = null
