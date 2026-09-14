@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { Breadcrumb, ErrorEvent as SentryErrorEvent } from '@sentry/vue'
-import { hashHouseholdId, scrubBreadcrumb, scrubEvent, sentryInitOptions } from './errorTracking'
+import { hashHouseholdId, scrubBreadcrumb, scrubEvent, scrubPathTokens, sentryInitOptions, tracingIntegrationOptions } from './errorTracking'
 
 const REDACTION_TERMS = ['Ivy', 'Theo', 'Jess', "Children's ibuprofen"]
 
@@ -161,5 +161,146 @@ describe('hashHouseholdId', () => {
     const a = await hashHouseholdId('household-123')
     const b = await hashHouseholdId('household-456')
     expect(a).not.toBe(b)
+  })
+})
+
+// A real Take list token: 32 random bytes, base64url, 43 characters.
+const TOKEN = 'q3Z9_xYv-4LmN0pQrStUvWxYz12345678AbCdEfGhIj'
+const EXPORT_ID = '6f1c2b8e-3d4a-4e5f-9a0b-1c2d3e4f5a6b'
+
+describe('path tokens (Take list links, export ids; spec §5.9)', () => {
+  it('the fixture token is a real 43-character base64url token', () => {
+    expect(TOKEN).toMatch(/^[A-Za-z0-9_-]{43}$/)
+  })
+
+  it('scrubPathTokens replaces /list/<token> and /manage/export/<id>, and leaves other paths alone', () => {
+    expect(scrubPathTokens(`https://roost.cmrd.dev/list/${TOKEN}`)).toBe('https://roost.cmrd.dev/list/[token]')
+    expect(scrubPathTokens(`/list/${TOKEN}?x=1`)).toBe('/list/[token]?x=1')
+    expect(scrubPathTokens(`Navigated to /list/${TOKEN}`)).toBe('Navigated to /list/[token]')
+    expect(scrubPathTokens(`/manage/export/${EXPORT_ID}`)).toBe('/manage/export/[id]')
+    expect(scrubPathTokens('/list/[token]')).toBe('/list/[token]')
+    expect(scrubPathTokens('/home')).toBe('/home')
+    expect(scrubPathTokens('/manage')).toBe('/manage')
+  })
+
+  it('scrubs the token from event.request.url and a Referer header', () => {
+    const event = baseEvent({
+      request: {
+        url: `https://roost.cmrd.dev/list/${TOKEN}`,
+        headers: { Referer: `https://roost.cmrd.dev/list/${TOKEN}?from=qr`, 'User-Agent': 'Safari' },
+      },
+    })
+    const result = scrubEvent(event, [], null)
+    expect(result.request?.url).toBe('https://roost.cmrd.dev/list/[token]')
+    expect(result.request?.headers?.Referer).toBe('https://roost.cmrd.dev/list/[token]')
+    expect(JSON.stringify(result)).not.toContain(TOKEN)
+  })
+
+  it('scrubs the token from event.transaction, tags, contexts and extra', () => {
+    const event = baseEvent({
+      transaction: `/list/${TOKEN}`,
+      tags: { url: `https://roost.cmrd.dev/list/${TOKEN}` },
+      contexts: {
+        trace: { trace_id: 't', span_id: 's', data: { 'url.path.parameter.token': TOKEN, 'params.token': TOKEN, 'url.full': `/list/${TOKEN}` } },
+        page: { href: `https://roost.cmrd.dev/manage/export/${EXPORT_ID}` },
+      },
+      extra: { location: `/list/${TOKEN}` },
+    })
+    const result = scrubEvent(event, [], null)
+    expect(result.transaction).toBe('/list/[token]')
+    expect(result.tags?.url).toBe('https://roost.cmrd.dev/list/[token]')
+    expect((result.contexts?.page as Record<string, unknown>).href).toBe('https://roost.cmrd.dev/manage/export/[id]')
+    expect((result.extra as Record<string, unknown>).location).toBe('/list/[token]')
+    expect(JSON.stringify(result)).not.toContain(TOKEN)
+    expect(JSON.stringify(result)).not.toContain(EXPORT_ID)
+  })
+
+  it('scrubs the token from navigation breadcrumbs (from, to), url keys and messages, top-level and on events', () => {
+    const nav: Breadcrumb = { category: 'navigation', data: { from: '/home', to: `/list/${TOKEN}` } }
+    expect(scrubBreadcrumb(nav, [])?.data).toEqual({ from: '/home', to: '/list/[token]' })
+    const back: Breadcrumb = { category: 'navigation', data: { from: `https://roost.cmrd.dev/list/${TOKEN}#top`, to: '/manage' } }
+    expect(scrubBreadcrumb(back, [])?.data).toEqual({ from: 'https://roost.cmrd.dev/list/[token]', to: '/manage' })
+    const fetchCrumb: Breadcrumb = { category: 'fetch', data: { url: `https://roost.cmrd.dev/list/${TOKEN}`, method: 'GET' } }
+    expect(scrubBreadcrumb(fetchCrumb, [])?.data?.url).toBe('https://roost.cmrd.dev/list/[token]')
+    const click: Breadcrumb = { category: 'ui.click', message: `a[href="/list/${TOKEN}"]` }
+    expect(scrubBreadcrumb(click, [])?.message).toBe('a[href="/list/[token]"]')
+
+    const event = scrubEvent(baseEvent({ breadcrumbs: [nav, back, fetchCrumb, click] }), [], null)
+    expect(JSON.stringify(event)).not.toContain(TOKEN)
+  })
+
+  it('scrubs the token from exception messages', () => {
+    const event = baseEvent({ exception: { values: [{ type: 'Error', value: `Failed to load /list/${TOKEN}` }] } })
+    expect(scrubEvent(event, [], null).exception?.values?.[0]?.value).toBe('Failed to load /list/[token]')
+  })
+
+  it('the router integration names transactions by route pattern and records no navigation or page-load spans', () => {
+    const router = {} as never
+    expect(tracingIntegrationOptions(router)).toEqual({
+      router,
+      routeLabel: 'path',
+      instrumentPageLoad: false,
+      instrumentNavigation: false,
+    })
+  })
+})
+
+describe('console and request breadcrumbs (free text, spec §5.9)', () => {
+  it('drops console breadcrumbs below error level', () => {
+    for (const level of ['log', 'info', 'debug', 'warning'] as const) {
+      const crumb: Breadcrumb = { category: 'console', level, message: 'Sam fed Ivy', data: { arguments: ['Sam fed Ivy'], logger: 'console' } }
+      expect(scrubBreadcrumb(crumb, []), level).toBeNull()
+    }
+  })
+
+  it('keeps error-level console breadcrumbs without their arguments, using only a string first argument as the message', () => {
+    const crumb: Breadcrumb = {
+      category: 'console',
+      level: 'error',
+      message: 'Save failed {"note":"Ivy has a fever"}',
+      data: { arguments: ['Save failed', { note: 'Ivy has a fever' }], logger: 'console' },
+    }
+    const result = scrubBreadcrumb(crumb, [])
+    expect(result?.message).toBe('Save failed')
+    expect(result?.data).toEqual({ logger: 'console' })
+    expect(JSON.stringify(result)).not.toContain('fever')
+
+    const objectFirst = scrubBreadcrumb({ category: 'console', level: 'error', message: '[object Object]', data: { arguments: [{ a: 1 }] } }, [])
+    expect(objectFirst?.message).toBe('console.error')
+    expect(objectFirst?.data).toEqual({})
+  })
+
+  it('still redacts names and path tokens in a kept console message', () => {
+    const named = scrubBreadcrumb({ category: 'console', level: 'error', message: 'x', data: { arguments: ['Dose for Ivy failed'] } }, REDACTION_TERMS)
+    expect(named?.message).toBe('[redacted]')
+    const pathy = scrubBreadcrumb({ category: 'console', level: 'error', message: 'x', data: { arguments: [`Load /list/${TOKEN} failed`] } }, [])
+    expect(pathy?.message).toBe('Load /list/[token] failed')
+  })
+
+  it('removes request and response bodies from fetch and xhr breadcrumbs, whatever the key', () => {
+    for (const category of ['fetch', 'xhr']) {
+      const crumb: Breadcrumb = {
+        category,
+        data: {
+          url: 'https://api.example/rest/v1/rpc/take_list_items',
+          method: 'POST',
+          status_code: 200,
+          body: '{"p_token":"x"}',
+          request_body: '{"p_pin":"1234"}',
+          requestBody: '{}',
+          response_body: '[]',
+          responseBody: '[]',
+          request_body_size: 20,
+          request: { body: '{"p_pin":"1234"}' },
+          response: { body: '[]' },
+          input: ['https://api.example', { body: '{"p_pin":"1234"}' }],
+        },
+      }
+      expect(scrubBreadcrumb(crumb, [])?.data, category).toEqual({
+        url: 'https://api.example/rest/v1/rpc/take_list_items',
+        method: 'POST',
+        status_code: 200,
+      })
+    }
   })
 })
