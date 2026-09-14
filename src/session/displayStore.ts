@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { displayClient } from '@/data/supabase'
+import { DEMO_DISPLAY, isDemo } from '@/data/householdSource'
 import { loadDisplayState, type DisplayIdentity, type DisplayState } from './displaySession'
 
 /** The display state as the app sees it: `offline` when the server or session could not be read. */
@@ -21,7 +21,10 @@ export const useDisplayStore = defineStore('display', () => {
 
   async function refresh(): Promise<DisplayStoreState> {
     try {
-      const next = await loadDisplayState(displayClient)
+      // Demo mode has no backend (and usually no Supabase env), so never load the client there.
+      const next: DisplayState = isDemo
+        ? { kind: 'registered', identity: { ...DEMO_DISPLAY } }
+        : await loadDisplayState((await import('@/data/supabase')).displayClient)
       lastKnown.value = next
       state.value = next
     } catch {

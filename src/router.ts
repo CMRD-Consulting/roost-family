@@ -22,7 +22,7 @@ export const router = createRouter({
     { path: '/join', component: () => import('@/features/setup/JoinWizard.vue'), meta: { requires: 'unregistered' } },
     { path: '/removed', component: () => import('@/features/display/DisplayRemoved.vue'), meta: { requires: 'revoked' } },
     { path: '/offline', component: () => import('@/features/display/DisplayOffline.vue'), meta: { requires: 'offline' } },
-    { path: '/home', component: () => import('@/features/home/HomePlaceholder.vue'), meta: { requires: 'registered' } },
+    { path: '/home', component: () => import('@/features/main/MainScreen.vue'), meta: { requires: 'registered' } },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
 })

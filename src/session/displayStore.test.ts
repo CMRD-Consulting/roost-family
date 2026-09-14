@@ -47,14 +47,39 @@ describe('displayStore', () => {
     const store = useDisplayStore()
     const stop = store.watch(1000)
 
+    // refresh() loads the Supabase client lazily, so let that dynamic import settle before asserting.
     vi.advanceTimersByTime(1000)
+    await vi.dynamicImportSettled()
     expect(loadDisplayState).toHaveBeenCalledTimes(1)
     window.dispatchEvent(new Event('online'))
+    await vi.dynamicImportSettled()
     expect(loadDisplayState).toHaveBeenCalledTimes(2)
 
     stop()
     vi.advanceTimersByTime(5000)
     window.dispatchEvent(new Event('online'))
+    await vi.dynamicImportSettled()
     expect(loadDisplayState).toHaveBeenCalledTimes(2)
+  })
+
+  it('in demo mode reports the demo display as registered without reading Supabase', async () => {
+    vi.resetModules()
+    vi.doMock('@/data/householdSource', () => ({
+      isDemo: true,
+      DEMO_DISPLAY: { displayId: 'demo-display', householdId: 'demo-household', name: 'Kitchen' },
+    }))
+    try {
+      const pinia = await import('pinia')
+      pinia.setActivePinia(pinia.createPinia())
+      const { useDisplayStore: useDemoDisplayStore } = await import('./displayStore')
+      const store = useDemoDisplayStore()
+      const expected = { kind: 'registered', identity: { displayId: 'demo-display', householdId: 'demo-household', name: 'Kitchen' } }
+      expect(await store.ensure()).toEqual(expected)
+      expect(store.identity).toEqual(expected.identity)
+      expect(loadDisplayState).not.toHaveBeenCalled()
+    } finally {
+      vi.doUnmock('@/data/householdSource')
+      vi.resetModules()
+    }
   })
 })
