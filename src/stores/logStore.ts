@@ -6,7 +6,7 @@ import { LogWriteError, type LogWriter } from '@/data/logWriter'
 import type { OfflineQueue, QueuedCommand } from '@/data/offlineQueue'
 import { useHouseholdStore } from './householdStore'
 
-/** Thrown when a dose can't be safely logged offline (no way to check for a conflicting dose)
+/** Thrown when a dose can't be checked against other adults' doses (offline, or realtime not connected)
  *  until the adult explicitly confirms via `submit(cmd, { confirmOffline: true })`. */
 export class NeedsOfflineDoseConfirmation extends Error {
   constructor() {
@@ -35,10 +35,6 @@ function isNetworkError(e: unknown): e is LogWriteError {
 /** A deep plain-JSON copy: no Vue proxies (IndexedDB can't clone them) and no shared references with the UI. */
 function plainCopy(cmd: LogCommand): LogCommand {
   return JSON.parse(JSON.stringify(toRaw(cmd))) as LogCommand
-}
-
-function markDoseLoggedOffline(cmd: LogCommand & { kind: 'dose.add' }): LogCommand {
-  return { ...cmd, entry: { ...cmd.entry, loggedOffline: true } }
 }
 
 export const useLogStore = defineStore('log', () => {
@@ -141,16 +137,12 @@ export const useLogStore = defineStore('log', () => {
         householdStore.removeOverlay(cmd)
         throw offlineError()
       }
-      let toQueue = cmd
-      if (toQueue.kind === 'dose.add') {
-        if (!opts.confirmOffline) {
-          householdStore.removeOverlay(cmd)
-          throw new NeedsOfflineDoseConfirmation()
-        }
-        toQueue = markDoseLoggedOffline(toQueue)
+      if (cmd.kind === 'dose.add' && !opts.confirmOffline) {
+        householdStore.removeOverlay(cmd)
+        throw new NeedsOfflineDoseConfirmation()
       }
       // Not replaying now: the network just failed. The online event or the retry timer will.
-      return enqueue(toQueue, { triggerReplay: false })
+      return enqueue(cmd, { triggerReplay: false })
     }
     householdStore.markSaved(cmd)
     setLastAction(cmd, null)
@@ -163,10 +155,13 @@ export const useLogStore = defineStore('log', () => {
 
     if (requiresOnline(cmd) && offline) throw offlineError()
 
-    let working = plainCopy(cmd)
-    if (working.kind === 'dose.add' && offline) {
-      if (!opts.confirmOffline) throw new NeedsOfflineDoseConfirmation()
-      working = markDoseLoggedOffline(working)
+    // One plain copy serves as the overlay item, the queued record and the request, so they always match.
+    const working = plainCopy(cmd)
+    if (working.kind === 'dose.add') {
+      // Without a live connection and realtime feed, this display may be missing another adult's dose (spec §7.4).
+      const mayMissDoses = offline || householdStore.realtime !== 'connected'
+      if (mayMissDoses && !opts.confirmOffline) throw new NeedsOfflineDoseConfirmation()
+      if (opts.confirmOffline) working.entry.loggedOffline = true
     }
 
     householdStore.addOverlay(working)

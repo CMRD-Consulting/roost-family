@@ -14,12 +14,14 @@ import { requiresOnline } from '@/data/logCommands'
 import { useHouseholdStore } from './householdStore'
 import { NeedsOfflineDoseConfirmation, useLogStore } from './logStore'
 
-function fakeSource(snapshot: HouseholdSnapshot): HouseholdSource {
+/** Reports realtime as connected (like a healthy Supabase or the demo source) unless told otherwise. */
+function fakeSource(snapshot: HouseholdSnapshot, realtime: 'connected' | 'disconnected' | null = 'connected'): HouseholdSource {
   return {
     async load() {
       return snapshot
     },
-    subscribe() {
+    subscribe(_id, _onChange, onStatus) {
+      if (realtime !== null) onStatus?.(realtime)
       return () => {}
     },
   }
@@ -110,12 +112,12 @@ function doseCmd(id = 'dose-x'): LogCommand {
   }
 }
 
-async function setup() {
+async function setup(opts: { realtime?: 'connected' | 'disconnected' | null } = {}) {
   setActivePinia(createPinia())
   const now = new Date('2026-09-14T19:00:00Z')
   const snapshot = buildDemoSnapshot(now)
   const householdStore = useHouseholdStore()
-  await householdStore.start(HOUSEHOLD_ID, fakeSource(snapshot))
+  await householdStore.start(HOUSEHOLD_ID, fakeSource(snapshot, opts.realtime === undefined ? 'connected' : opts.realtime))
   const logStore = useLogStore()
   const writer = createFakeWriter()
   const queue = createFakeQueue()
@@ -285,6 +287,56 @@ describe('useLogStore', () => {
       expect(householdStore.view!.doses.find((d) => d.id === doseId)?.voidedAt).toBeNull()
       expect(enqueue).not.toHaveBeenCalled()
       expect(logStore.pendingCount).toBe(0)
+    })
+  })
+
+  describe('dose offline flag', () => {
+    const loggedOffline = (c: LogCommand | undefined) => (c as { entry: { loggedOffline: boolean } }).entry.loggedOffline
+
+    it('with confirmOffline, overlay, queue and writer all carry loggedOffline=true; a permanent failure on replay clears it from view', async () => {
+      const { householdStore, logStore, writer, queue } = await setup()
+      await logStore.init(writer, queue)
+      writer.failNextWith = new LogWriteError('fetch failed', true, null)
+
+      expect(await logStore.submit(doseCmd(), { confirmOffline: true })).toBe('queued')
+      expect(loggedOffline(writer.calls[0])).toBe(true)
+      expect(loggedOffline((await queue.list())[0]?.command)).toBe(true)
+      expect(householdStore.view?.doses.find((d) => d.id === 'dose-x')?.loggedOffline).toBe(true)
+
+      writer.failNextWith = new LogWriteError('medicine gone', false, '23503')
+      await logStore.replay()
+
+      expect(logStore.failures).toHaveLength(1)
+      expect(householdStore.overlay).toHaveLength(0)
+      expect(householdStore.view?.doses.some((d) => d.id === 'dose-x')).toBe(false)
+    })
+
+    it('with confirmOffline while connected, saves directly with loggedOffline=true', async () => {
+      const { logStore, writer, queue } = await setup()
+      await logStore.init(writer, queue)
+
+      expect(await logStore.submit(doseCmd(), { confirmOffline: true })).toBe('saved')
+      expect(loggedOffline(writer.calls[0])).toBe(true)
+    })
+
+    it.each([['disconnected' as const], [null]])('requires confirmation while realtime is not connected (%s), even though the browser is online', async (realtime) => {
+      const { householdStore, logStore, writer, queue } = await setup({ realtime })
+      await logStore.init(writer, queue)
+
+      await expect(logStore.submit(doseCmd())).rejects.toBeInstanceOf(NeedsOfflineDoseConfirmation)
+      expect(householdStore.overlay).toHaveLength(0)
+      expect(writer.calls).toEqual([])
+
+      expect(await logStore.submit(doseCmd(), { confirmOffline: true })).toBe('saved')
+      expect(loggedOffline(writer.calls[0])).toBe(true)
+    })
+
+    it('does not ask for confirmation while online and realtime is connected', async () => {
+      const { logStore, writer, queue } = await setup()
+      await logStore.init(writer, queue)
+
+      expect(await logStore.submit(doseCmd())).toBe('saved')
+      expect(loggedOffline(writer.calls[0])).toBe(false)
     })
   })
 
