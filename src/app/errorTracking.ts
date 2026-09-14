@@ -1,17 +1,27 @@
 import { watch } from 'vue'
 import type { App } from 'vue'
 import type { Router } from 'vue-router'
-import type { Breadcrumb, ErrorEvent as SentryErrorEvent } from '@sentry/vue'
+import type { Breadcrumb, BrowserOptions, ErrorEvent as SentryErrorEvent } from '@sentry/vue'
 import { useHouseholdStore } from '@/stores/householdStore'
 
 export type GetRedactionTerms = () => string[]
 
 const REDACTED = '[redacted]'
 
+/** Drops the query string and fragment: they can carry one-time tokens (e.g. `?attempt=` on /manage). */
 function stripQueryString(url: string | undefined): string | undefined {
   if (!url) return url
-  const i = url.indexOf('?')
+  const i = url.search(/[?#]/)
   return i === -1 ? url : url.slice(0, i)
+}
+
+/** Breadcrumb data keys that hold a URL or route path. */
+const URL_KEYS = new Set(['url', 'from', 'to'])
+
+function stripUrlFields(data: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(data)) out[key] = URL_KEYS.has(key) && typeof value === 'string' ? stripQueryString(value) : value
+  return out
 }
 
 function containsRedactionTerm(value: string, terms: string[]): boolean {
@@ -107,7 +117,7 @@ export function scrubBreadcrumb(breadcrumb: Breadcrumb, redactionTerms: string[]
   if (next.message !== undefined) next.message = redactDeep(next.message, redactionTerms)
   if (next.data) {
     const isRequestCrumb = next.category === 'fetch' || next.category === 'xhr'
-    next.data = redactDeep(isRequestCrumb ? stripBodyFields(next.data) : next.data, redactionTerms)
+    next.data = redactDeep(stripUrlFields(isRequestCrumb ? stripBodyFields(next.data) : next.data), redactionTerms)
   }
   return next
 }
@@ -121,6 +131,32 @@ export async function hashHouseholdId(id: string): Promise<string> {
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('')
   return hex.slice(0, 12)
+}
+
+export interface SentryInitInput {
+  app: App
+  dsn: string
+  integrations: NonNullable<BrowserOptions['integrations']>
+  getRedactionTerms: GetRedactionTerms
+  householdHash: () => string | null
+}
+
+/**
+ * The options for `Sentry.init`. `attachProps: false`: the Vue error handler would otherwise attach the failing
+ * component's props, which can hold calendar events and other household data.
+ */
+export function sentryInitOptions(input: SentryInitInput): BrowserOptions & { app: App; attachProps: false } {
+  return {
+    app: input.app,
+    dsn: input.dsn,
+    sendDefaultPii: false,
+    attachProps: false,
+    tracesSampleRate: 0,
+    replaysSessionSampleRate: 0,
+    integrations: input.integrations,
+    beforeSend: (event) => scrubEvent(event, input.getRedactionTerms(), input.householdHash()),
+    beforeBreadcrumb: (breadcrumb) => scrubBreadcrumb(breadcrumb, input.getRedactionTerms()),
+  }
 }
 
 /**
@@ -147,15 +183,14 @@ export function initErrorTracking(app: App, router: Router, getRedactionTerms: G
   watch(() => householdStore.view?.household.id, refreshHouseholdHash)
 
   void import('@sentry/vue').then((Sentry) => {
-    Sentry.init({
-      app,
-      dsn,
-      sendDefaultPii: false,
-      tracesSampleRate: 0,
-      replaysSessionSampleRate: 0,
-      integrations: [Sentry.browserTracingIntegration({ router })],
-      beforeSend: (event) => scrubEvent(event, getRedactionTerms(), householdHash),
-      beforeBreadcrumb: (breadcrumb) => scrubBreadcrumb(breadcrumb, getRedactionTerms()),
-    })
+    Sentry.init(
+      sentryInitOptions({
+        app,
+        dsn,
+        integrations: [Sentry.browserTracingIntegration({ router })],
+        getRedactionTerms,
+        householdHash: () => householdHash,
+      }),
+    )
   })
 }

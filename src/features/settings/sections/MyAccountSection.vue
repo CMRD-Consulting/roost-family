@@ -40,6 +40,8 @@ const phase = ref<Phase>('idle')
 if (host.holdsNight) useNightHold(() => phase.value !== 'idle')
 const adult = shallowRef<AdultSession | null>(null)
 const busy = ref(false)
+/** A calendar change is saving (My calendars): the idle sign-out waits for it too. */
+const calendarsBusy = ref(false)
 const error = ref<string | null>(null)
 const notice = ref<string | null>(null)
 /** Bumped to give the sign-in form a fresh client after a refused account. */
@@ -59,7 +61,7 @@ function endAdult(): void {
 
 useAdultSessionIdle({
   session: () => adult.value,
-  busy: () => busy.value,
+  busy: () => busy.value || calendarsBusy.value,
   onExpired: () => {
     adult.value = null
     reset()
@@ -87,6 +89,7 @@ const signInTitle = computed(() => {
 })
 
 function cancel(): void {
+  calendarsBusy.value = false
   endAdult()
   reset()
   error.value = null
@@ -239,6 +242,7 @@ async function confirmLeave(): Promise<void> {
         :membership-id="host.me.value.membershipId"
         surface="display"
         :heading-level="3"
+        @busy="calendarsBusy = $event"
       />
       <div>
         <RButton variant="secondary" @click="cancel">Done with calendars</RButton>

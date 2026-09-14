@@ -47,12 +47,16 @@ export interface TodayEvents {
   partial: boolean
   /** When the server produced this answer (`generatedAt`). */
   updatedAt: string
+  /** When this device received it: staleness is judged by this clock, not the server's. */
+  receivedAt: string
 }
 
 /** Displays ask for events this often (spec §5.5). */
 export const CALENDAR_REFRESH_MS = 5 * 60_000
 /** A mount or a return to the page within this long of the last request doesn't ask again. */
 const MIN_GAP_MS = 60_000
+/** An Edge Function call that hasn't answered by then is abandoned (and reported as a network failure). */
+export const FUNCTION_TIMEOUT_MS = 20_000
 
 export type CalendarErrorCode =
   | 'invalid_request'
@@ -64,6 +68,8 @@ export type CalendarErrorCode =
   | 'unreachable'
   | 'invalid_attempt'
   | 'expired'
+  | 'rate_limited'
+  | 'not_configured'
   | 'network'
   | 'internal'
 
@@ -76,7 +82,7 @@ export class CalendarError extends Error {
 
 const KNOWN_CODES = new Set<string>([
   'invalid_request', 'invalid_url', 'forbidden', 'not_found', 'too_large', 'not_a_calendar', 'unreachable', 'invalid_attempt',
-  'expired', 'internal',
+  'expired', 'rate_limited', 'not_configured', 'internal',
 ])
 
 /** A `functions.invoke` error as a CalendarError: the function's `{ error }` code, or `network` when no response came. */
@@ -101,7 +107,7 @@ async function functionError(error: unknown): Promise<CalendarError> {
 async function invoke<T>(client: RoostClient, name: string, body: Record<string, unknown>): Promise<T> {
   let result: { data: unknown; error: unknown }
   try {
-    result = await client.functions.invoke(name, { body })
+    result = await client.functions.invoke(name, { body, timeout: FUNCTION_TIMEOUT_MS })
   } catch {
     throw new CalendarError('network')
   }
@@ -120,11 +126,51 @@ export async function fetchTodayEventsWith(client: RoostClient, householdId: str
     throw new CalendarError('internal')
   }
   return {
-    events: data.events as TodayEvent[],
-    connections: data.connections as TodayConnection[],
+    events: data.events.map(toTodayEvent).filter((e): e is TodayEvent => e !== null),
+    connections: data.connections.map(toTodayConnection).filter((c): c is TodayConnection => c !== null),
     partial: data.partial === true,
     updatedAt: data.generatedAt,
+    receivedAt: new Date().toISOString(),
   }
+}
+
+const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/
+const isIso = (v: unknown): v is string => typeof v === 'string' && ISO_TIMESTAMP.test(v) && !Number.isNaN(Date.parse(v))
+
+/** A well-formed event with only the fields Roost shows, or null (dropped). Nothing else from the response is kept. */
+function toTodayEvent(raw: unknown): TodayEvent | null {
+  if (!raw || typeof raw !== 'object') return null
+  const e = raw as Record<string, unknown>
+  if (
+    typeof e.title !== 'string' ||
+    !isIso(e.startAt) ||
+    !isIso(e.endAt) ||
+    typeof e.allDay !== 'boolean' ||
+    (e.personType !== 'member' && e.personType !== 'child') ||
+    typeof e.personId !== 'string' ||
+    typeof e.calendarColor !== 'string' ||
+    !(e.location === null || typeof e.location === 'string')
+  ) {
+    return null
+  }
+  return {
+    title: e.title,
+    startAt: e.startAt,
+    endAt: e.endAt,
+    allDay: e.allDay,
+    location: e.location,
+    personType: e.personType,
+    personId: e.personId,
+    calendarColor: e.calendarColor,
+  }
+}
+
+function toTodayConnection(raw: unknown): TodayConnection | null {
+  if (!raw || typeof raw !== 'object') return null
+  const c = raw as Record<string, unknown>
+  if (typeof c.id !== 'string' || typeof c.ownerName !== 'string') return null
+  if (c.status !== 'ok' && c.status !== 'auth_expired' && c.status !== 'unreachable') return null
+  return { id: c.id, ownerName: c.ownerName, status: c.status }
 }
 
 const DEMO_MEMBER_SAM = 'bbbbbbbb-0000-0000-0000-000000000001'
@@ -157,7 +203,7 @@ export function demoTodayEvents(now: Date, timeZone: string): TodayEvents {
     timed('Pediatrician checkup', 150, 30, 'Riverside Pediatrics', 'child', DEMO_CHILD_THEO),
     timed('Sam home', 180, 15, null, 'member', DEMO_MEMBER_SAM),
   ].filter((e) => Date.parse(e.startAt) < dayEnd.getTime())
-  return { events, connections: [], partial: false, updatedAt: now.toISOString() }
+  return { events, connections: [], partial: false, updatedAt: now.toISOString(), receivedAt: now.toISOString() }
 }
 
 /** Today's events for a household on this display (loaded lazily so the Supabase client isn't built in tests). */
@@ -202,7 +248,10 @@ export function useTodayEvents(options: TodayEventsOptions): TodayEventsState {
   const result = shallowRef<TodayEvents | null>(initialId ? (lastGood.get(initialId) ?? null) : null)
   const failed = ref(false)
   let disposed = false
-  let inFlight: Promise<void> | null = null
+  /** Bumped at the household's midnight: an answer asked for before it belongs to the previous day. */
+  let generation = 0
+  /** The request running now: for which household and day. */
+  let running: { id: string; generation: number; promise: Promise<void> } | null = null
   let interval: ReturnType<typeof setInterval> | undefined
   let midnight: ReturnType<typeof setTimeout> | undefined
 
@@ -211,27 +260,37 @@ export function useTodayEvents(options: TodayEventsOptions): TodayEventsState {
     return id && online() && enabled() && !disposed ? id : null
   }
 
+  /**
+   * One request at a time. A refresh for the household and day already being asked for joins that request; one for
+   * another household (or after midnight) runs once the current request settles, whose answer is then discarded.
+   */
   async function refresh(): Promise<void> {
     const id = canAsk()
     if (!id) return
-    if (inFlight) return inFlight
+    if (running) {
+      if (running.id === id && running.generation === generation) return running.promise
+      return running.promise.then(() => refresh())
+    }
+    const asked = { id, generation }
     lastAttemptAt.set(id, Date.now())
-    inFlight = (async () => {
+    const promise = (async () => {
       try {
         const next = await fetchEvents(id)
+        if (disposed || asked.generation !== generation) return
         lastGood.set(id, next)
-        if (disposed || options.householdId() !== id) return
+        if (options.householdId() !== id) return
         result.value = next
         failed.value = false
       } catch (e) {
-        if (disposed || options.householdId() !== id) return
+        if (disposed || asked.generation !== generation || options.householdId() !== id) return
         failed.value = true
-        console.warn('Calendar refresh failed', e instanceof CalendarError ? e.code : e)
+        console.warn('Calendar refresh failed', e instanceof CalendarError ? e.code : 'error')
       } finally {
-        inFlight = null
+        running = null
       }
     })()
-    return inFlight
+    running = { ...asked, promise }
+    return promise
   }
 
   function refreshUnlessRecent(): void {
@@ -247,6 +306,7 @@ export function useTodayEvents(options: TodayEventsOptions): TodayEventsState {
     const tz = options.timeZone()
     if (!tz) return
     midnight = setTimeout(() => {
+      generation += 1
       void refresh()
       scheduleMidnight()
     }, msUntilNextHouseholdMidnight(new Date(), tz) + 1_000)
@@ -323,7 +383,7 @@ export interface CalendarSettingsApi {
     client: AdultClient,
     householdId: string,
     url: string,
-  ): Promise<{ connectionId: string; selectionId: string; name: string; alreadyConnected?: boolean }>
+  ): Promise<{ connectionId: string; selectionId: string; name: string; alreadyConnected: boolean }>
   /** The provider's consent page (the browser comes back to /manage), or not configured on this server. */
   startOAuth(client: AdultClient, householdId: string, provider: 'google' | 'microsoft'): Promise<{ url: string } | { notConfigured: true }>
   /** Creates the connection for a returned OAuth attempt, as the adult who started it. */
@@ -411,7 +471,20 @@ export function createCalendarSettingsApi(): CalendarSettingsApi {
       ]
     },
 
-    connectIcs: (client, householdId, url) => invoke(client, 'calendar-connect-ics', { householdId, url }),
+    async connectIcs(client, householdId, url) {
+      const data = await invoke<{ connectionId?: unknown; selectionId?: unknown; name?: unknown; alreadyConnected?: unknown } | null>(
+        client,
+        'calendar-connect-ics',
+        { householdId, url },
+      )
+      if (typeof data?.connectionId !== 'string') throw new CalendarError('internal')
+      return {
+        connectionId: data.connectionId,
+        selectionId: typeof data.selectionId === 'string' ? data.selectionId : '',
+        name: typeof data.name === 'string' ? data.name : '',
+        alreadyConnected: data.alreadyConnected === true,
+      }
+    },
 
     async startOAuth(client, householdId, provider) {
       const data = await invoke<{ url?: unknown; error?: unknown } | null>(client, 'calendar-oauth-start', { householdId, provider, returnTo: 'manage' })
@@ -447,10 +520,16 @@ export function createCalendarSettingsApi(): CalendarSettingsApi {
   }
 }
 
-/** A failed calendar connection or change, worded for the adult. */
-export function calendarConnectMessage(error: unknown): string {
+/** A failed calendar connection or change, worded for the adult. `context`: a calendar link, or Google / Microsoft. */
+export function calendarConnectMessage(error: unknown, context: 'ics' | 'oauth' = 'ics'): string {
   const code = error instanceof CalendarError ? error.code : null
   switch (code) {
+    case 'rate_limited':
+      return context === 'oauth'
+        ? 'Too many connection attempts. Try again in a few minutes.'
+        : 'Too many calendar links added recently. Try again in an hour.'
+    case 'not_configured':
+      return context === 'oauth' ? 'That calendar provider isn’t set up on this server yet.' : 'Calendar links aren’t set up on this server yet.'
     case 'invalid_url':
     case 'invalid_request':
       return 'That doesn’t look like a calendar link. Paste the whole link, starting with https:// or webcal://.'

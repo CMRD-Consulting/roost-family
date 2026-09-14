@@ -470,11 +470,8 @@ const SETTINGS_BUTTON = {
             :members="store.view.members"
             :children="store.view.children"
             :now="now"
-          >
-            <template #footer>
-              <p v-if="staleMinutes > STALE_AFTER_MIN" class="shrink-0 text-[16px] text-ink-3">Updated {{ staleMinutes }} min ago</p>
-            </template>
-          </TodayPanel>
+            :updated-note="staleMinutes > STALE_AFTER_MIN ? `Updated ${staleMinutes} min ago` : null"
+          />
         </div>
       </div>
 

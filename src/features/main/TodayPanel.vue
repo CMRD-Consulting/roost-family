@@ -17,19 +17,21 @@ const props = defineProps<{
   leaveByBufferMin: number
   members: ReadonlyArray<{ id: string; displayName: string; color: string }>
   children: ReadonlyArray<{ id: string; name: string; color: string }>
-  /** The screen's clock; without one the panel ticks every minute itself. */
+  /** The screen's clock; without one the panel ticks every minute itself. Decided when the panel mounts. */
   now?: Date
+  /** The screen's own "Updated 7 min ago" (household data behind). When shown, the calendar's stale note is left
+   *  out so there is only one such line. */
+  updatedNote?: string | null
 }>()
-defineSlots<{ footer?: () => unknown }>()
 
-const ownNow = useNow(60_000)
+const ownNow = props.now === undefined ? useNow(60_000) : null
 const headingId = useId()
 
 const model = computed(() =>
   buildTodayModel({
     events: props.events,
     failed: props.failed,
-    now: props.now ?? ownNow.value,
+    now: props.now ?? ownNow?.value ?? new Date(),
     timeZone: props.timeZone,
     leaveByBufferMin: props.leaveByBufferMin,
     members: props.members,
@@ -60,7 +62,7 @@ const model = computed(() =>
           </div>
           <p data-testid="today-event-title" class="today-title text-[24px] font-medium leading-tight break-words text-ink">{{ row.title }}</p>
           <p v-if="row.location" class="truncate text-[18px] text-ink-3">{{ row.location }}</p>
-          <p v-if="row.leave" data-testid="today-event-leave" class="text-[22px] font-semibold text-orange-deep">{{ row.leave }}</p>
+          <p v-if="row.leave" data-testid="today-event-leave" class="text-[24px] font-semibold text-orange-deep">{{ row.leave }}</p>
         </div>
       </li>
     </ul>
@@ -71,8 +73,8 @@ const model = computed(() =>
     <p v-for="line in model.reconnect" :key="line" data-testid="today-reconnect" class="shrink-0 text-[16px] font-medium text-warn-ink">
       {{ line }}
     </p>
-    <p v-if="model.stale" data-testid="today-stale" class="shrink-0 text-[16px] text-ink-3">{{ model.stale }}</p>
-    <slot name="footer" />
+    <p v-if="updatedNote" data-testid="today-updated" class="shrink-0 text-[16px] text-ink-3">{{ updatedNote }}</p>
+    <p v-else-if="model.stale" data-testid="today-stale" class="shrink-0 text-[16px] text-ink-3">{{ model.stale }}</p>
   </section>
 </template>
 

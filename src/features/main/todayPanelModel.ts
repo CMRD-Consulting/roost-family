@@ -80,14 +80,14 @@ export function buildTodayModel(input: TodayModelInput): TodayModel {
       if (a.allDay !== b.allDay) return a.allDay ? -1 : 1
       return Date.parse(a.startAt) - Date.parse(b.startAt) || Date.parse(a.endAt) - Date.parse(b.endAt) || a.title.localeCompare(b.title)
     })
-    .map((e, i) => {
+    .map((e) => {
       const start = new Date(e.startAt)
       const end = new Date(e.endAt)
       const inProgress = !e.allDay && start.getTime() <= t
       const person = people.get(`${e.personType}:${e.personId}`) ?? null
       const minutes = leaveInMinutes(e, now, input.leaveByBufferMin)
       return {
-        key: `${i}:${e.personType}:${e.personId}:${e.startAt}:${e.title}`,
+        key: `${e.personType}:${e.personId}:${e.startAt}:${e.endAt}:${e.title}`,
         title: e.title,
         time: e.allDay ? 'All day' : inProgress ? `Now · until ${formatClock(end, timeZone)}` : timeRange(start, end, timeZone),
         now: inProgress,
@@ -98,13 +98,22 @@ export function buildTodayModel(input: TodayModelInput): TodayModel {
       }
     })
 
+  // Identical events (e.g. the same event in two calendars of one person) get a numbered key, in list order.
+  const seen = new Map<string, number>()
+  for (const row of rows) {
+    const n = seen.get(row.key) ?? 0
+    seen.set(row.key, n + 1)
+    if (n > 0) row.key = `${row.key}#${n}`
+  }
+
   const connections = result?.connections ?? []
   const reconnect = [...new Set(connections.filter((c) => c.status === 'auth_expired').map((c) => c.ownerName.trim()))].map((name) =>
     name ? `${name}’s calendar needs reconnecting` : 'A calendar needs reconnecting',
   )
   const allUnreachable = connections.length > 0 && connections.every((c) => c.status === 'unreachable')
   const unreachable = rows.length === 0 && (result ? allUnreachable : input.failed)
-  const age = result ? t - Date.parse(result.updatedAt) : 0
+  // Judged by when this device received the answer: the server's clock may differ from the tablet's.
+  const age = result ? t - Date.parse(result.receivedAt) : 0
 
   return {
     rows,

@@ -9,8 +9,12 @@
  * to /manage, and a tablet can't finish there: its full sign-in is never persisted, and /settings needs the PIN
  * session, so a full reload after the redirect would land on the main screen. On a display the buttons stay disabled
  * with a note to use Manage household on a phone or computer.
+ *
+ * While a change is saving, controls are `aria-disabled` (not `disabled`) and ignore input, so the focused switch,
+ * person or button keeps focus. After connecting, focus moves to the new connection (or the notice); after
+ * disconnecting, to the notice. Emits `busy` so the host can hold off its idle sign-out.
  */
-import { computed, ref, shallowRef, useId, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, shallowRef, useId, useTemplateRef, watch } from 'vue'
 import {
   calendarConnectMessage,
   createCalendarSettingsApi,
@@ -43,6 +47,8 @@ const props = withDefaults(
   { headingLevel: 2, reloadKey: 0 },
 )
 
+const emit = defineEmits<{ busy: [boolean] }>()
+
 const api = props.api ?? createCalendarSettingsApi()
 const navigate = props.navigate ?? ((url: string) => window.location.assign(url))
 
@@ -71,23 +77,43 @@ const confirmDisconnectId = ref<string | null>(null)
 const headingTag = computed(() => `h${props.headingLevel}`)
 const subTag = computed(() => `h${props.headingLevel + 1}`)
 const titleId = useId()
+const root = useTemplateRef<HTMLElement>('root')
+
+watch(busy, (value) => emit('busy', value))
+// A host counting on `busy` must not be left waiting when the section goes away mid-change.
+onBeforeUnmount(() => {
+  if (busy.value) emit('busy', false)
+})
+
+/** Only the latest load's answer is shown (a slower earlier one is ignored). */
+let loadSeq = 0
 
 async function load(): Promise<void> {
   if (isDemo) return
+  const mine = ++loadSeq
   loading.value = true
   try {
     const [rows, everyone] = await Promise.all([
       api.listMyConnections(props.client, props.householdId, props.membershipId),
       api.listPeople(props.client, props.householdId),
     ])
+    if (mine !== loadSeq) return
     connections.value = rows
     people.value = everyone
     loaded.value = true
+    error.value = null
   } catch (e) {
+    if (mine !== loadSeq) return
     error.value = `Couldn’t load your calendars. ${calendarConnectMessage(e)}`
   } finally {
-    loading.value = false
+    if (mine === loadSeq) loading.value = false
   }
+}
+
+async function focusAfterChange(selector: string | null): Promise<void> {
+  await nextTick()
+  const target = (selector && root.value?.querySelector<HTMLElement>(selector)) || root.value?.querySelector<HTMLElement>('[data-calendars-notice]')
+  target?.focus()
 }
 
 watch(
@@ -100,7 +126,7 @@ watch(
   { immediate: true },
 )
 
-async function act(work: () => Promise<void>): Promise<boolean> {
+async function act(work: () => Promise<void>, context: 'ics' | 'oauth' = 'ics'): Promise<boolean> {
   if (busy.value) return false
   busy.value = true
   error.value = null
@@ -109,7 +135,7 @@ async function act(work: () => Promise<void>): Promise<boolean> {
     await work()
     return true
   } catch (e) {
-    error.value = calendarConnectMessage(e)
+    error.value = calendarConnectMessage(e, context)
     return false
   } finally {
     busy.value = false
@@ -128,9 +154,13 @@ async function connectLink(): Promise<void> {
   busy.value = true
   error.value = null
   notice.value = null
+  let connectionId: string
+  let alreadyConnected: boolean
   try {
     const result = await api.connectIcs(props.client, props.householdId, url)
     icsUrl.value = ''
+    connectionId = result.connectionId
+    alreadyConnected = result.alreadyConnected
     notice.value = result.alreadyConnected
       ? 'That calendar is already connected.'
       : `Connected “${result.name}”. Choose whose calendar it is, then show it on the displays.`
@@ -141,10 +171,13 @@ async function connectLink(): Promise<void> {
     busy.value = false
   }
   await load()
+  // A new connection: its heading. Already connected (or not in the list): the notice says what happened.
+  const listed = connections.value.some((c) => c.id === connectionId)
+  await focusAfterChange(listed && !alreadyConnected ? `[data-connection-heading="${CSS.escape(connectionId)}"]` : null)
 }
 
 async function connectProvider(provider: 'google' | 'microsoft'): Promise<void> {
-  if (props.surface !== 'browser') return
+  if (props.surface !== 'browser' || notConfigured.value.includes(provider)) return
   await act(async () => {
     const result = await api.startOAuth(props.client, props.householdId, provider)
     if ('notConfigured' in result) {
@@ -154,7 +187,7 @@ async function connectProvider(provider: 'google' | 'microsoft'): Promise<void> 
     // Only ever leave for a provider's https consent page.
     if (!/^https:\/\//i.test(result.url)) throw new Error('unexpected consent URL')
     navigate(result.url)
-  })
+  }, 'oauth')
 }
 
 // ─── Show and assign ─────────────────────────────────────────────────────
@@ -175,6 +208,7 @@ async function save(connection: MyConnection, calendar: MyCalendar, visible: boo
 }
 
 async function toggleVisible(connection: MyConnection, calendar: MyCalendar): Promise<void> {
+  if (busy.value || calendar.gone) return
   if (calendar.visible) {
     if (choosingFor.value === calendar.id) choosingFor.value = null
     await save(connection, calendar, false, calendar.assignee)
@@ -203,6 +237,8 @@ function onPersonKeydown(e: KeyboardEvent, connection: MyConnection, calendar: M
   const isPrev = e.key === 'ArrowLeft' || e.key === 'ArrowUp'
   if ((!isNext && !isPrev) || people.value.length === 0) return
   e.preventDefault()
+  // While a change saves, the selection (and so focus) stays put.
+  if (busy.value) return
   const nextIndex = (index + (isNext ? 1 : -1) + people.value.length) % people.value.length
   const group = (e.currentTarget as HTMLElement).parentElement
   ;(group?.children[nextIndex] as HTMLElement | undefined)?.focus()
@@ -221,6 +257,7 @@ async function disconnect(connection: MyConnection): Promise<void> {
   confirmDisconnectId.value = null
   connections.value = connections.value.filter((c) => c.id !== connection.id)
   notice.value = `Disconnected ${connection.label}. Its events no longer show on your displays.`
+  await focusAfterChange(null)
   await load()
 }
 
@@ -232,7 +269,7 @@ function statusText(connection: MyConnection): string {
 </script>
 
 <template>
-  <section :aria-labelledby="titleId" data-testid="calendars-section" class="flex flex-col gap-5">
+  <section ref="root" :aria-labelledby="titleId" data-testid="calendars-section" class="flex flex-col gap-5">
     <component :is="headingTag" :id="titleId" :class="headingLevel === 2 ? 'text-[32px]' : 'text-[26px]'" class="font-semibold text-ink">
       Calendars
     </component>
@@ -244,7 +281,7 @@ function statusText(connection: MyConnection): string {
     <p v-if="isDemo" class="text-[18px] text-ink-2">Calendars aren’t available in the demo.</p>
 
     <template v-else>
-      <p v-if="notice" role="status" class="text-[18px] font-medium text-green-deep">{{ notice }}</p>
+      <p v-if="notice" role="status" tabindex="-1" data-calendars-notice class="text-[18px] font-medium text-green-deep outline-none">{{ notice }}</p>
       <p v-if="error" role="alert" class="text-[18px] text-warn-ink">{{ error }}</p>
 
       <!-- Connect a calendar link -->
@@ -263,7 +300,9 @@ function statusText(connection: MyConnection): string {
           <RInput v-model="icsUrl" label="Calendar link" type="url" placeholder="https://… or webcal://…" autocomplete="off" />
           <p v-if="icsError" role="alert" data-testid="ics-error" class="text-[18px] text-warn-ink">{{ icsError }}</p>
           <div>
-            <RButton type="submit" :disabled="busy">{{ busy ? 'Connecting…' : 'Connect link' }}</RButton>
+            <RButton type="submit" :aria-disabled="busy || undefined" class="aria-disabled:cursor-progress">
+              {{ busy ? 'Connecting…' : 'Connect link' }}
+            </RButton>
           </div>
         </form>
       </div>
@@ -277,7 +316,9 @@ function statusText(connection: MyConnection): string {
             :key="provider"
             variant="secondary"
             :data-testid="`connect-${provider}`"
-            :disabled="surface !== 'browser' || busy || notConfigured.includes(provider)"
+            :disabled="surface !== 'browser'"
+            :aria-disabled="surface === 'browser' && (busy || notConfigured.includes(provider)) ? 'true' : undefined"
+            :class="notConfigured.includes(provider) && 'opacity-50 aria-disabled:cursor-not-allowed'"
             @click="connectProvider(provider)"
           >
             {{ provider === 'google' ? 'Connect Google' : 'Connect Microsoft' }}<template v-if="notConfigured.includes(provider)"> — Not set up yet</template>
@@ -301,19 +342,28 @@ function statusText(connection: MyConnection): string {
         >
           <div class="flex flex-wrap items-start gap-4">
             <div class="flex min-w-0 flex-1 basis-48 flex-col">
-              <component :is="subTag" class="text-[22px] font-semibold break-words text-ink">{{ connection.label }}</component>
+              <component
+                :is="subTag"
+                tabindex="-1"
+                :data-connection-heading="connection.id"
+                class="text-[22px] font-semibold break-words text-ink outline-none"
+              >
+                {{ connection.label }}
+              </component>
               <span class="text-[18px]" :class="connection.status === 'ok' ? 'text-ink-3' : 'font-medium text-warn-ink'">
                 {{ PROVIDER_LABEL[connection.provider] }} · {{ statusText(connection) }}
               </span>
             </div>
-            <RButton variant="ghost" :disabled="busy" @click="confirmDisconnectId = connection.id">Disconnect</RButton>
+            <RButton variant="ghost" :aria-disabled="busy || undefined" @click="!busy && (confirmDisconnectId = connection.id)">Disconnect</RButton>
           </div>
 
           <div v-if="confirmDisconnectId === connection.id" class="flex flex-col gap-3 border-t border-line pt-3">
             <p class="text-[20px] text-ink">Disconnect {{ connection.label }}? Its events stop showing on your displays.</p>
             <div class="flex flex-wrap gap-3">
-              <RButton variant="secondary" :disabled="busy" @click="confirmDisconnectId = null">Cancel</RButton>
-              <RButton variant="danger" :disabled="busy" @click="disconnect(connection)">Disconnect {{ connection.label }}</RButton>
+              <RButton variant="secondary" :aria-disabled="busy || undefined" @click="!busy && (confirmDisconnectId = null)">Cancel</RButton>
+              <RButton variant="danger" :aria-disabled="busy || undefined" class="aria-disabled:cursor-progress" @click="disconnect(connection)">
+                Disconnect {{ connection.label }}
+              </RButton>
             </div>
           </div>
 
@@ -335,9 +385,10 @@ function statusText(connection: MyConnection): string {
                   role="switch"
                   :aria-checked="calendar.visible"
                   :aria-label="`Show ${calendar.name} on displays`"
-                  :disabled="busy || calendar.gone"
+                  :aria-disabled="busy || calendar.gone || undefined"
                   :data-testid="`visible-${calendar.id}`"
-                  class="flex min-h-[44px] items-center gap-3 rounded-[var(--radius-control)] px-2 text-[18px] font-medium text-ink disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-orange-deep"
+                  class="flex min-h-[44px] items-center gap-3 rounded-[var(--radius-control)] px-2 text-[18px] font-medium text-ink aria-disabled:cursor-not-allowed focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-orange-deep"
+                  :class="calendar.gone && 'opacity-50'"
                   @click="toggleVisible(connection, calendar)"
                 >
                   <span
@@ -367,9 +418,9 @@ function statusText(connection: MyConnection): string {
                   role="radio"
                   :aria-checked="personKey(calendar.assignee) === personKey(person)"
                   :tabindex="personTabindex(calendar, i)"
-                  :disabled="busy"
+                  :aria-disabled="busy || undefined"
                   :data-testid="`assign-${calendar.id}-${person.id}`"
-                  class="flex min-h-[44px] items-center gap-2 rounded-full py-1 pr-4 pl-1 text-[18px] font-medium disabled:cursor-not-allowed focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-orange-deep"
+                  class="flex min-h-[44px] items-center gap-2 rounded-full py-1 pr-4 pl-1 text-[18px] font-medium aria-disabled:cursor-progress focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-orange-deep"
                   :class="personKey(calendar.assignee) === personKey(person) ? 'bg-ink text-surface' : 'bg-surface-2 text-ink'"
                   @click="assign(connection, calendar, person)"
                   @keydown="onPersonKeydown($event, connection, calendar, i)"

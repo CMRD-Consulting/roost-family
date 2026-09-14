@@ -24,6 +24,7 @@ const events = (list: TodayEvent[], over: Partial<TodayEvents> = {}): TodayEvent
   connections: [],
   partial: false,
   updatedAt: NOW.toISOString(),
+  receivedAt: NOW.toISOString(),
   ...over,
 })
 
@@ -100,8 +101,10 @@ describe('buildTodayModel', () => {
     expect(loading.unreachable).toBe(false)
   })
 
-  it('notes a calendar older than 30 minutes', () => {
-    const age = (min: number) => buildTodayModel(input({ events: events([], { updatedAt: new Date(NOW.getTime() - min * 60_000).toISOString() }) })).stale
+  it('notes a calendar received more than 30 minutes ago, by this device’s clock', () => {
+    const age = (min: number) => buildTodayModel(input({ events: events([], { receivedAt: new Date(NOW.getTime() - min * 60_000).toISOString() }) })).stale
+    // The server's clock doesn't matter: a skewed generatedAt alone never makes it stale.
+    expect(buildTodayModel(input({ events: events([], { updatedAt: '2026-09-14T10:00:00Z' }) })).stale).toBeNull()
     expect(age(30)).toBeNull()
     expect(age(45)).toBe('Calendar updated 45 min ago')
     expect(age(135)).toBe('Calendar updated 2 h ago')
@@ -129,6 +132,20 @@ describe('buildTodayModel', () => {
     const withEvent = { ...unreachable, events: [event({})] }
     expect(buildTodayModel(input({ events: withEvent })).unreachable).toBe(false)
     expect(buildTodayModel(input({ events: null, failed: true }))).toMatchObject({ unreachable: true, empty: false })
+  })
+})
+
+describe('row keys', () => {
+  it('are stable across refreshes and ticks, and distinct for identical events', () => {
+    const a = event({ title: 'Swim' })
+    const b = event({ title: 'Nap', startAt: '2026-09-14T19:30:00Z', endAt: '2026-09-14T20:30:00Z' })
+    const first = buildTodayModel(input({ events: events([a, b, { ...a }]) })).rows.map((r) => r.key)
+    const later = buildTodayModel(input({ events: events([{ ...b }, { ...a }, { ...a }]), now: new Date(NOW.getTime() + 60_000) })).rows.map((r) => r.key)
+    expect(new Set(first).size).toBe(3)
+    expect(later).toEqual(first)
+    // Removing the earlier event doesn't change the others' keys (no index in the key).
+    const without = buildTodayModel(input({ events: events([a]) })).rows.map((r) => r.key)
+    expect(without[0]).toBe(first[1])
   })
 })
 

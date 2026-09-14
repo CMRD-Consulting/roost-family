@@ -32,7 +32,7 @@ function mountPanel(events: TodayEvents | null, extra: Record<string, unknown> =
 }
 
 const result = (list: TodayEvent[], over: Partial<TodayEvents> = {}): TodayEvents => ({
-  events: list, connections: [], partial: false, updatedAt: NOW.toISOString(), ...over,
+  events: list, connections: [], partial: false, updatedAt: NOW.toISOString(), receivedAt: NOW.toISOString(), ...over,
 })
 
 beforeEach(() => {
@@ -55,7 +55,9 @@ describe('TodayPanel', () => {
     const avatar = rows[2]!.find('[aria-hidden="true"].rounded-full.font-bold')
     expect(avatar.text()).toBe('S')
     expect(rows[1]!.text()).toContain('YMCA Pool')
-    expect(rows[1]!.find('[data-testid="today-event-leave"]').text()).toBe('Leave in 25 min')
+    const leave = rows[1]!.find('[data-testid="today-event-leave"]')
+    expect(leave.text()).toBe('Leave in 25 min')
+    expect(leave.classes()).toEqual(expect.arrayContaining(['text-[24px]', 'text-orange-deep']))
     expect(rows[0]!.find('[data-testid="today-event-leave"]').exists()).toBe(false)
   })
 
@@ -78,13 +80,31 @@ describe('TodayPanel', () => {
     expect(w.find('[data-testid="today-event-leave"]').text()).toBe('Leave in 24 min')
   })
 
+  it('runs no timer of its own when the screen supplies the clock', () => {
+    const w = mountPanel(result([]), { now: NOW })
+    expect(vi.getTimerCount()).toBe(0)
+    w.unmount()
+    const own = mountPanel(result([]))
+    expect(vi.getTimerCount()).toBe(1)
+    own.unmount()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('shows one stale line: the household’s "Updated…" note replaces the calendar’s', () => {
+    const old = result([], { receivedAt: new Date(NOW.getTime() - 45 * 60_000).toISOString() })
+    const w = mountPanel(old, { updatedNote: 'Updated 7 min ago' })
+    expect(w.find('[data-testid="today-stale"]').exists()).toBe(false)
+    expect(w.get('[data-testid="today-updated"]').text()).toBe('Updated 7 min ago')
+    expect(mountPanel(old, { updatedNote: null }).get('[data-testid="today-stale"]').text()).toBe('Calendar updated 45 min ago')
+  })
+
   it('says "Nothing else today" when nothing is left', () => {
     expect(mountPanel(result([])).text()).toContain('Nothing else today')
     expect(mountPanel(null).text()).not.toContain('Nothing else today')
   })
 
   it('notes a calendar more than 30 minutes old', () => {
-    const w = mountPanel(result([], { updatedAt: new Date(NOW.getTime() - 45 * 60_000).toISOString() }))
+    const w = mountPanel(result([], { receivedAt: new Date(NOW.getTime() - 45 * 60_000).toISOString() }))
     expect(w.find('[data-testid="today-stale"]').text()).toBe('Calendar updated 45 min ago')
     expect(mountPanel(result([])).find('[data-testid="today-stale"]').exists()).toBe(false)
   })

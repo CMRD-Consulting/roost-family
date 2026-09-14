@@ -44,7 +44,7 @@ export interface CalendarAttemptOptions {
   query: Parameters<typeof calendarAttemptFromQuery>[0]
   status: Ref<CalendarStatus | null>
   /** The signed-in adult with a household open, or null. */
-  target: () => { client: AdultClient } | null
+  target: () => { client: AdultClient; membershipId: string } | null
   offline: () => boolean
   demo: boolean
   api: CalendarSettingsApi
@@ -56,12 +56,16 @@ export interface CalendarAttemptOptions {
  * A Google / Microsoft connection coming back to Manage household (`?calendar=pending&attempt=…`). The adult's sign-in
  * isn't persisted, so the page reloads at the sign-in step: the attempt token is kept in memory and in sessionStorage
  * (surviving another reload), and finished with `calendar-oauth-finish` as soon as an adult is signed in with a
- * household open. An attempt that expired or is unknown is forgotten; one refused for another adult is kept, so
- * signing in as the right adult finishes it.
+ * household open. The token leaves the URL at once (the address bar, history and error-tracking breadcrumbs never keep
+ * it through the sign-in). While it is being finished it is out of sessionStorage too, so a remount can't finish it
+ * twice; it goes back only when the same attempt can be tried again (network or server failure, or another adult).
+ * An attempt that expired or is unknown is forgotten.
  */
 export function useCalendarAttempt(options: CalendarAttemptOptions) {
-  const attempt = ref<string | null>(options.demo ? null : (calendarAttemptFromQuery(options.query) ?? readStored()))
+  const fromQuery = options.demo ? null : calendarAttemptFromQuery(options.query)
+  const attempt = ref<string | null>(fromQuery ?? (options.demo ? null : readStored()))
   writeStored(attempt.value)
+  if (fromQuery) options.cleanUrl()
   if (attempt.value && !options.status.value) options.status.value = { kind: 'pending', message: CALENDAR_PENDING_MESSAGE }
 
   /** Bumped after a connection was made, so the calendar list reads again. */
@@ -83,20 +87,25 @@ export function useCalendarAttempt(options: CalendarAttemptOptions) {
     running = true
     canRetry.value = false
     options.status.value = { kind: 'pending', message: CALENDAR_PENDING_MESSAGE }
+    writeStored(null)
+    const sameAdult = () => options.target()?.membershipId === target.membershipId
     try {
       const result = await options.api.finishOAuth(target.client, token)
       forget()
-      if (options.target() === target) {
+      if (sameAdult()) {
         options.status.value = { kind: 'connected', message: calendarConnectedMessage(result.label) }
         reloadKey.value += 1
       }
     } catch (e) {
-      if (calendarFinishRetryable(e)) canRetry.value = true
-      else forget()
-      if (options.target() === target) options.status.value = { kind: 'error', message: calendarFinishMessage(e) }
+      if (calendarFinishRetryable(e)) {
+        canRetry.value = true
+        writeStored(token)
+      } else {
+        forget()
+      }
+      if (sameAdult()) options.status.value = { kind: 'error', message: calendarFinishMessage(e) }
     } finally {
       running = false
-      options.cleanUrl()
     }
   }
 

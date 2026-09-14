@@ -1,6 +1,8 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { Breadcrumb, ErrorEvent as SentryErrorEvent } from '@sentry/vue'
-import { hashHouseholdId, scrubBreadcrumb, scrubEvent } from './errorTracking'
+import { hashHouseholdId, scrubBreadcrumb, scrubEvent, sentryInitOptions } from './errorTracking'
 
 const REDACTION_TERMS = ['Ivy', 'Theo', 'Jess', "Children's ibuprofen"]
 
@@ -108,6 +110,42 @@ describe('scrubBreadcrumb', () => {
   it('leaves an unrelated message alone', () => {
     const crumb: Breadcrumb = { category: 'navigation', message: 'Navigated to /home' }
     expect(scrubBreadcrumb(crumb, REDACTION_TERMS)?.message).toBe('Navigated to /home')
+  })
+})
+
+describe('URLs in breadcrumbs (OAuth attempt tokens, spec §5.9)', () => {
+  it('strips query strings and fragments from navigation breadcrumb from/to', () => {
+    const crumb: Breadcrumb = {
+      category: 'navigation',
+      data: { from: '/manage?calendar=pending&attempt=secretToken', to: 'https://roost.cmrd.dev/manage#access_token=abc' },
+    }
+    expect(scrubBreadcrumb(crumb, [])?.data).toEqual({ from: '/manage', to: 'https://roost.cmrd.dev/manage' })
+  })
+
+  it('strips query strings from a url on any breadcrumb, and from navigation crumbs attached to an event', () => {
+    expect(scrubBreadcrumb({ category: 'ui.click', data: { url: '/manage?attempt=x', target: 'button' } }, [])?.data).toEqual({
+      url: '/manage',
+      target: 'button',
+    })
+    const event = scrubEvent(baseEvent({ breadcrumbs: [{ category: 'navigation', data: { from: '/a?attempt=1', to: '/b' } }] }), [], null)
+    expect(event.breadcrumbs?.[0]?.data).toEqual({ from: '/a', to: '/b' })
+  })
+})
+
+describe('index.html', () => {
+  it('sends only the origin as the referrer, so a URL token never leaves in a Referer header', () => {
+    const html = readFileSync(resolve(process.cwd(), 'index.html'), 'utf8')
+    expect(html).toContain('<meta name="referrer" content="strict-origin" />')
+  })
+})
+
+describe('sentryInitOptions', () => {
+  it('never attaches component props (they can hold calendar events) and sends no PII', () => {
+    const options = sentryInitOptions({ app: {} as never, dsn: 'https://x@example.ingest.sentry.io/1', integrations: [], getRedactionTerms: () => [], householdHash: () => null })
+    expect(options.attachProps).toBe(false)
+    expect(options.sendDefaultPii).toBe(false)
+    const crumb = options.beforeBreadcrumb!({ category: 'navigation', data: { to: '/manage?attempt=t' } }, undefined)
+    expect(crumb?.data).toEqual({ to: '/manage' })
   })
 })
 

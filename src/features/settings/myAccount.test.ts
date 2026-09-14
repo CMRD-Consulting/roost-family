@@ -263,6 +263,37 @@ describe('MyAccountSection', () => {
     w.unmount()
   })
 
+  it('holds off the idle sign-out while a calendar change is still saving', async () => {
+    settingsApi.adultMembership.mockResolvedValue({ membershipId: SAM, role: 'owner' })
+    let finish!: () => void
+    const connectIcs = vi.fn(() => new Promise((resolve) => (finish = () => resolve({ connectionId: 'c', selectionId: 's', name: 'Family', alreadyConnected: false }))))
+    Object.assign(calendars, { connectIcs })
+    const w = await mountAs(SAM, '1234')
+    await buttonByText(w, 'Manage my calendars').trigger('click')
+    await settle()
+    await signIn(w)
+    await w.get('[data-testid="calendars-section"] input[type="url"]').setValue('https://example.com/family.ics')
+    await w.get('[data-testid="calendars-section"] form').trigger('submit')
+    await settle()
+    // Restart the Settings PIN session's own 5-minute idle a little later than the adult's, so only the adult's
+    // idle expiry falls in the window below.
+    await vi.advanceTimersByTimeAsync(1_000)
+    await useSettingsSessionStore().enter(SAM, '1234')
+
+    await vi.advanceTimersByTimeAsync(5 * 60_000 - 900)
+    await flushPromises()
+    expect(endSession).not.toHaveBeenCalled()
+    expect(w.find('[data-testid="calendars-section"]').exists()).toBe(true)
+
+    finish()
+    await settle()
+    await vi.advanceTimersByTimeAsync(5 * 60_000 + 1_000)
+    await settle()
+    expect(endSession).toHaveBeenCalled()
+    delete (calendars as Record<string, unknown>).connectIcs
+    w.unmount()
+  })
+
   it('the only owner cannot leave, and is told why', async () => {
     const w = await mountAs(SAM, '1234')
     expect(buttonByText(w, 'Leave household').attributes('disabled')).toBeDefined()

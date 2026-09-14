@@ -56,11 +56,15 @@ function fakeClient(invoke: ReturnType<typeof vi.fn>, extra: Record<string, unkn
 }
 
 describe('fetchTodayEventsWith', () => {
-  it('posts the household to calendar-events and keeps generatedAt as updatedAt', async () => {
+  it('posts the household to calendar-events with a timeout, keeping generatedAt and the device receive time', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(NOW)
     const invoke = vi.fn().mockResolvedValue({ data: body('2026-09-14T18:58:00Z'), error: null })
     const result = await fetchTodayEventsWith(fakeClient(invoke), HOUSEHOLD)
-    expect(invoke).toHaveBeenCalledWith('calendar-events', { body: { householdId: HOUSEHOLD } })
+    vi.useRealTimers()
+    expect(invoke).toHaveBeenCalledWith('calendar-events', { body: { householdId: HOUSEHOLD }, timeout: 20_000 })
     expect(result.updatedAt).toBe('2026-09-14T18:58:00Z')
+    expect(result.receivedAt).toBe(NOW.toISOString())
     expect(result.events).toHaveLength(1)
     expect(result.connections).toEqual([{ id: 'conn-1', ownerName: 'Sam', status: 'ok' }])
   })
@@ -68,6 +72,47 @@ describe('fetchTodayEventsWith', () => {
   it('throws the server’s error code', async () => {
     const invoke = vi.fn().mockResolvedValue({ data: null, error: httpError(403, { error: 'forbidden' }) })
     await expect(fetchTodayEventsWith(fakeClient(invoke), HOUSEHOLD)).rejects.toMatchObject({ code: 'forbidden' })
+  })
+
+  it('keeps only well-formed events and connections, with only the allowed fields', async () => {
+    const good = body('2026-09-14T18:58:00Z').events[0]!
+    const data = {
+      ...body('2026-09-14T18:58:00Z'),
+      events: [
+        { ...good, description: 'secret', attendees: ['a@example.com'] },
+        { ...good, title: 42 },
+        { ...good, startAt: 'yesterday' },
+        { ...good, endAt: null },
+        { ...good, allDay: 'no' },
+        { ...good, personType: 'pet' },
+        { ...good, personId: 7 },
+        { ...good, calendarColor: null },
+        { ...good, location: 5 },
+        { ...good, title: 'No location', location: null },
+        null,
+        'event',
+      ],
+      connections: [
+        { id: 'conn-1', ownerName: 'Sam', status: 'ok', secret: 'x' },
+        { id: 'conn-2', ownerName: 'Alex', status: 'broken' },
+        { id: 3, ownerName: 'Theo', status: 'ok' },
+      ],
+    }
+    const invoke = vi.fn().mockResolvedValue({ data, error: null })
+    const result = await fetchTodayEventsWith(fakeClient(invoke), HOUSEHOLD)
+    expect(result.events.map((e) => e.title)).toEqual(['Swim lesson', 'No location'])
+    expect(Object.keys(result.events[0]!).sort()).toEqual(
+      ['allDay', 'calendarColor', 'endAt', 'location', 'personId', 'personType', 'startAt', 'title'],
+    )
+    expect(result.connections).toEqual([{ id: 'conn-1', ownerName: 'Sam', status: 'ok' }])
+  })
+
+  it('reports a request that timed out (aborted) as a network failure', async () => {
+    const invoke = vi.fn().mockResolvedValue({
+      data: null,
+      error: Object.assign(new Error('The operation was aborted'), { name: 'FunctionsFetchError' }),
+    })
+    await expect(fetchTodayEventsWith(fakeClient(invoke), HOUSEHOLD)).rejects.toMatchObject({ code: 'network' })
   })
 
   it('rejects a response without events', async () => {
@@ -101,7 +146,10 @@ describe('useTodayEvents', () => {
     fetchEvents = vi.fn(async (_householdId: string): Promise<TodayEvents> => {
       calls += 1
       const r = body(new Date().toISOString(), `Event ${calls}`)
-      return { events: r.events as TodayEvents['events'], connections: r.connections as TodayEvents['connections'], partial: false, updatedAt: r.generatedAt }
+      return {
+        events: r.events as TodayEvents['events'], connections: r.connections as TodayEvents['connections'], partial: false,
+        updatedAt: r.generatedAt, receivedAt: r.generatedAt,
+      }
     })
   })
 
@@ -210,6 +258,85 @@ describe('useTodayEvents', () => {
     scope.stop()
   })
 
+  it('stops its interval and visibility listener when its scope is disposed', async () => {
+    const add = vi.spyOn(document, 'addEventListener')
+    const remove = vi.spyOn(document, 'removeEventListener')
+    const { scope } = setup()
+    await flushPromises()
+    const listener = add.mock.calls.find(([type]) => type === 'visibilitychange')![1]
+    expect(vi.getTimerCount()).toBeGreaterThan(0)
+    scope.stop()
+    expect(remove).toHaveBeenCalledWith('visibilitychange', listener)
+    expect(vi.getTimerCount()).toBe(0)
+    setVisibility('visible')
+    await vi.advanceTimersByTimeAsync(CALENDAR_REFRESH_MS * 2)
+    expect(fetchEvents).toHaveBeenCalledTimes(1)
+    add.mockRestore()
+    remove.mockRestore()
+  })
+
+  it('never shows a household’s answer after switching to another mid-request, and then asks for the new one', async () => {
+    const pending: Array<{ id: string; resolve: (r: TodayEvents) => void }> = []
+    fetchEvents.mockImplementation((id: string) => new Promise<TodayEvents>((resolve) => pending.push({ id, resolve })))
+    const answer = (title: string): TodayEvents => ({
+      events: [{ ...(body(NOW.toISOString()).events[0] as TodayEvents['events'][number]), title }],
+      connections: [], partial: false, updatedAt: NOW.toISOString(), receivedAt: NOW.toISOString(),
+    })
+    const { today, householdId, scope } = setup()
+    await flushPromises()
+    expect(pending.map((p) => p.id)).toEqual([HOUSEHOLD])
+
+    householdId.value = OTHER
+    await nextTick()
+    expect(pending).toHaveLength(1) // queued behind the running request, not in parallel
+
+    pending[0]!.resolve(answer('Rivera event'))
+    await flushPromises()
+    expect(today.result.value).toBeNull()
+    expect(pending.map((p) => p.id)).toEqual([HOUSEHOLD, OTHER])
+
+    pending[1]!.resolve(answer('Lake event'))
+    await flushPromises()
+    expect(today.result.value?.events[0]?.title).toBe('Lake event')
+    scope.stop()
+  })
+
+  it('discards an answer from before midnight that arrives after it, and asks again for the new day', async () => {
+    vi.setSystemTime(new Date('2026-09-15T03:59:30Z')) // 11:59:30 PM in New York
+    const pending: Array<(r: TodayEvents) => void> = []
+    fetchEvents.mockImplementation(() => new Promise<TodayEvents>((resolve) => pending.push(resolve)))
+    const answer = (title: string): TodayEvents => ({
+      events: [{ ...(body(NOW.toISOString()).events[0] as TodayEvents['events'][number]), title }],
+      connections: [], partial: false, updatedAt: new Date().toISOString(), receivedAt: new Date().toISOString(),
+    })
+    const { today, scope } = setup()
+    await flushPromises()
+    expect(pending).toHaveLength(1)
+
+    await vi.advanceTimersByTimeAsync(31_000) // midnight passes while the first request hangs
+    expect(pending).toHaveLength(1)
+    pending[0]!(answer('Yesterday'))
+    await flushPromises()
+    expect(today.result.value).toBeNull()
+    expect(pending).toHaveLength(2)
+
+    pending[1]!(answer('Today'))
+    await flushPromises()
+    expect(today.result.value?.events[0]?.title).toBe('Today')
+    scope.stop()
+  })
+
+  it('asks again after a request fails (nothing stays in flight)', async () => {
+    fetchEvents.mockRejectedValueOnce(new Error('timeout'))
+    const { today, scope } = setup()
+    await flushPromises()
+    expect(today.failed.value).toBe(true)
+    await today.refresh()
+    expect(fetchEvents).toHaveBeenCalledTimes(2)
+    expect(today.failed.value).toBe(false)
+    scope.stop()
+  })
+
   it('keeps the last good result across remounts (memory only) and forgets it for another household', async () => {
     const first = setup()
     await flushPromises()
@@ -268,9 +395,19 @@ describe('createCalendarSettingsApi', () => {
   it('connects a calendar link and maps function errors to codes', async () => {
     const invoke = vi.fn().mockResolvedValue({ data: { connectionId: 'c', selectionId: 's', name: 'Family' }, error: null })
     await expect(api.connectIcs(fakeClient(invoke), HOUSEHOLD, 'webcal://example.com/a.ics')).resolves.toEqual({
-      connectionId: 'c', selectionId: 's', name: 'Family',
+      connectionId: 'c', selectionId: 's', name: 'Family', alreadyConnected: false,
     })
-    expect(invoke).toHaveBeenCalledWith('calendar-connect-ics', { body: { householdId: HOUSEHOLD, url: 'webcal://example.com/a.ics' } })
+    expect(invoke).toHaveBeenCalledWith('calendar-connect-ics', {
+      body: { householdId: HOUSEHOLD, url: 'webcal://example.com/a.ics' }, timeout: 20_000,
+    })
+
+    invoke.mockResolvedValue({ data: { connectionId: 'c', selectionId: 's', name: 'Family', alreadyConnected: true }, error: null })
+    await expect(api.connectIcs(fakeClient(invoke), HOUSEHOLD, 'https://x')).resolves.toMatchObject({ alreadyConnected: true })
+
+    invoke.mockResolvedValue({ data: null, error: httpError(429, { error: 'rate_limited' }) })
+    await expect(api.connectIcs(fakeClient(invoke), HOUSEHOLD, 'https://x')).rejects.toMatchObject({ code: 'rate_limited' })
+    invoke.mockResolvedValue({ data: null, error: httpError(503, { error: 'not_configured' }) })
+    await expect(api.connectIcs(fakeClient(invoke), HOUSEHOLD, 'https://x')).rejects.toMatchObject({ code: 'not_configured' })
 
     invoke.mockResolvedValue({ data: null, error: httpError(422, { error: 'not_a_calendar' }) })
     await expect(api.connectIcs(fakeClient(invoke), HOUSEHOLD, 'https://x')).rejects.toMatchObject({ code: 'not_a_calendar' })
@@ -282,15 +419,17 @@ describe('createCalendarSettingsApi', () => {
   it('starts OAuth (always returning to Manage household), reporting not_configured as a result rather than an error', async () => {
     const invoke = vi.fn().mockResolvedValue({ data: { error: 'not_configured' }, error: null })
     await expect(api.startOAuth(fakeClient(invoke), HOUSEHOLD, 'google')).resolves.toEqual({ notConfigured: true })
-    expect(invoke).toHaveBeenCalledWith('calendar-oauth-start', { body: { householdId: HOUSEHOLD, provider: 'google', returnTo: 'manage' } })
+    expect(invoke).toHaveBeenCalledWith('calendar-oauth-start', { body: { householdId: HOUSEHOLD, provider: 'google', returnTo: 'manage' }, timeout: 20_000 })
     invoke.mockResolvedValue({ data: { url: 'https://accounts.example/consent' }, error: null })
     await expect(api.startOAuth(fakeClient(invoke), HOUSEHOLD, 'microsoft')).resolves.toEqual({ url: 'https://accounts.example/consent' })
+    invoke.mockResolvedValue({ data: null, error: httpError(429, { error: 'rate_limited' }) })
+    await expect(api.startOAuth(fakeClient(invoke), HOUSEHOLD, 'google')).rejects.toMatchObject({ code: 'rate_limited' })
   })
 
   it('finishes an OAuth attempt, with expired and forbidden as codes', async () => {
     const invoke = vi.fn().mockResolvedValue({ data: { connectionId: 'c', calendars: 3, label: 'sam@example.com' }, error: null })
     await expect(api.finishOAuth(fakeClient(invoke), 'attempt-token')).resolves.toEqual({ connectionId: 'c', calendars: 3, label: 'sam@example.com' })
-    expect(invoke).toHaveBeenCalledWith('calendar-oauth-finish', { body: { attempt: 'attempt-token' } })
+    expect(invoke).toHaveBeenCalledWith('calendar-oauth-finish', { body: { attempt: 'attempt-token' }, timeout: 20_000 })
     invoke.mockResolvedValue({ data: null, error: httpError(410, { error: 'expired' }) })
     await expect(api.finishOAuth(fakeClient(invoke), 'attempt-token')).rejects.toMatchObject({ code: 'expired' })
     invoke.mockResolvedValue({ data: null, error: httpError(404, { error: 'invalid_attempt' }) })
@@ -322,5 +461,8 @@ describe('calendarConnectMessage', () => {
     expect(calendarConnectMessage(new CalendarError('forbidden'))).toMatch(/sign-in/)
     expect(calendarConnectMessage(new CalendarError('network'))).toMatch(/Couldn’t reach Roost Family/)
     expect(calendarConnectMessage(new Error('boom'))).toMatch(/Try again/)
+    expect(calendarConnectMessage(new CalendarError('rate_limited'))).toBe('Too many calendar links added recently. Try again in an hour.')
+    expect(calendarConnectMessage(new CalendarError('rate_limited'), 'oauth')).toBe('Too many connection attempts. Try again in a few minutes.')
+    expect(calendarConnectMessage(new CalendarError('not_configured'))).toBe('Calendar links aren’t set up on this server yet.')
   })
 })
