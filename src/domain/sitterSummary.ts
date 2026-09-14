@@ -1,3 +1,4 @@
+import { STALE_SLEEP_MS } from './sleep'
 import type { DiaperEntry, DoseEntry, FeedingEntry, IsoTimestamp, SleepEntry, StickerEntry } from './types'
 
 export interface SessionRange {
@@ -34,7 +35,16 @@ export function sitterSummary(
   return children.map(({ id }) => ({
     childId: id,
     sleeps: data.sleeps
-      .filter((s) => s.childId === id && Date.parse(s.startAt) <= end && (s.endAt ? Date.parse(s.endAt) : end) >= start)
+      .filter((s) => {
+        if (s.childId !== id) return false
+        const startAt = Date.parse(s.startAt)
+        const endAt = s.endAt ? Date.parse(s.endAt) : end
+        if (!(startAt < end && endAt > start)) return false
+        // An open sleep that started long before the session ended isn't "still
+        // going" — it's a forgotten End sleep and shouldn't inflate the summary.
+        if (s.endAt === null && end - startAt > STALE_SLEEP_MS) return false
+        return true
+      })
       .sort((a, b) => Date.parse(a.startAt) - Date.parse(b.startAt)),
     feedings: data.feedings.filter((f) => f.childId === id && inRange(f.at)).sort(byTime),
     doses: data.doses.filter((d) => d.childId === id && inRange(d.at)).sort(byTime),

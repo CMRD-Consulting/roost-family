@@ -62,6 +62,9 @@ export interface DoseEntry {
   conflictAcknowledgedAt: IsoTimestamp | null
   /** Server insert time (= sync time for offline-logged doses). */
   createdAt: IsoTimestamp
+  note: string | null
+  /** Warning kinds (e.g. "early", "overMax") the logging adult confirmed past. */
+  warningsConfirmed: string[]
 }
 
 export interface StickerEntry {

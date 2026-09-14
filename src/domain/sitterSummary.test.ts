@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { sitterSummary } from './sitterSummary'
+import { STALE_SLEEP_MS } from './sleep'
 import type { DoseEntry, FeedingEntry, SleepEntry } from './types'
 
 const session = { startAt: '2026-09-14T22:00:00Z', endAt: '2026-09-15T02:00:00Z' }
@@ -12,7 +13,17 @@ const feeding = (childId: string, at: string): FeedingEntry => ({
   id: crypto.randomUUID(), childId, at, type: 'milk', amount: '6 oz', note: null,
 })
 const dose = (childId: string, at: string): DoseEntry => ({
-  id: crypto.randomUUID(), childId, medicineId: 'ibu', at, loggedByName: 'Jess (sitter)', loggedOffline: false, voidedAt: null, conflictAcknowledgedAt: null, createdAt: at,
+  id: crypto.randomUUID(),
+  childId,
+  medicineId: 'ibu',
+  at,
+  loggedByName: 'Jess (sitter)',
+  loggedOffline: false,
+  voidedAt: null,
+  conflictAcknowledgedAt: null,
+  createdAt: at,
+  note: null,
+  warningsConfirmed: [],
 })
 
 describe('sitterSummary', () => {
@@ -44,5 +55,47 @@ describe('sitterSummary', () => {
       new Date('2026-09-15T04:00:00Z'),
     )
     expect(mara?.feedings).toHaveLength(1)
+  })
+
+  it('excludes a sleep that ends exactly when the session starts (strict overlap)', () => {
+    const [, mara] = sitterSummary(
+      session,
+      children,
+      { sleeps: [sleep('mara', '2026-09-14T20:00:00Z', session.startAt)], feedings: [], doses: [], stickers: [], diapers: [] },
+      new Date('2026-09-15T03:00:00Z'),
+    )
+    expect(mara?.sleeps).toHaveLength(0)
+  })
+
+  it('excludes a sleep that starts exactly when the session ends (strict overlap)', () => {
+    const [, mara] = sitterSummary(
+      session,
+      children,
+      { sleeps: [sleep('mara', session.endAt!, '2026-09-15T03:00:00Z')], feedings: [], doses: [], stickers: [], diapers: [] },
+      new Date('2026-09-15T03:00:00Z'),
+    )
+    expect(mara?.sleeps).toHaveLength(0)
+  })
+
+  it('excludes a still-open sleep that started long before the session ended (stale, not "still going")', () => {
+    const staleStart = new Date(Date.parse(session.endAt!) - STALE_SLEEP_MS - 60_000).toISOString()
+    const [, mara] = sitterSummary(
+      session,
+      children,
+      { sleeps: [sleep('mara', staleStart, null)], feedings: [], doses: [], stickers: [], diapers: [] },
+      new Date('2026-09-15T03:00:00Z'),
+    )
+    expect(mara?.sleeps).toHaveLength(0)
+  })
+
+  it('keeps an open sleep that started within the stale window before the session ended', () => {
+    const recentStart = new Date(Date.parse(session.endAt!) - STALE_SLEEP_MS + 60_000).toISOString()
+    const [, mara] = sitterSummary(
+      session,
+      children,
+      { sleeps: [sleep('mara', recentStart, null)], feedings: [], doses: [], stickers: [], diapers: [] },
+      new Date('2026-09-15T03:00:00Z'),
+    )
+    expect(mara?.sleeps).toHaveLength(1)
   })
 })
