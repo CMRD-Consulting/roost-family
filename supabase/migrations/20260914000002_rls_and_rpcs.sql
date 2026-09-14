@@ -91,6 +91,9 @@ revoke insert, update, delete on
   public.memberships, public.consent_records, public.displays, public.child_households
 from authenticated;
 
+-- Sitter Mode starts and ends with an adult's PIN (spec §7.6): read directly, written through RPCs.
+revoke insert, update, delete on public.sitter_sessions from authenticated;
+
 -- Configuration (spec §7.3): read directly, written later through PIN-checked RPCs.
 revoke insert, update, delete on
   public.households, public.children, public.medicines, public.feature_overrides,
@@ -128,6 +131,9 @@ create policy child_households_select on public.child_households for select to a
 create policy feature_overrides_select on public.feature_overrides for select to authenticated
   using (private.child_in_my_household(child_id));
 
+create policy sitter_sessions_select on public.sitter_sessions for select to authenticated
+  using (private.is_household_member(household_id));
+
 -- Configuration tables: members read; writes are revoked above.
 do $$
 declare t text;
@@ -147,7 +153,7 @@ do $$
 declare t text;
 begin
   foreach t in array array[
-    'sitter_sessions', 'sleep_entries', 'feeding_entries', 'sticker_entries', 'diaper_entries',
+    'sleep_entries', 'feeding_entries', 'sticker_entries', 'diaper_entries',
     'routine_progress', 'jots', 'grocery_items'
   ] loop
     execute format(
@@ -474,6 +480,94 @@ begin
   where id = p_dose_id and conflict_acknowledged_at is null;
 end $$;
 
+-- ─── RPC: sitter sessions ────────────────────────────────────────────────
+-- Sitter Mode (spec §7.6) is household-wide and needs an adult's PIN to start and to end. The caller (adult or
+-- display) must be a member of the household, and the PIN must belong to one of its owners or adults.
+-- Name and display are optional; a blank name is stored as null (logs then show "Sitter").
+create function public.start_sitter_session(
+  p_household_id uuid, p_membership_id uuid, p_pin text, p_sitter_name text default null, p_display_id uuid default null
+) returns uuid
+language plpgsql security definer set search_path = '' as $$
+declare
+  v_name text := nullif(btrim(p_sitter_name), '');
+  v_session uuid;
+begin
+  if p_household_id is null or not private.is_household_member(p_household_id) then
+    raise exception 'not a member of this household' using errcode = '42501';
+  end if;
+  if not exists (
+    select 1 from public.memberships m
+    where m.id = p_membership_id and m.household_id = p_household_id
+      and m.role in ('owner', 'adult') and m.left_at is null
+  ) or not private.pin_ok(p_membership_id, p_pin) then
+    raise exception 'incorrect PIN' using errcode = '42501';
+  end if;
+  if char_length(v_name) > 40 then
+    raise exception 'a sitter name must be at most 40 characters' using errcode = '22023';
+  end if;
+  if p_display_id is not null and not exists (
+    select 1 from public.displays d where d.id = p_display_id and d.household_id = p_household_id
+  ) then
+    raise exception 'display not found in this household' using errcode = '22023';
+  end if;
+  -- The partial unique index allows one open session per household, also under concurrent starts.
+  begin
+    insert into public.sitter_sessions (household_id, display_id, sitter_name)
+    values (p_household_id, p_display_id, v_name)
+    returning id into v_session;
+  exception when unique_violation then
+    raise exception 'a sitter session is already active' using errcode = '23505';
+  end;
+  return v_session;
+end $$;
+
+create function public.end_sitter_session(p_session_id uuid, p_membership_id uuid, p_pin text) returns timestamptz
+language plpgsql security definer set search_path = '' as $$
+declare
+  v_household uuid;
+  v_ended_at timestamptz;
+begin
+  select s.household_id, s.ended_at into v_household, v_ended_at
+  from public.sitter_sessions s where s.id = p_session_id
+  for update;
+  if v_household is null or not private.is_household_member(v_household) then
+    raise exception 'sitter session not found' using errcode = '42501';
+  end if;
+  if not exists (
+    select 1 from public.memberships m
+    where m.id = p_membership_id and m.household_id = v_household
+      and m.role in ('owner', 'adult') and m.left_at is null
+  ) or not private.pin_ok(p_membership_id, p_pin) then
+    raise exception 'incorrect PIN' using errcode = '42501';
+  end if;
+  if v_ended_at is not null then
+    raise exception 'sitter session has already ended' using errcode = '22023';
+  end if;
+  update public.sitter_sessions set ended_at = now() where id = p_session_id
+  returning ended_at into v_ended_at;
+  return v_ended_at;
+end $$;
+
+-- The display that ends a session shows the "While You Were Out" summary and marks it shown; other displays
+-- stop offering it. Idempotent: the first time is kept.
+create function public.mark_sitter_summary_shown(p_session_id uuid) returns void
+language plpgsql security definer set search_path = '' as $$
+declare
+  v_household uuid;
+  v_ended_at timestamptz;
+begin
+  select s.household_id, s.ended_at into v_household, v_ended_at
+  from public.sitter_sessions s where s.id = p_session_id
+  for update;
+  if v_household is null or not private.is_household_member(v_household) then
+    raise exception 'sitter session not found' using errcode = '42501';
+  end if;
+  if v_ended_at is null then
+    raise exception 'sitter session has not ended' using errcode = '22023';
+  end if;
+  update public.sitter_sessions set summary_shown_at = coalesce(summary_shown_at, now()) where id = p_session_id;
+end $$;
+
 -- ─── RPC: displays ───────────────────────────────────────────────────────
 create function public.register_display(p_household_id uuid, p_name text)
 returns table (out_display_id uuid, out_claim_token text)
@@ -594,6 +688,8 @@ grant execute on function
   public.set_routine_step(uuid, uuid, date, int, boolean),
   public.set_my_pin(uuid, text), public.verify_pin(uuid, text),
   public.void_dose(uuid, uuid, text, text), public.acknowledge_dose_conflict(uuid, uuid, text),
+  public.start_sitter_session(uuid, uuid, text, text, uuid), public.end_sitter_session(uuid, uuid, text),
+  public.mark_sitter_summary_shown(uuid),
   public.register_display(uuid, text), public.claim_display(text), public.my_display(),
   public.display_heartbeat(), public.revoke_display(uuid)
 to authenticated;

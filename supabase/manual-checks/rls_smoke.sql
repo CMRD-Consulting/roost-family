@@ -73,10 +73,11 @@ select public.add_child(:'household_b', 'Kid B', '2023-01-01', '#8A56AC') as kid
 select public.set_my_pin(:'household_b', '1111');
 select m.id as membership_b from public.memberships m where m.user_id = '00000000-0000-0000-0000-00000000000b' \gset
 select s.id as category_b from public.sticker_categories s where s.household_id = :'household_b' limit 1 \gset
-insert into public.sitter_sessions (household_id, sitter_name) values (:'household_b', 'Robin') returning id as sitter_session_b \gset
 
 -- Configuration rows are written by privileged code (future PIN-checked RPCs); create them as postgres.
+-- Sitter sessions are written only through PIN-checked RPCs; this open one is a fixture.
 reset role;
+insert into public.sitter_sessions (household_id, sitter_name) values (:'household_b', 'Robin') returning id as sitter_session_b \gset
 insert into public.medicines (household_id, child_id, name, min_interval_hours, max_doses_per_24h)
 values (:'household_a', :'kid_a', 'Test medicine', 6, 4) returning id as medicine_a \gset
 insert into public.routines (household_id, child_id, name) values (:'household_b', :'kid_b', 'B routine') returning id as routine_b \gset
@@ -495,6 +496,142 @@ select pg_temp.expect('F wrong PIN rejected', not public.verify_pin(pg_temp.v('m
 reset role;
 select pg_temp.expect('invite marked used by F household', (
   select used_at is not null and used_by_household_id = pg_temp.v('household_f') from public.invite_codes where code = 'SMOKE6'));
+
+-- ─── Sitter sessions ─────────────────────────────────────────────────────
+\echo '[34] start_sitter_session rejects a wrong PIN, a caregiver, another household and bad input'
+-- As postgres: a medicine in F, a caregiver member of F with a PIN (user G), and B's display id.
+insert into auth.users (id, instance_id, aud, role, email, raw_app_meta_data, raw_user_meta_data, is_anonymous, created_at, updated_at)
+values ('00000000-0000-0000-0000-000000000010', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'g@roost.test', '{}', '{}', false, now(), now());
+select ch.child_id as kid_f from public.child_households ch where ch.household_id = :'household_f' limit 1 \gset
+insert into public.medicines (household_id, child_id, name, min_interval_hours)
+values (:'household_f', :'kid_f', 'F medicine', 4) returning id as medicine_f \gset
+insert into public.memberships (user_id, household_id, role, display_name, color)
+values ('00000000-0000-0000-0000-000000000010', :'household_f', 'caregiver', 'Gale', '#2F86A6') returning id as membership_g \gset
+insert into public.member_pins (membership_id, pin_hash) values (:'membership_g', extensions.crypt('3333', extensions.gen_salt('bf', 8)));
+select d.id as display_b from public.displays d where d.household_id = :'household_b' limit 1 \gset
+select set_config('smoke.kid_f', :'kid_f', true), set_config('smoke.medicine_f', :'medicine_f', true),
+       set_config('smoke.membership_g', :'membership_g', true), set_config('smoke.display_b', :'display_b', true);
+set local role authenticated;
+select set_config('request.jwt.claims', :'F', true);
+select out_display_id as display_f from public.register_display(:'household_f', 'F kitchen') \gset
+select set_config('smoke.display_f', :'display_f', true);
+select pg_temp.expect_error('start with a wrong PIN',
+  $q$select public.start_sitter_session(pg_temp.v('household_f'), pg_temp.v('membership_f'), '0000', 'Jess', null)$q$, '42501');
+select pg_temp.expect_error('start with another household''s membership and PIN',
+  $q$select public.start_sitter_session(pg_temp.v('household_f'), pg_temp.v('membership_b'), '1111', 'Jess', null)$q$, '42501');
+select pg_temp.expect_error('start with a caregiver''s PIN',
+  $q$select public.start_sitter_session(pg_temp.v('household_f'), pg_temp.v('membership_g'), '3333', 'Jess', null)$q$, '42501');
+select pg_temp.expect_error('start on another household''s display',
+  $q$select public.start_sitter_session(pg_temp.v('household_f'), pg_temp.v('membership_f'), '2468', 'Jess', pg_temp.v('display_b'))$q$, '22023');
+select pg_temp.expect_error('start with a 41-character sitter name',
+  $q$select public.start_sitter_session(pg_temp.v('household_f'), pg_temp.v('membership_f'), '2468', repeat('x', 41), null)$q$, '22023');
+select set_config('request.jwt.claims', :'B', true);
+select pg_temp.expect_error('non-member starts a session',
+  $q$select public.start_sitter_session(pg_temp.v('household_f'), pg_temp.v('membership_b'), '1111', 'Jess', null)$q$, '42501');
+reset role;
+select pg_temp.expect('rejected starts left no session in F', not exists (
+  select 1 from public.sitter_sessions where household_id = :'household_f'));
+set local role authenticated;
+
+\echo '[35] start_sitter_session with the right PIN starts one session; a second is rejected while it is open'
+select set_config('request.jwt.claims', :'F', true);
+select public.start_sitter_session(:'household_f', :'membership_f', '2468', '  Jess  ', :'display_f') as sitter_f \gset
+select set_config('smoke.sitter_f', :'sitter_f', true);
+select pg_temp.expect('session stored with a trimmed name and the display', (
+  select household_id = pg_temp.v('household_f') and sitter_name = 'Jess' and display_id = pg_temp.v('display_f')
+     and ended_at is null and summary_shown_at is null
+  from public.sitter_sessions where id = pg_temp.v('sitter_f')));
+select pg_temp.expect_error('second start while one is open',
+  $q$select public.start_sitter_session(pg_temp.v('household_f'), pg_temp.v('membership_f'), '2468', 'Robin', null)$q$, '23505');
+select pg_temp.expect('members can still read sitter sessions', (
+  select count(*) from public.sitter_sessions where household_id = pg_temp.v('household_f')) = 1);
+
+\echo '[36] Sitter sessions cannot be inserted, updated or deleted directly'
+select pg_temp.expect_error('member inserts a sitter session',
+  $q$insert into public.sitter_sessions (household_id, sitter_name) values (pg_temp.v('household_f'), 'Sneaky')$q$, '42501');
+select pg_temp.expect_error('member ends a sitter session directly',
+  $q$update public.sitter_sessions set ended_at = now() where id = pg_temp.v('sitter_f')$q$, '42501');
+select pg_temp.expect_error('member deletes a sitter session',
+  $q$delete from public.sitter_sessions where id = pg_temp.v('sitter_f')$q$, '42501');
+
+\echo '[37] Logs in a sitter session are attributed to the sitter'
+insert into public.dose_entries (household_id, child_id, medicine_id, at, sitter_session_id, logged_by_name)
+values (:'household_f', :'kid_f', :'medicine_f', now(), :'sitter_f', 'Spoofed') returning id as dose_f \gset
+select set_config('smoke.dose_f', :'dose_f', true);
+select pg_temp.expect('sitter dose logged_by_name = Jess (sitter)', (
+  select logged_by_name = 'Jess (sitter)' and logged_by_membership_id is null
+  from public.dose_entries where id = pg_temp.v('dose_f')));
+
+\echo '[38] end_sitter_session checks the PIN and ends an open session once'
+select pg_temp.expect_error('mark summary shown before the session ended',
+  $q$select public.mark_sitter_summary_shown(pg_temp.v('sitter_f'))$q$, '22023');
+select pg_temp.expect_error('end with a wrong PIN',
+  $q$select public.end_sitter_session(pg_temp.v('sitter_f'), pg_temp.v('membership_f'), '0000')$q$, '42501');
+select pg_temp.expect_error('end with a caregiver''s PIN',
+  $q$select public.end_sitter_session(pg_temp.v('sitter_f'), pg_temp.v('membership_g'), '3333')$q$, '42501');
+select pg_temp.expect_error('end with another household''s membership and PIN',
+  $q$select public.end_sitter_session(pg_temp.v('sitter_f'), pg_temp.v('membership_b'), '1111')$q$, '42501');
+select set_config('request.jwt.claims', :'B', true);
+select pg_temp.expect_error('non-member ends a session',
+  $q$select public.end_sitter_session(pg_temp.v('sitter_f'), pg_temp.v('membership_b'), '1111')$q$, '42501');
+select set_config('request.jwt.claims', :'F', true);
+select public.end_sitter_session(:'sitter_f', :'membership_f', '2468') as ended_f \gset
+select pg_temp.expect('end returns the stored ended_at', (
+  select ended_at = :'ended_f'::timestamptz from public.sitter_sessions where id = pg_temp.v('sitter_f')));
+select pg_temp.expect_error('end a session that already ended',
+  $q$select public.end_sitter_session(pg_temp.v('sitter_f'), pg_temp.v('membership_f'), '2468')$q$, '22023');
+select public.start_sitter_session(:'household_f', :'membership_f', '2468', '   ', null) as sitter_f2 \gset
+select set_config('smoke.sitter_f2', :'sitter_f2', true);
+select pg_temp.expect('a blank sitter name is stored as null', (
+  select sitter_name is null from public.sitter_sessions where id = pg_temp.v('sitter_f2')));
+insert into public.sleep_entries (household_id, child_id, start_at, type, sitter_session_id)
+values (:'household_f', :'kid_f', now(), 'nap', :'sitter_f2') returning id as sleep_f2 \gset
+select set_config('smoke.sleep_f2', :'sleep_f2', true);
+select pg_temp.expect('unnamed sitter log logged_by_name = Sitter', (
+  select logged_by_name = 'Sitter' from public.sleep_entries where id = pg_temp.v('sleep_f2')));
+select public.end_sitter_session(:'sitter_f2', :'membership_f', '2468');
+-- A display (not only a signed-in adult) can end and start sessions with an adult's PIN.
+select set_config('request.jwt.claims', :'E', true);
+select public.end_sitter_session(:'sitter_session_b', :'membership_b', '1111');
+select public.start_sitter_session(:'household_b', :'membership_b', '1111', null, :'display_b') as sitter_b2 \gset
+select set_config('smoke.sitter_b2', :'sitter_b2', true);
+select pg_temp.expect('display started a session in B', (
+  select ended_at is null and display_id = pg_temp.v('display_b') from public.sitter_sessions where id = pg_temp.v('sitter_b2')));
+
+\echo '[39] mark_sitter_summary_shown is member-only and keeps the first time'
+select set_config('request.jwt.claims', :'B', true);
+select pg_temp.expect_error('non-member marks summary shown',
+  $q$select public.mark_sitter_summary_shown(pg_temp.v('sitter_f'))$q$, '42501');
+select set_config('request.jwt.claims', :'F', true);
+select public.mark_sitter_summary_shown(:'sitter_f');
+select pg_temp.expect('summary marked shown', (
+  select summary_shown_at is not null from public.sitter_sessions where id = pg_temp.v('sitter_f')));
+reset role;
+update public.sitter_sessions set summary_shown_at = '2026-01-01T00:00:00Z' where id = :'sitter_f';
+set local role authenticated;
+select set_config('request.jwt.claims', :'F', true);
+select public.mark_sitter_summary_shown(:'sitter_f');
+select pg_temp.expect('marking again keeps the first time', (
+  select summary_shown_at = '2026-01-01T00:00:00Z'::timestamptz from public.sitter_sessions where id = pg_temp.v('sitter_f')));
+
+\echo '[40] Sitter RPC and table privileges'
+reset role;
+select pg_temp.expect('anon cannot execute start_sitter_session',
+  not has_function_privilege('anon', 'public.start_sitter_session(uuid, uuid, text, text, uuid)', 'execute'));
+select pg_temp.expect('anon cannot execute end_sitter_session',
+  not has_function_privilege('anon', 'public.end_sitter_session(uuid, uuid, text)', 'execute'));
+select pg_temp.expect('anon cannot execute mark_sitter_summary_shown',
+  not has_function_privilege('anon', 'public.mark_sitter_summary_shown(uuid)', 'execute'));
+select pg_temp.expect('authenticated can execute the sitter RPCs',
+  has_function_privilege('authenticated', 'public.start_sitter_session(uuid, uuid, text, text, uuid)', 'execute')
+  and has_function_privilege('authenticated', 'public.end_sitter_session(uuid, uuid, text)', 'execute')
+  and has_function_privilege('authenticated', 'public.mark_sitter_summary_shown(uuid)', 'execute'));
+select pg_temp.expect('authenticated has no insert/update/delete on sitter_sessions',
+  not has_table_privilege('authenticated', 'public.sitter_sessions', 'insert, update, delete'));
+select pg_temp.expect('authenticated can select sitter_sessions',
+  has_table_privilege('authenticated', 'public.sitter_sessions', 'select'));
+select pg_temp.expect('sitter_sessions has no member write policy', not exists (
+  select 1 from pg_policies where schemaname = 'public' and tablename = 'sitter_sessions' and cmd <> 'SELECT'));
 
 \o
 \echo 'ALL RLS SMOKE CHECKS PASSED'

@@ -1342,6 +1342,14 @@ export type Database = {
         Returns: string
       }
       display_heartbeat: { Args: never; Returns: boolean }
+      end_sitter_session: {
+        Args: { p_membership_id: string; p_pin: string; p_session_id: string }
+        Returns: string
+      }
+      mark_sitter_summary_shown: {
+        Args: { p_session_id: string }
+        Returns: undefined
+      }
       my_display: {
         Args: never
         Returns: {
@@ -1393,6 +1401,16 @@ export type Database = {
           p_pin: string
           p_time_zone: string
           p_zip: string
+        }
+        Returns: string
+      }
+      start_sitter_session: {
+        Args: {
+          p_display_id?: string
+          p_household_id: string
+          p_membership_id: string
+          p_pin: string
+          p_sitter_name?: string
         }
         Returns: string
       }
