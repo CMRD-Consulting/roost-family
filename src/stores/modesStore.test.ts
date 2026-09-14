@@ -234,6 +234,16 @@ describe('useModesStore', () => {
       expect(isMuted()).toBe(true)
     })
 
+    it('stays muted while peeking at the main screen during the night window', () => {
+      withHousehold(new Date('2026-09-15T03:00:00Z'), { timeZone: TZ, nightMode: NIGHT_MODE })
+      const modes = useModesStore()
+      expect(isMuted()).toBe(true)
+
+      modes.peek()
+      expect(modes.nightActive).toBe(false)
+      expect(isMuted()).toBe(true)
+    })
+
     it('mutes while a nap is active and unmutes when it ends', () => {
       withHousehold(new Date('2026-09-14T18:00:00Z'))
       const modes = useModesStore()

@@ -101,9 +101,16 @@ export const useModesStore = defineStore('modes', () => {
     saveNap(nap.value)
   }
 
+  /** Inside the household's night window, whether or not a peek is showing the main screen. */
+  const nightWindow = computed<boolean>(() => {
+    const household = householdStore.view?.household
+    return household !== undefined && isNight(now.value, household)
+  })
+
+  // All sounds stay silent for the whole night window, peeks included (spec §7.7), and during a nap.
   // `flush: 'sync'` so sound is muted/unmuted in the same tick as the mode change, not on the next
   // microtask — a chime triggered right after toggling nap must never slip through unmuted.
-  watch(() => napActive.value || nightActive.value, (muted) => setMuted(muted), { immediate: true, flush: 'sync' })
+  watch(() => napActive.value || nightWindow.value, (muted) => setMuted(muted), { immediate: true, flush: 'sync' })
 
   return { nightPeekUntil, nightActive, nap, napActive, peek, toggleNap, endNap }
 })
