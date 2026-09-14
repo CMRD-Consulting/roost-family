@@ -44,6 +44,8 @@ export interface MainScreenModel {
   logButtons: LogKind[]
   /** The doses shown may be out of date (saved info, or realtime down for a while): no line reads as allowed. */
   medicineStale: boolean
+  /** Sitter Mode is on for the household (spec §7.6): personal lists are hidden. */
+  sitterActive: boolean
 }
 
 export interface MainScreenModelOptions {
@@ -204,7 +206,11 @@ export function buildMainScreenModel(s: HouseholdSnapshot, now: Date, options: M
     }
   })
 
-  const logButtons: LogKind[] = ['sleep', 'feeding', 'medicine', 'sticker', 'jot', 'grocery']
+  // A device-cached snapshot from before sitter sessions were loaded may not have the field.
+  const sitterActive = (s.activeSitterSession ?? null) !== null
+  const logButtons: LogKind[] = sitterActive
+    ? ['sleep', 'feeding', 'medicine', 'sticker']
+    : ['sleep', 'feeding', 'medicine', 'sticker', 'jot', 'grocery']
   if (s.household.diaperLogEnabled) logButtons.push('diaper')
 
   return {
@@ -217,5 +223,6 @@ export function buildMainScreenModel(s: HouseholdSnapshot, now: Date, options: M
     dinner: s.household.dinnerTonight?.trim() || null,
     logButtons,
     medicineStale,
+    sitterActive,
   }
 }

@@ -17,11 +17,17 @@ import NapOverlay from '@/features/modes/NapOverlay.vue'
 import NightPeek from '@/features/modes/NightPeek.vue'
 import NightScreen from '@/features/modes/NightScreen.vue'
 import { useNightPeekTaps } from '@/features/modes/useNightPeekTaps'
+import CareInfoPanel from '@/features/sitter/CareInfoPanel.vue'
+import SitterExitDialog from '@/features/sitter/SitterExitDialog.vue'
+import SitterStartSheet from '@/features/sitter/SitterStartSheet.vue'
+import SitterSummary from '@/features/sitter/SitterSummary.vue'
+import { careInfoModel, pendingSummary, summaryBannerLabel, summaryModel } from '@/features/sitter/sitterModel'
 import { useDisplayStore } from '@/session/displayStore'
 import { useHouseholdStore } from '@/stores/householdStore'
 import { STUCK_COMMAND_MESSAGE, useLogStore } from '@/stores/logStore'
 import { useModesStore } from '@/stores/modesStore'
 import RLogo from '@/ui/RLogo.vue'
+import RLongPress from '@/ui/RLongPress.vue'
 import ConflictBanner from './ConflictBanner.vue'
 import DinnerLine from './DinnerLine.vue'
 import KidCard from './KidCard.vue'
@@ -87,6 +93,60 @@ const acknowledgingDoseId = ref<string | null>(null)
 /** The just-logged dose an adult is undoing with their PIN. */
 const undoingDoseId = ref<string | null>(null)
 
+// Sitter Mode (spec §7.6).
+const startingSitter = ref(false)
+const endingSitter = ref(false)
+/** The ended session whose summary an adult is unlocking from the "see summary" banner. */
+const unlockingSummaryId = ref<string | null>(null)
+/** The session whose "While You Were Out" summary is on screen. */
+const summarySessionId = ref<string | null>(null)
+/** The session this display ended: its summary was shown here, so no banner for it. */
+const endedHereSessionId = ref<string | null>(null)
+
+const activeSitter = computed(() => store.view?.activeSitterSession ?? null)
+const sitterPill = computed(() => {
+  const name = activeSitter.value?.sitterName?.trim()
+  return name ? `Sitter Mode · ${name}` : 'Sitter Mode'
+})
+const careInfo = computed(() => (store.view && model.value?.sitterActive ? careInfoModel(store.view, now.value) : null))
+const summary = computed(() => {
+  const view = store.view
+  const id = summarySessionId.value
+  if (!view || id === null) return null
+  const session = [view.recentSitterSession, view.activeSitterSession].find((x) => x?.id === id) ?? null
+  return session ? summaryModel(view, session, now.value) : null
+})
+const pendingBanner = computed(() => {
+  const view = store.view
+  if (!view || model.value?.sitterActive) return null
+  const session = pendingSummary(view, now.value)
+  if (!session || session.id === endedHereSessionId.value || session.id === summarySessionId.value) return null
+  return { sessionId: session.id, label: `${summaryBannerLabel(session, view.household.timeZone)} · See summary` }
+})
+
+function onSitterEnded(sessionId: string): void {
+  endingSitter.value = false
+  endedHereSessionId.value = sessionId
+  summarySessionId.value = sessionId
+}
+
+function onSummaryUnlocked(sessionId: string): void {
+  unlockingSummaryId.value = null
+  summarySessionId.value = sessionId
+}
+
+async function closeSummary(): Promise<void> {
+  const view = store.view
+  const sessionId = summarySessionId.value
+  summarySessionId.value = null
+  if (!view || sessionId === null) return
+  try {
+    await logStore.submit({ kind: 'sitter.summaryShown', householdId: view.household.id, sessionId })
+  } catch {
+    // Not marked (e.g. offline): another display can still offer the summary; this one already showed it.
+  }
+}
+
 // Night Mode never interrupts an adult mid-task (spec §7.7): while any sheet, dialog or PIN pad is open it
 // holds Night Mode off, and it takes over once the last one closes.
 const NIGHT_HOLD = 'main-screen-sheet'
@@ -96,7 +156,11 @@ const anythingOpen = computed(
     fixingSleepChildId.value !== null ||
     editingDinner.value ||
     acknowledgingDoseId.value !== null ||
-    undoingDoseId.value !== null,
+    undoingDoseId.value !== null ||
+    startingSitter.value ||
+    endingSitter.value ||
+    unlockingSummaryId.value !== null ||
+    summary.value !== null,
 )
 watch(
   anythingOpen,
@@ -114,17 +178,14 @@ function dismissFailure(index: number): void {
   logStore.failures = logStore.failures.filter((_, i) => i !== index)
 }
 
-/** The moon (Nap Mode) and Kids' Corner buttons are wired up below; these two are still placeholders for later phases. */
-const MODE_BUTTONS = [
-  { label: 'Sitter Mode', paths: ['M16 8a4 4 0 1 1-8 0 4 4 0 0 1 8 0z', 'M4 21c0-4 3.6-7 8-7s8 3 8 7'] },
-  {
-    label: 'Settings',
-    paths: [
-      'M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0z',
-      'M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z',
-    ],
-  },
-] as const
+/** The Settings button is still a placeholder for a later phase. */
+const SETTINGS_BUTTON = {
+  label: 'Settings',
+  paths: [
+    'M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0z',
+    'M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z',
+  ],
+} as const
 </script>
 
 <template>
@@ -149,10 +210,17 @@ const MODE_BUTTONS = [
             </div>
           </div>
           <div
-            v-if="offline || cacheBadge || logStore.pendingCount > 0"
+            v-if="model.sitterActive || offline || cacheBadge || logStore.pendingCount > 0"
             data-testid="status-badges"
             class="flex min-w-0 flex-nowrap items-center gap-2"
           >
+            <span
+              v-if="model.sitterActive"
+              data-testid="sitter-pill"
+              class="shrink-0 rounded-lg bg-orange-tint px-3 py-0.5 text-[22px] font-semibold whitespace-nowrap text-warn-ink"
+            >
+              {{ sitterPill }}
+            </span>
             <span
               v-if="offline"
               role="status"
@@ -221,28 +289,59 @@ const MODE_BUTTONS = [
               <path d="M12 3l9 8h-3v9h-4v-6H10v6H6v-9H3z" />
             </svg>
           </button>
-          <button
-            v-for="b in MODE_BUTTONS"
-            :key="b.label"
-            type="button"
-            :aria-label="b.label"
-            aria-disabled="true"
-            class="flex h-[60px] w-[60px] cursor-default items-center justify-center rounded-2xl bg-surface-2 text-ink"
+          <RLongPress
+            v-if="model.sitterActive"
+            class="flex h-[60px] items-center gap-3 rounded-2xl bg-ink px-5 text-[20px] font-semibold whitespace-nowrap text-app focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-ink"
+            @complete="endingSitter = true"
           >
-            <svg
-              width="26"
-              height="26"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              aria-hidden="true"
+            <span class="r-longpress-ring h-7 w-7 shrink-0" aria-hidden="true" />
+            <span>End Sitter Mode</span>
+          </RLongPress>
+          <template v-else>
+            <RLongPress
+              aria-label="Sitter Mode"
+              class="flex h-[60px] w-[60px] items-center justify-center rounded-2xl bg-surface-2 text-ink focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-ink"
+              @complete="startingSitter = true"
             >
-              <path v-for="d in b.paths" :key="d" :d="d" />
-            </svg>
-          </button>
+              <span class="relative flex h-10 w-10 items-center justify-center">
+                <span class="r-longpress-ring absolute -inset-1" aria-hidden="true" />
+                <svg
+                  width="26"
+                  height="26"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M16 8a4 4 0 1 1-8 0 4 4 0 0 1 8 0z" />
+                  <path d="M4 21c0-4 3.6-7 8-7s8 3 8 7" />
+                </svg>
+              </span>
+            </RLongPress>
+            <button
+              type="button"
+              :aria-label="SETTINGS_BUTTON.label"
+              aria-disabled="true"
+              class="flex h-[60px] w-[60px] cursor-default items-center justify-center rounded-2xl bg-surface-2 text-ink"
+            >
+              <svg
+                width="26"
+                height="26"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path v-for="d in SETTINGS_BUTTON.paths" :key="d" :d="d" />
+              </svg>
+            </button>
+          </template>
         </div>
       </header>
 
@@ -262,7 +361,16 @@ const MODE_BUTTONS = [
         </div>
 
         <div class="flex min-h-0 flex-col gap-3">
-          <DinnerLine :dinner="model.dinner" @edit="editingDinner = true" />
+          <button
+            v-if="pendingBanner"
+            type="button"
+            data-testid="sitter-summary-banner"
+            class="flex min-h-[60px] shrink-0 items-center rounded-[18px] bg-amber-tint px-5 py-2 text-left text-[18px] font-semibold leading-snug text-ink focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-ink"
+            @click="unlockingSummaryId = pendingBanner.sessionId"
+          >
+            {{ pendingBanner.label }}
+          </button>
+          <DinnerLine v-if="!careInfo" :dinner="model.dinner" @edit="editingDinner = true" />
           <section
             v-for="(message, i) in failureMessages"
             :key="i"
@@ -280,7 +388,8 @@ const MODE_BUTTONS = [
               ✕
             </button>
           </section>
-          <section class="flex min-h-0 flex-1 flex-col gap-3 rounded-[var(--radius-card)] bg-surface px-[26px] py-[22px]">
+          <CareInfoPanel v-if="careInfo" :model="careInfo" />
+          <section v-else class="flex min-h-0 flex-1 flex-col gap-3 rounded-[var(--radius-card)] bg-surface px-[26px] py-[22px]">
             <h2 class="text-[16px] font-semibold uppercase tracking-[0.1em] text-ink-3">Today</h2>
             <p class="text-[18px] text-ink-3">Calendar arrives in Phase 4</p>
             <div class="flex-1" />
@@ -329,6 +438,17 @@ const MODE_BUTTONS = [
       :dose-id="acknowledgingDoseId"
       @close="acknowledgingDoseId = null"
     />
+    <SitterStartSheet :open="startingSitter" @close="startingSitter = false" />
+    <SitterExitDialog :open="endingSitter" action="end" @close="endingSitter = false" @done="onSitterEnded" />
+    <SitterExitDialog
+      :open="unlockingSummaryId !== null"
+      action="unlockSummary"
+      :session-id="unlockingSummaryId"
+      @close="unlockingSummaryId = null"
+      @done="onSummaryUnlocked"
+    />
+    <SitterSummary v-if="summary" :model="summary" @close="closeSummary" />
+
     <DosePinDialog
       action="undo"
       :open="undoingDoseId !== null"

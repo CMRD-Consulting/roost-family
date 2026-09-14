@@ -277,5 +277,22 @@ describe('buildMainScreenModel', () => {
       const model = buildMainScreenModel(snapshot, now)
       expect(model.logButtons).toEqual(['sleep', 'feeding', 'medicine', 'sticker', 'jot', 'grocery', 'diaper'])
     })
+
+    it('hides Jot it and Grocery during Sitter Mode, and flags the session', () => {
+      const plain = buildMainScreenModel(buildDemoSnapshot(now), now)
+      expect(plain.sitterActive).toBe(false)
+
+      const snapshot = buildDemoSnapshot(now, { sitter: true })
+      snapshot.household.diaperLogEnabled = true
+      const model = buildMainScreenModel(snapshot, now)
+      expect(model.sitterActive).toBe(true)
+      expect(model.logButtons).toEqual(['sleep', 'feeding', 'medicine', 'sticker', 'diaper'])
+    })
+
+    it('treats a cached snapshot without the session field as no Sitter Mode', () => {
+      const snapshot = buildDemoSnapshot(now) as Partial<HouseholdSnapshot>
+      delete snapshot.activeSitterSession
+      expect(buildMainScreenModel(snapshot as HouseholdSnapshot, now).sitterActive).toBe(false)
+    })
   })
 })

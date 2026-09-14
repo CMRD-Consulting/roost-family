@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
-import { mutateDemo, resetDemoForTests } from '@/data/demo/demoHousehold'
+import { getDemoSnapshot, mutateDemo, resetDemoForTests } from '@/data/demo/demoHousehold'
 import type { LogCommand } from '@/data/logCommands'
 import { useDisplayStore } from '@/session/displayStore'
 import { useHouseholdStore } from '@/stores/householdStore'
@@ -408,6 +408,180 @@ describe('MainScreen (demo source)', () => {
     await expect(saving).resolves.toBe('saved')
     wrapper.unmount()
     expect(stop).toHaveBeenCalled()
+  })
+
+  describe('Sitter Mode', () => {
+    async function enterPin(w: VueWrapper, name: string, pin: string) {
+      await w.get(`[role="dialog"] button[aria-label="${name}"]`).trigger('click')
+      await flushPromises()
+      for (const digit of pin) {
+        await w.get(`[role="dialog"] button[aria-label="${digit}"]`).trigger('click')
+        await flushPromises()
+      }
+    }
+
+    it('starts with an adult PIN and a sitter name: pill, care info, and no Jot it, Grocery or Settings', async () => {
+      const wrapper = await mountMain()
+      expect(wrapper.find('[data-testid="sitter-pill"]').exists()).toBe(false)
+      expect(wrapper.find('button[aria-label="Settings"]').exists()).toBe(true)
+
+      await hold(wrapper.get('button[aria-label="Sitter Mode"]').element)
+      const dialog = wrapper.get('[role="dialog"]')
+      expect(dialog.text()).toContain('Start Sitter Mode')
+      await enterPin(wrapper, 'Sam', '1234')
+
+      expect(wrapper.get('[role="dialog"]').text()).toContain("Who's watching the kids?")
+      await wrapper.get('[role="dialog"] input').setValue('  Jess ')
+      expect(wrapper.get('[role="dialog"]').text()).toContain('Their entries will show as "Jess (sitter)".')
+      await buttonIn(wrapper.get('[role="dialog"]'), 'Start Sitter Mode').trigger('click')
+      await settle()
+      await settle()
+
+      expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+      const session = getDemoSnapshot(new Date()).activeSitterSession
+      expect(session).toMatchObject({ sitterName: 'Jess', endedAt: null })
+
+      const pill = wrapper.get('[data-testid="sitter-pill"]')
+      expect(pill.text()).toBe('Sitter Mode · Jess')
+      expect(pill.classes()).toContain('text-[22px]')
+      expect(wrapper.find('[data-testid="care-info"]').exists()).toBe(true)
+      expect(wrapper.find('[data-testid="dinner-line"]').exists()).toBe(false)
+      expect(wrapper.text()).not.toContain('Calendar arrives')
+      expect(wrapper.findAll('[data-log-kind]').map((b) => b.attributes('data-log-kind'))).toEqual(['sleep', 'feeding', 'medicine', 'sticker'])
+      expect(wrapper.find('button[aria-label="Settings"]').exists()).toBe(false)
+      expect(wrapper.find('button[aria-label="Sitter Mode"]').exists()).toBe(false)
+      expect(wrapper.find('button[aria-label="Kids\' Corner"]').exists()).toBe(true)
+      const end = buttonIn(wrapper, 'End Sitter Mode')
+      expect(end.classes()).toContain('h-[60px]')
+      wrapper.unmount()
+    })
+
+    it('says "Sitter Mode" without a name', async () => {
+      mutateDemo((s) => ({
+        ...s,
+        activeSitterSession: { id: 'sitter-anon', sitterName: null, startedAt: '2026-09-14T18:00:00.000Z', endedAt: null, summaryShownAt: null },
+      }))
+      const wrapper = await mountMain()
+      expect(wrapper.get('[data-testid="sitter-pill"]').text()).toBe('Sitter Mode')
+      wrapper.unmount()
+    })
+
+    it('log sheets attribute to the sitter', async () => {
+      window.history.replaceState({}, '', '/home?sitter')
+      const wrapper = await mountMain()
+      await hold(wrapper.get('[data-log-kind="feeding"]').element)
+      const sheet = wrapper.get('[role="dialog"]')
+      await sheet.get('[role="radiogroup"][aria-label="Feeding type"]').findAll('[role="radio"]').find((r) => r.text() === 'Milk')!.trigger('click')
+      await flushPromises()
+      expect(wrapper.get('[data-testid="sitter-who"]').text()).toBe('Logged by Jess (sitter)')
+      expect(wrapper.find('[role="radiogroup"][aria-label="Who"]').exists()).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('ends with an adult PIN, shows the summary, and Done marks it shown', async () => {
+      window.history.replaceState({}, '', '/home?sitter')
+      const wrapper = await mountMain()
+      expect(wrapper.get('[data-testid="sitter-pill"]').text()).toBe('Sitter Mode · Jess')
+
+      await hold(buttonIn(wrapper, 'End Sitter Mode').element)
+      expect(wrapper.get('[role="dialog"]').text()).toContain('End Sitter Mode')
+      await enterPin(wrapper, 'Alex', '5678')
+      await settle()
+
+      expect(getDemoSnapshot(new Date()).activeSitterSession).toBeNull()
+      const summary = wrapper.get('[data-testid="sitter-summary"]')
+      expect(summary.text()).toContain('While you were out')
+      expect(summary.get('[data-testid="summary-sitter"]').text()).toBe('Jess · 1:00 PM – 3:00 PM')
+      const cards = summary.findAll('[data-testid="summary-child"]')
+      expect(cards.map((c) => c.get('h2').text())).toEqual(['Ivy', 'Theo'])
+      expect(cards[0]!.text()).toContain('Sticker: Teeth')
+      expect(cards[1]!.text()).toContain('Meal · Pasta and peas')
+      expect(cards[1]!.text()).toContain('Infant acetaminophen · 5 ml')
+      // The display that ended the session doesn't also get the "see summary" banner.
+      expect(wrapper.find('[data-testid="sitter-summary-banner"]').exists()).toBe(false)
+
+      await buttonIn(summary, 'Done').trigger('click')
+      await settle()
+
+      expect(wrapper.find('[data-testid="sitter-summary"]').exists()).toBe(false)
+      expect(getDemoSnapshot(new Date()).recentSitterSession?.summaryShownAt).not.toBeNull()
+      expect(wrapper.find('[data-testid="sitter-pill"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="sitter-summary-banner"]').exists()).toBe(false)
+      expect(wrapper.find('[data-log-kind="jot"]').exists()).toBe(true)
+      wrapper.unmount()
+    })
+
+    it('a wrong PIN does not end Sitter Mode', async () => {
+      window.history.replaceState({}, '', '/home?sitter')
+      const wrapper = await mountMain()
+      await hold(buttonIn(wrapper, 'End Sitter Mode').element)
+      await enterPin(wrapper, 'Alex', '0000')
+      await settle()
+      expect(wrapper.get('[role="dialog"]').text()).toContain("That PIN didn't match.")
+      expect(getDemoSnapshot(new Date()).activeSitterSession).not.toBeNull()
+      wrapper.unmount()
+    })
+
+    it('another display shows a banner for an unseen summary; an adult PIN opens it and Done marks it shown', async () => {
+      mutateDemo((s) => ({
+        ...s,
+        recentSitterSession: {
+          id: 'sitter-ended', sitterName: 'Jess', startedAt: '2026-09-14T16:00:00.000Z', endedAt: '2026-09-14T18:10:00.000Z', summaryShownAt: null,
+        },
+      }))
+      const wrapper = await mountMain()
+      const banner = wrapper.get('[data-testid="sitter-summary-banner"]')
+      expect(banner.text()).toBe('Sitter session with Jess ended at 2:10 PM · See summary')
+      expect(banner.classes()).toContain('min-h-[60px]')
+
+      await banner.trigger('click')
+      await flushPromises()
+      await enterPin(wrapper, 'Sam', '1234')
+      await settle()
+
+      const summary = wrapper.get('[data-testid="sitter-summary"]')
+      expect(summary.get('[data-testid="summary-sitter"]').text()).toBe('Jess · 12:00 PM – 2:10 PM')
+      await buttonIn(summary, 'Done').trigger('click')
+      await settle()
+
+      expect(getDemoSnapshot(new Date()).recentSitterSession?.summaryShownAt).not.toBeNull()
+      expect(wrapper.find('[data-testid="sitter-summary"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="sitter-summary-banner"]').exists()).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('offline: asks for a connection to start Sitter Mode', async () => {
+      const wrapper = await mountMain()
+      setOnline(false)
+      await flushPromises()
+      await hold(wrapper.get('button[aria-label="Sitter Mode"]').element)
+      expect(wrapper.get('[role="dialog"]').text()).toContain('Connect to start Sitter Mode.')
+      expect(wrapper.find('[role="dialog"] button[aria-label="Sam"]').exists()).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('offline: asks for a connection to end Sitter Mode', async () => {
+      window.history.replaceState({}, '', '/home?sitter')
+      const wrapper = await mountMain()
+      setOnline(false)
+      await flushPromises()
+      await hold(buttonIn(wrapper, 'End Sitter Mode').element)
+      expect(wrapper.get('[role="dialog"]').text()).toContain('Connect to end Sitter Mode.')
+      expect(wrapper.find('[role="dialog"] button[aria-label="Alex"]').exists()).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('the sitter pill stays visible in the Night Mode peek', async () => {
+      window.history.replaceState({}, '', '/home?sitter')
+      vi.setSystemTime(new Date('2026-09-15T02:00:00Z'))
+      const wrapper = await mountMain()
+      expect(wrapper.find('[data-testid="night-screen"]').exists()).toBe(true)
+
+      await wrapper.get('[data-testid="night-screen"]').trigger('click')
+      await flushPromises()
+      expect(wrapper.get('[data-testid="sitter-pill"]').text()).toBe('Sitter Mode · Jess')
+      wrapper.unmount()
+    })
   })
 
   describe('Night screen and Nap overlay', () => {
