@@ -1074,28 +1074,34 @@ export type Database = {
         Row: {
           display_id: string | null
           ended_at: string | null
+          ended_by: string | null
           household_id: string
           id: string
           sitter_name: string | null
           started_at: string
+          started_by: string | null
           summary_shown_at: string | null
         }
         Insert: {
           display_id?: string | null
           ended_at?: string | null
+          ended_by?: string | null
           household_id: string
           id?: string
           sitter_name?: string | null
           started_at?: string
+          started_by?: string | null
           summary_shown_at?: string | null
         }
         Update: {
           display_id?: string | null
           ended_at?: string | null
+          ended_by?: string | null
           household_id?: string
           id?: string
           sitter_name?: string | null
           started_at?: string
+          started_by?: string | null
           summary_shown_at?: string | null
         }
         Relationships: [
@@ -1107,11 +1113,25 @@ export type Database = {
             referencedColumns: ["id", "household_id"]
           },
           {
+            foreignKeyName: "sitter_sessions_ended_by_household_id_fkey"
+            columns: ["ended_by", "household_id"]
+            isOneToOne: false
+            referencedRelation: "memberships"
+            referencedColumns: ["id", "household_id"]
+          },
+          {
             foreignKeyName: "sitter_sessions_household_id_fkey"
             columns: ["household_id"]
             isOneToOne: false
             referencedRelation: "households"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sitter_sessions_started_by_household_id_fkey"
+            columns: ["started_by", "household_id"]
+            isOneToOne: false
+            referencedRelation: "memberships"
+            referencedColumns: ["id", "household_id"]
           },
         ]
       }

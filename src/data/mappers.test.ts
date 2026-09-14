@@ -209,6 +209,8 @@ const sitterSessionRow = (over: Partial<Tables<'sitter_sessions'>> = {}): Tables
   started_at: '2026-09-14T10:00:00Z',
   ended_at: null,
   summary_shown_at: null,
+  started_by: 'mem1',
+  ended_by: null,
   ...over,
 })
 

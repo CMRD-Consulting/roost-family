@@ -518,6 +518,9 @@ set local role authenticated;
 select set_config('request.jwt.claims', :'F', true);
 select out_display_id as display_f from public.register_display(:'household_f', 'F kitchen') \gset
 select set_config('smoke.display_f', :'display_f', true);
+select out_display_id as display_f_revoked from public.register_display(:'household_f', 'F old tablet') \gset
+select set_config('smoke.display_f_revoked', :'display_f_revoked', true);
+select public.revoke_display(:'display_f_revoked');
 select pg_temp.expect_error('start with a wrong PIN',
   $q$select public.start_sitter_session(gen_random_uuid(), pg_temp.v('household_f'), pg_temp.v('membership_f'), '0000', 'Jess', null)$q$, '42501');
 select pg_temp.expect_error('start with another household''s membership and PIN',
@@ -526,6 +529,8 @@ select pg_temp.expect_error('start with a caregiver''s PIN',
   $q$select public.start_sitter_session(gen_random_uuid(), pg_temp.v('household_f'), pg_temp.v('membership_g'), '3333', 'Jess', null)$q$, '42501');
 select pg_temp.expect_error('start on another household''s display',
   $q$select public.start_sitter_session(gen_random_uuid(), pg_temp.v('household_f'), pg_temp.v('membership_f'), '2468', 'Jess', pg_temp.v('display_b'))$q$, '22023');
+select pg_temp.expect_error('start on a revoked display',
+  $q$select public.start_sitter_session(gen_random_uuid(), pg_temp.v('household_f'), pg_temp.v('membership_f'), '2468', 'Jess', pg_temp.v('display_f_revoked'))$q$, '22023');
 select pg_temp.expect_error('start with a 41-character sitter name',
   $q$select public.start_sitter_session(gen_random_uuid(), pg_temp.v('household_f'), pg_temp.v('membership_f'), '2468', repeat('x', 41), null)$q$, '22023');
 select pg_temp.expect_error('start without a session id',
@@ -538,6 +543,8 @@ select pg_temp.expect_error('non-member starts a session',
 reset role;
 select pg_temp.expect('rejected starts left no session in F', not exists (
   select 1 from public.sitter_sessions where household_id = :'household_f'));
+select pg_temp.expect('rejected starts left no sitter audit in F', not exists (
+  select 1 from public.settings_audit where household_id = :'household_f' and change ->> 'section' = 'sitter'));
 set local role authenticated;
 
 \echo '[35] start_sitter_session with the right PIN starts one session with the client id; retries are idempotent; a second is rejected while it is open'
@@ -546,12 +553,17 @@ select gen_random_uuid() as sitter_f \gset
 select set_config('smoke.sitter_f', :'sitter_f', true);
 select pg_temp.expect('start returns the client session id',
   public.start_sitter_session(:'sitter_f', :'household_f', :'membership_f', '2468', '  Jess  ', :'display_f') = :'sitter_f'::uuid);
-select pg_temp.expect('session stored with a trimmed name and the display', (
+select pg_temp.expect('session stored with a trimmed name, the display and who started it', (
   select household_id = pg_temp.v('household_f') and sitter_name = 'Jess' and display_id = pg_temp.v('display_f')
+     and started_by = pg_temp.v('membership_f') and ended_by is null
      and ended_at is null and summary_shown_at is null
   from public.sitter_sessions where id = pg_temp.v('sitter_f')));
 select pg_temp.expect('repeating a start with the same session id returns it (idempotent retry)',
   public.start_sitter_session(:'sitter_f', :'household_f', :'membership_f', '2468', 'Jess', :'display_f') = :'sitter_f'::uuid);
+select pg_temp.expect('the start is audited once (not again for the retry)', (
+  select count(*) = 1 and bool_and(membership_id = pg_temp.v('membership_f') and change ->> 'action' = 'start'
+     and change ->> 'target_id' = pg_temp.v('sitter_f')::text)
+  from public.settings_audit where household_id = pg_temp.v('household_f') and change ->> 'section' = 'sitter'));
 select pg_temp.expect_error('second start while one is open',
   $q$select public.start_sitter_session(gen_random_uuid(), pg_temp.v('household_f'), pg_temp.v('membership_f'), '2468', 'Robin', null)$q$, '23505');
 select pg_temp.expect_error('repeat start still checks the PIN',
@@ -589,8 +601,12 @@ select pg_temp.expect_error('non-member ends a session',
   $q$select public.end_sitter_session(pg_temp.v('sitter_f'), pg_temp.v('membership_b'), '1111')$q$, '42501');
 select set_config('request.jwt.claims', :'F', true);
 select public.end_sitter_session(:'sitter_f', :'membership_f', '2468') as ended_f \gset
-select pg_temp.expect('end returns the stored ended_at', (
-  select ended_at = :'ended_f'::timestamptz from public.sitter_sessions where id = pg_temp.v('sitter_f')));
+select pg_temp.expect('end returns the stored ended_at and records who ended it', (
+  select ended_at = :'ended_f'::timestamptz and ended_by = pg_temp.v('membership_f')
+  from public.sitter_sessions where id = pg_temp.v('sitter_f')));
+select pg_temp.expect('the end is audited', exists (
+  select 1 from public.settings_audit where household_id = pg_temp.v('household_f') and membership_id = pg_temp.v('membership_f')
+     and change ->> 'section' = 'sitter' and change ->> 'action' = 'end' and change ->> 'target_id' = pg_temp.v('sitter_f')::text));
 select pg_temp.expect_error('end a session that already ended',
   $q$select public.end_sitter_session(pg_temp.v('sitter_f'), pg_temp.v('membership_f'), '2468')$q$, '22023');
 select public.start_sitter_session(gen_random_uuid(), :'household_f', :'membership_f', '2468', '   ', null) as sitter_f2 \gset
@@ -639,6 +655,10 @@ select pg_temp.expect('authenticated can execute the sitter RPCs',
   has_function_privilege('authenticated', 'public.start_sitter_session(uuid, uuid, uuid, text, text, uuid)', 'execute')
   and has_function_privilege('authenticated', 'public.end_sitter_session(uuid, uuid, text)', 'execute')
   and has_function_privilege('authenticated', 'public.mark_sitter_summary_shown(uuid)', 'execute'));
+select pg_temp.expect('started_by and ended_by reference a membership of the same household and clear when it is deleted', (
+  select count(*) = 2 from pg_constraint c
+  where c.conrelid = 'public.sitter_sessions'::regclass and c.contype = 'f' and c.confrelid = 'public.memberships'::regclass
+    and c.confdeltype = 'n' and array_length(c.conkey, 1) = 2 and array_length(c.confdelsetcols, 1) = 1));
 select pg_temp.expect('authenticated has no insert/update/delete on sitter_sessions',
   not has_table_privilege('authenticated', 'public.sitter_sessions', 'insert, update, delete'));
 select pg_temp.expect('authenticated can select sitter_sessions',

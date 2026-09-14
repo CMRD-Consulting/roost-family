@@ -482,6 +482,15 @@ begin
 end $$;
 
 -- ─── RPC: sitter sessions ────────────────────────────────────────────────
+-- Accountability: the adult whose PIN started and ended each session (cleared if that membership is deleted).
+alter table public.sitter_sessions
+  add column started_by uuid,
+  add column ended_by uuid,
+  add foreign key (started_by, household_id) references public.memberships (id, household_id) on delete set null (started_by),
+  add foreign key (ended_by, household_id) references public.memberships (id, household_id) on delete set null (ended_by);
+
+-- Starts and ends are also appended to settings_audit (same shape as private.audit_setting in the settings
+-- migration, written inline here because that helper is defined later).
 -- Sitter Mode (spec §7.6) is household-wide and needs an adult's PIN to start and to end. The caller (adult or
 -- display) must be a member of the household, and the PIN must belong to one of its owners or adults.
 -- Name and display are optional; a blank name is stored as null (logs then show "Sitter").
@@ -513,7 +522,7 @@ begin
     raise exception 'a sitter name must be at most 40 characters' using errcode = '22023';
   end if;
   if p_display_id is not null and not exists (
-    select 1 from public.displays d where d.id = p_display_id and d.household_id = p_household_id
+    select 1 from public.displays d where d.id = p_display_id and d.household_id = p_household_id and d.revoked_at is null
   ) then
     raise exception 'display not found in this household' using errcode = '22023';
   end if;
@@ -525,8 +534,8 @@ begin
   end if;
   -- The partial unique index allows one open session per household, also under concurrent starts.
   begin
-    insert into public.sitter_sessions (id, household_id, display_id, sitter_name)
-    values (p_session_id, p_household_id, p_display_id, v_name);
+    insert into public.sitter_sessions (id, household_id, display_id, sitter_name, started_by)
+    values (p_session_id, p_household_id, p_display_id, v_name, p_membership_id);
   exception when unique_violation then
     -- A concurrent retry of this same start may have inserted it first.
     if exists (select 1 from public.sitter_sessions s where s.id = p_session_id and s.household_id = p_household_id) then
@@ -534,6 +543,9 @@ begin
     end if;
     raise exception 'a sitter session is already active' using errcode = '23505';
   end;
+  insert into public.settings_audit (household_id, membership_id, change)
+  values (p_household_id, p_membership_id, jsonb_build_object(
+    'section', 'sitter', 'action', 'start', 'target_id', p_session_id, 'fields', '{}'::jsonb));
   return p_session_id;
 end $$;
 
@@ -559,8 +571,11 @@ begin
   if v_ended_at is not null then
     raise exception 'sitter session has already ended' using errcode = '22023';
   end if;
-  update public.sitter_sessions set ended_at = now() where id = p_session_id
+  update public.sitter_sessions set ended_at = now(), ended_by = p_membership_id where id = p_session_id
   returning ended_at into v_ended_at;
+  insert into public.settings_audit (household_id, membership_id, change)
+  values (v_household, p_membership_id, jsonb_build_object(
+    'section', 'sitter', 'action', 'end', 'target_id', p_session_id, 'fields', '{}'::jsonb));
   return v_ended_at;
 end $$;
 
