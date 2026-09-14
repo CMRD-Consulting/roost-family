@@ -12,6 +12,8 @@ import {
 const HOUR_MS = 3_600_000
 const DAY_MS = 24 * HOUR_MS
 const DEBOUNCE_MS = 300
+/** How far around the oldest unresolved conflict dose to pull context doses for checkDose(). */
+const CONFLICT_CONTEXT_WINDOW_MS = 72 * HOUR_MS
 
 /** Household-scoped tables whose changes should trigger a snapshot reload. */
 const HOUSEHOLD_FILTERED_TABLES = [
@@ -29,6 +31,51 @@ function unwrap<T>(result: { data: T | null; error: { message: string } | null }
   return result.data
 }
 
+/**
+ * Dose rows for a household: the last 48h, plus any unacknowledged, non-voided
+ * `logged_offline` dose regardless of age (conflict doses must never age out of the
+ * snapshot), plus every dose within ±72h of the oldest such conflict dose so
+ * `checkDose()` has the context it needs to judge it. Merged by id.
+ */
+async function loadDoseRows(
+  client: RoostClient,
+  householdId: string,
+  cutoff48h: string,
+): Promise<Tables<'dose_entries'>[]> {
+  const recent = unwrap<Tables<'dose_entries'>[]>(
+    await client.from('dose_entries').select('*').eq('household_id', householdId).gte('at', cutoff48h),
+  )
+  const unresolvedConflicts = unwrap<Tables<'dose_entries'>[]>(
+    await client
+      .from('dose_entries')
+      .select('*')
+      .eq('household_id', householdId)
+      .eq('logged_offline', true)
+      .is('voided_at', null)
+      .is('conflict_acknowledged_at', null),
+  )
+
+  const byId = new Map<string, Tables<'dose_entries'>>()
+  for (const d of recent) byId.set(d.id, d)
+  for (const d of unresolvedConflicts) byId.set(d.id, d)
+
+  if (unresolvedConflicts.length > 0) {
+    const oldestAt = unresolvedConflicts.reduce(
+      (oldest, d) => (Date.parse(d.at) < Date.parse(oldest) ? d.at : oldest),
+      unresolvedConflicts[0]!.at,
+    )
+    const oldestMs = Date.parse(oldestAt)
+    const windowStart = new Date(oldestMs - CONFLICT_CONTEXT_WINDOW_MS).toISOString()
+    const windowEnd = new Date(oldestMs + CONFLICT_CONTEXT_WINDOW_MS).toISOString()
+    const windowRows = unwrap<Tables<'dose_entries'>[]>(
+      await client.from('dose_entries').select('*').eq('household_id', householdId).gte('at', windowStart).lte('at', windowEnd),
+    )
+    for (const d of windowRows) byId.set(d.id, d)
+  }
+
+  return [...byId.values()]
+}
+
 export function createSupabaseSource(client: RoostClient): HouseholdSource {
   async function load(householdId: string, now: Date): Promise<HouseholdSnapshot> {
     const householdRow = unwrap<Tables<'households'>>(
@@ -41,7 +88,7 @@ export function createSupabaseSource(client: RoostClient): HouseholdSource {
     const cutoff24h = new Date(now.getTime() - DAY_MS).toISOString()
 
     const [
-      membershipResult, childResult, overrideResult, medicineResult, doseResult, sleepResult,
+      membershipResult, childResult, overrideResult, medicineResult, doseRows, sleepResult,
       feedingResult, diaperResult, stickerCategoryResult, stickerResult, routineResult,
       routineProgressResult, routineOverrideResult, jotResult, groceryResult, sitterSessionResult,
     ] = await Promise.all([
@@ -49,7 +96,7 @@ export function createSupabaseSource(client: RoostClient): HouseholdSource {
       client.from('children').select('*').order('sort_order'),
       client.from('feature_overrides').select('*'),
       client.from('medicines').select('*').eq('household_id', householdId).is('archived_at', null),
-      client.from('dose_entries').select('*').eq('household_id', householdId).gte('at', cutoff48h),
+      loadDoseRows(client, householdId, cutoff48h),
       client.from('sleep_entries').select('*').eq('household_id', householdId).or(`start_at.gte.${cutoff48h},end_at.is.null`),
       client.from('feeding_entries').select('*').eq('household_id', householdId).gte('at', cutoff48h),
       client.from('diaper_entries').select('*').eq('household_id', householdId).gte('at', cutoff48h),
@@ -77,7 +124,7 @@ export function createSupabaseSource(client: RoostClient): HouseholdSource {
       members: unwrap(membershipResult).map(toMember),
       children: unwrap(childResult).map((row) => toChild(row, overridesByChild.get(row.id) ?? [])),
       medicines: unwrap(medicineResult).map(toMedicine),
-      doses: unwrap(doseResult).map(toDose),
+      doses: doseRows.map(toDose),
       sleeps: unwrap(sleepResult).map(toSleep),
       feedings: unwrap(feedingResult).map(toFeeding),
       diapers: unwrap(diaperResult).map(toDiaper),

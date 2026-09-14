@@ -3,6 +3,8 @@ import type { RoostClient } from './supabase'
 import { createSupabaseSource } from './supabaseSource'
 
 type QueryResult = { data: unknown; error: { message: string } | null }
+/** A single result, or a queue of results consumed in order across repeated calls to the same table. */
+type QueryResultSpec = QueryResult | QueryResult[]
 
 interface RecordedCall {
   table: string
@@ -23,10 +25,11 @@ interface FakeChannel {
   subscribe: (cb?: (status: string) => void) => FakeChannel
 }
 
-function createFakeClient(tableData: Record<string, QueryResult>) {
+function createFakeClient(tableData: Record<string, QueryResultSpec>) {
   const calls: RecordedCall[] = []
   const channels: FakeChannel[] = []
   const removeChannel = vi.fn()
+  const callCounts: Record<string, number> = {}
 
   function from(table: string) {
     const call: RecordedCall = { table, ops: [] }
@@ -42,6 +45,10 @@ function createFakeClient(tableData: Record<string, QueryResult>) {
         call.ops.push(`eq:${column}=${String(value)}`)
         return builder
       },
+      in(column: string, values: unknown[]) {
+        call.ops.push(`in:${column}=${values.join(',')}`)
+        return builder
+      },
       is(column: string, value: unknown) {
         call.ops.push(`is:${column}=${String(value)}`)
         return builder
@@ -50,12 +57,20 @@ function createFakeClient(tableData: Record<string, QueryResult>) {
         call.ops.push(`gte:${column}=${String(value)}`)
         return builder
       },
-      order(column: string) {
-        call.ops.push(`order:${column}`)
+      lte(column: string, value: unknown) {
+        call.ops.push(`lte:${column}=${String(value)}`)
+        return builder
+      },
+      order(column: string, opts?: { ascending?: boolean }) {
+        call.ops.push(`order:${column}:${opts?.ascending === false ? 'desc' : 'asc'}`)
         return builder
       },
       or(expr: string) {
         call.ops.push(`or:${expr}`)
+        return builder
+      },
+      limit(n: number) {
+        call.ops.push(`limit:${n}`)
         return builder
       },
       single() {
@@ -72,7 +87,15 @@ function createFakeClient(tableData: Record<string, QueryResult>) {
         onFulfilled: (value: QueryResult) => unknown,
         onRejected?: (reason: unknown) => unknown,
       ) {
-        const result = tableData[table] ?? { data: [], error: null }
+        const spec = tableData[table] ?? { data: [], error: null }
+        let result: QueryResult
+        if (Array.isArray(spec)) {
+          const index = callCounts[table] ?? 0
+          callCounts[table] = index + 1
+          result = spec[Math.min(index, spec.length - 1)] ?? { data: [], error: null }
+        } else {
+          result = spec
+        }
         let data = result.data
         if ((mode === 'single' || mode === 'maybeSingle') && Array.isArray(data)) {
           data = data[0] ?? null
@@ -132,7 +155,7 @@ const memberRow = {
   role: 'owner',
 }
 
-function baseTableData(): Record<string, QueryResult> {
+function baseTableData(): Record<string, QueryResultSpec> {
   return {
     households: { data: [householdRow], error: null },
     memberships: { data: [memberRow], error: null },
@@ -206,7 +229,7 @@ describe('createSupabaseSource load', () => {
     expect(calls.find((c) => c.table === 'memberships')?.ops).toEqual([
       'select:id, display_name, color, role', 'eq:household_id=h1', 'is:left_at=null',
     ])
-    expect(calls.find((c) => c.table === 'children')?.ops).toEqual(['select:*', 'order:sort_order'])
+    expect(calls.find((c) => c.table === 'children')?.ops).toEqual(['select:*', 'order:sort_order:asc'])
     expect(calls.find((c) => c.table === 'feature_overrides')?.ops).toEqual(['select:*'])
     expect(calls.find((c) => c.table === 'medicines')?.ops).toEqual([
       'select:*', 'eq:household_id=h1', 'is:archived_at=null',
@@ -224,13 +247,13 @@ describe('createSupabaseSource load', () => {
       'select:*', 'eq:household_id=h1', `gte:at=${cutoff48h}`,
     ])
     expect(calls.find((c) => c.table === 'sticker_categories')?.ops).toEqual([
-      'select:*', 'eq:household_id=h1', 'is:archived_at=null', 'order:sort_order',
+      'select:*', 'eq:household_id=h1', 'is:archived_at=null', 'order:sort_order:asc',
     ])
     expect(calls.find((c) => c.table === 'sticker_entries')?.ops).toEqual([
       'select:*', 'eq:household_id=h1', `gte:at=${cutoff8d}`,
     ])
     expect(calls.find((c) => c.table === 'routines')?.ops).toEqual([
-      'select:*', 'eq:household_id=h1', 'order:sort_order',
+      'select:*', 'eq:household_id=h1', 'order:sort_order:asc',
     ])
     expect(calls.find((c) => c.table === 'routine_progress')?.ops).toEqual([
       'select:*', 'eq:household_id=h1', 'eq:day=2026-09-14',
@@ -265,6 +288,76 @@ describe('createSupabaseSource load', () => {
     })
     const source = createSupabaseSource(client)
     await expect(source.load('h1', now)).rejects.toThrow('household not found')
+  })
+
+  describe('conflict doses never age out', () => {
+    const doseRow = (over: Record<string, unknown>) => ({
+      id: 'd0', household_id: 'h1', child_id: 'c1', medicine_id: 'm1',
+      at: '2026-09-14T17:00:00Z', note: null, logged_offline: false, warnings_confirmed: [],
+      conflict_acknowledged_at: null, conflict_acknowledged_by: null, voided_at: null,
+      voided_by: null, void_reason: null, display_id: null, logged_by_membership_id: null,
+      sitter_session_id: null, logged_by_name: 'Alex', created_at: '2026-09-14T17:00:00Z',
+      updated_at: '2026-09-14T17:00:00Z',
+      ...over,
+    })
+
+    it('always issues a second query for unacknowledged, non-voided offline doses of any age', async () => {
+      const { client, calls } = createFakeClient(baseTableData())
+      const source = createSupabaseSource(client)
+      await source.load('h1', now)
+
+      const doseCalls = calls.filter((c) => c.table === 'dose_entries')
+      expect(doseCalls).toHaveLength(2)
+      expect(doseCalls[1]?.ops).toEqual([
+        'select:*', 'eq:household_id=h1', 'eq:logged_offline=true',
+        'is:voided_at=null', 'is:conflict_acknowledged_at=null',
+      ])
+    })
+
+    it('merges the 48h window with far-older conflict doses and their ±72h context, by id', async () => {
+      const oldConflict = doseRow({ id: 'd-old', at: '2026-01-01T00:00:00Z', logged_offline: true })
+      // Within 72h of oldConflict; a real query would return this from the ±72h window
+      // and NOT a dose outside that window, which is why we assert the query's own
+      // gte/lte bounds below rather than filtering client-side in this fake.
+      const neighbor = doseRow({ id: 'd-neighbor', at: '2026-01-02T12:00:00Z' })
+      const recent = doseRow({ id: 'd-recent', at: now.toISOString() })
+
+      const { client, calls } = createFakeClient({
+        ...baseTableData(),
+        dose_entries: [
+          { data: [recent], error: null },
+          { data: [oldConflict], error: null },
+          { data: [oldConflict, neighbor], error: null },
+        ],
+      })
+      const source = createSupabaseSource(client)
+      const snapshot = await source.load('h1', now)
+
+      expect(snapshot.doses.map((d) => d.id).sort()).toEqual(['d-neighbor', 'd-old', 'd-recent'])
+
+      const windowStart = new Date(Date.parse(oldConflict.at) - 72 * 3_600_000).toISOString()
+      const windowEnd = new Date(Date.parse(oldConflict.at) + 72 * 3_600_000).toISOString()
+      const doseCalls = calls.filter((c) => c.table === 'dose_entries')
+      expect(doseCalls).toHaveLength(3)
+      expect(doseCalls[2]?.ops).toEqual([
+        'select:*', 'eq:household_id=h1', `gte:at=${windowStart}`, `lte:at=${windowEnd}`,
+      ])
+    })
+
+    it('does not duplicate a dose returned by more than one of the three queries', async () => {
+      const shared = doseRow({ id: 'd-shared', at: '2026-01-01T00:00:00Z', logged_offline: true })
+      const { client } = createFakeClient({
+        ...baseTableData(),
+        dose_entries: [
+          { data: [shared], error: null },
+          { data: [shared], error: null },
+          { data: [shared], error: null },
+        ],
+      })
+      const source = createSupabaseSource(client)
+      const snapshot = await source.load('h1', now)
+      expect(snapshot.doses).toHaveLength(1)
+    })
   })
 })
 
