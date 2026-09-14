@@ -3,6 +3,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import { buildDemoSnapshot } from '@/data/demo/demoFixture'
 import type { HouseholdSource } from '@/data/householdSource'
+import type { LogCommand } from '@/data/logCommands'
 import { LogWriteError } from '@/data/logWriter'
 import type { HouseholdSnapshot } from '@/data/snapshot'
 import { useDisplayStore } from '@/session/displayStore'
@@ -221,6 +222,44 @@ describe('log sheets', () => {
       await click(button(w, 'Start sleep'))
       expect(w.get('[role="alert"]').text()).toBe("Couldn't save that. Please try again.")
       expect(w.emitted('close')).toBeUndefined()
+    })
+  })
+
+  describe('time field follows the clock until adjusted', () => {
+    const cases: [string, unknown, (w: VueWrapper) => Promise<void>, string, (c: LogCommand) => string | undefined][] = [
+      ['SleepSheet', SleepSheet, async () => {}, 'Start sleep', (c) => (c.kind === 'sleep.start' ? c.entry.startAt : undefined)],
+      ['FeedingSheet', FeedingSheet, (w) => click(radio(w, 'Feeding type', 'Milk')), 'Save', (c) => (c.kind === 'feeding.add' ? c.entry.at : undefined)],
+      ['DiaperSheet', DiaperSheet, async (w) => { await click(radio(w, 'Child', 'Theo')); await click(radio(w, 'Diaper', 'Wet')) }, 'Save', (c) => (c.kind === 'diaper.add' ? c.entry.at : undefined)],
+      ['StickerSheet', StickerSheet, (w) => click(radio(w, 'Sticker category', 'Teeth')), 'Give sticker', (c) => (c.kind === 'sticker.add' ? c.entry.at : undefined)],
+    ]
+
+    it.each(cases)('%s saves the current time after the sheet sat open for 25 minutes', async (_name, component, fill, save, atOf) => {
+      await setup('2026-09-14T19:00:00Z', (s) => {
+        s.household.diaperLogEnabled = true
+      })
+      const w = mountSheet(component)
+      await flushPromises()
+      await fill(w)
+
+      vi.advanceTimersByTime(25 * 60_000)
+      await flushPromises()
+      await click(button(w, save))
+
+      expect(writer.calls.map(atOf)).toEqual(['2026-09-14T19:25:00.000Z'])
+    })
+
+    it('a stepped time stays put', async () => {
+      await setup('2026-09-14T19:00:00Z')
+      const w = mountSheet(FeedingSheet)
+      await flushPromises()
+      await click(radio(w, 'Feeding type', 'Milk'))
+      await click(button(w, '−5 min'))
+
+      vi.advanceTimersByTime(25 * 60_000)
+      await flushPromises()
+      await click(button(w, 'Save'))
+
+      expect(writer.calls[0]?.kind === 'feeding.add' && writer.calls[0].entry.at).toBe('2026-09-14T18:55:00.000Z')
     })
   })
 

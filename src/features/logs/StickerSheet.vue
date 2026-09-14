@@ -13,6 +13,7 @@ import StickerCelebration from './StickerCelebration.vue'
 import WhoRow from './WhoRow.vue'
 import { attributionFor, defaultChildId, eligibleChildren } from './logSheetModel'
 import { useLogSheet, type SaveResult } from './useLogSheet'
+import { useSheetTime } from './useSheetTime'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: []; saved: [result: SaveResult] }>()
@@ -21,10 +22,9 @@ const LOOKBACK_MS = 12 * 3_600_000
 
 const { view, identity, busy, error, submit, clearError } = useLogSheet()
 
-const now = ref(new Date())
+const { now, at, max, adjust, reset: resetTime, catchUp } = useSheetTime(() => minAt.value)
 const childId = ref<string | null>(null)
 const categoryId = ref<string | null>(null)
-const at = ref(now.value.toISOString())
 const who = ref<string | null>(null)
 /** Set after a successful save: the child's name to celebrate, and the save result to report when it ends. */
 const celebration = ref<{ childName: string; result: SaveResult } | null>(null)
@@ -46,8 +46,7 @@ watch(
       celebration.value = null
       return
     }
-    now.value = new Date()
-    at.value = now.value.toISOString()
+    resetTime()
     categoryId.value = null
     who.value = null
     clearError()
@@ -59,6 +58,7 @@ watch(
 const canSave = computed(() => !busy.value && child.value !== null && categoryId.value !== null)
 
 async function save(): Promise<void> {
+  catchUp()
   if (!view.value || !child.value || !categoryId.value || !canSave.value) return
   const childName = child.value.name
   const result = await submit({
@@ -95,7 +95,7 @@ function onCelebrationDone(): void {
         </div>
         <div class="flex flex-col gap-2">
           <SheetLabel>Time</SheetLabel>
-          <RTimeStepper v-model="at" :min="minAt" :max="now.toISOString()" :time-zone="tz" />
+          <RTimeStepper :model-value="at" :min="minAt" :max="max" :time-zone="tz" @update:model-value="adjust" />
         </div>
         <WhoRow v-model="who" :members="view.members" :required="false" />
       </template>

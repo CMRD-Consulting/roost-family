@@ -145,6 +145,41 @@ describe('medicine', () => {
       expect(w.emitted('close')).toHaveLength(1)
     })
 
+    it('keeps "Time given" on the clock while the sheet stays open, recomputing the warning, until the adult steps it', async () => {
+      await setup()
+      const w = mountIt(MedicineSheet)
+      await flushPromises()
+      await click(radio(w, 'Child', 'Theo'))
+      await click(radio(w, 'Medicine', 'Infant ibuprofen'))
+      await click(radio(w, 'Who', 'Sam'))
+      expect(w.get('[data-testid="dose-warnings"]').text()).toBe('Last dose was 2h 0m ago by Sam. Minimum is 6h.')
+
+      vi.advanceTimersByTime(25 * 60_000) // the adult was distracted
+      await flushPromises()
+      expect(w.get('[data-testid="dose-warnings"]').text()).toBe('Last dose was 2h 25m ago by Sam. Minimum is 6h.')
+      expect(button(w, '+5 min').attributes('disabled')).toBeDefined() // already at the live "now"
+      await click(button(w, 'Confirm and save'))
+
+      expect(lastDose().entry.at).toBe('2026-09-14T19:25:00.000Z')
+    })
+
+    it('a stepped "Time given" stays put as the clock moves on', async () => {
+      await setup()
+      const w = mountIt(MedicineSheet)
+      await flushPromises()
+      await click(radio(w, 'Child', 'Theo'))
+      await click(radio(w, 'Medicine', 'Infant acetaminophen'))
+      await click(radio(w, 'Who', 'Sam'))
+      await click(button(w, '−5 min'))
+
+      vi.advanceTimersByTime(25 * 60_000)
+      await flushPromises()
+      expect(button(w, '+5 min').attributes('disabled')).toBeUndefined()
+      await click(button(w, 'Save'))
+
+      expect(lastDose().entry.at).toBe('2026-09-14T18:55:00.000Z')
+    })
+
     it('says "Save" with no warnings and records none', async () => {
       await setup()
       const w = mountIt(MedicineSheet)

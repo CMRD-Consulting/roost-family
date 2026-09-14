@@ -14,6 +14,7 @@ import SheetLabel from './SheetLabel.vue'
 import WhoRow from './WhoRow.vue'
 import { attributionFor, defaultChildId, eligibleChildren, feedingAmounts } from './logSheetModel'
 import { useLogSheet, type SaveResult } from './useLogSheet'
+import { useSheetTime } from './useSheetTime'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: []; saved: [result: SaveResult] }>()
@@ -27,12 +28,11 @@ const TYPE_OPTIONS = [
 
 const { view, identity, busy, error, submit, clearError } = useLogSheet()
 
-const now = ref(new Date())
+const { now, at, max, adjust, reset: resetTime, catchUp } = useSheetTime(() => minAt.value)
 const childId = ref<string | null>(null)
 const type = ref<string | null>(null)
 const amount = ref<string | null>(null)
 const note = ref('')
-const at = ref(now.value.toISOString())
 const who = ref<string | null>(null)
 
 const tz = computed(() => view.value?.household.timeZone ?? 'UTC')
@@ -51,8 +51,7 @@ watch(
   () => props.open,
   (open) => {
     if (!open) return
-    now.value = new Date()
-    at.value = now.value.toISOString()
+    resetTime()
     type.value = null
     amount.value = null
     note.value = ''
@@ -66,6 +65,7 @@ watch(
 const canSave = computed(() => !busy.value && child.value !== null && type.value !== null)
 
 async function save(): Promise<void> {
+  catchUp()
   if (!view.value || !child.value || !type.value || !canSave.value) return
   const result = await submit({
     kind: 'feeding.add',
@@ -107,7 +107,7 @@ async function save(): Promise<void> {
         </div>
         <div class="flex flex-col gap-2">
           <SheetLabel>Time</SheetLabel>
-          <RTimeStepper v-model="at" :min="minAt" :max="now.toISOString()" :time-zone="tz" />
+          <RTimeStepper :model-value="at" :min="minAt" :max="max" :time-zone="tz" @update:model-value="adjust" />
         </div>
         <RInput v-model="note" label="Note (optional)" :maxlength="200" />
         <WhoRow v-model="who" :members="view.members" :required="false" />

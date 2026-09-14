@@ -15,6 +15,7 @@ import SheetLabel from './SheetLabel.vue'
 import WhoRow from './WhoRow.vue'
 import { attributionFor, defaultChildId, eligibleChildren, openSleepFor } from './logSheetModel'
 import { useLogSheet, type SaveResult } from './useLogSheet'
+import { useSheetTime } from './useSheetTime'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: []; saved: [result: SaveResult] }>()
@@ -27,10 +28,9 @@ const TYPE_OPTIONS = [
 
 const { view, identity, busy, error, submit, clearError } = useLogSheet()
 
-const now = ref(new Date())
+const { now, at, max, adjust, reset: resetTime, clamp: clampAt, catchUp } = useSheetTime(() => minAt.value)
 const childId = ref<string | null>(null)
 const who = ref<string | null>(null)
-const at = ref(now.value.toISOString())
 const type = ref<string | null>(null)
 const typeTouched = ref(false)
 
@@ -70,14 +70,6 @@ function autoType(): string | null {
   return classifySleep(new Date(at.value), window, tz.value)
 }
 
-function clampAt(): void {
-  const atMs = Date.parse(at.value)
-  const minMs = Date.parse(minAt.value)
-  const maxMs = now.value.getTime()
-  if (atMs < minMs) at.value = new Date(minMs).toISOString()
-  else if (atMs > maxMs) at.value = new Date(maxMs).toISOString()
-}
-
 /** Adopts the live open sleep. With `announce`, a change of mode (or of which sleep would be ended) is shown. */
 function adoptLiveOpenSleep(announce: boolean): void {
   const live = liveOpenSleep.value
@@ -100,7 +92,7 @@ watch([childId, () => sleepKey(liveOpenSleep.value)], ([nextChild], [prevChild])
     modeNotice.value = null
     needsFreshTap.value = false
     openSleep.value = liveOpenSleep.value
-    if (Date.parse(at.value) < Date.parse(minAt.value) || Date.parse(at.value) > now.value.getTime()) at.value = now.value.toISOString()
+    if (Date.parse(at.value) < Date.parse(minAt.value) || Date.parse(at.value) > now.value.getTime()) resetTime()
     return
   }
   if (!props.open || saving.value) return
@@ -115,8 +107,7 @@ watch(
   () => props.open,
   (open) => {
     if (!open) return
-    now.value = new Date()
-    at.value = now.value.toISOString()
+    resetTime()
     who.value = null
     typeTouched.value = false
     saving.value = false
@@ -143,6 +134,7 @@ async function save(): Promise<void> {
     needsFreshTap.value = false
     return
   }
+  catchUp()
   const householdId = view.value.household.id
   let cmd: LogCommand
   if (openSleep.value) {
@@ -190,13 +182,13 @@ async function save(): Promise<void> {
           <p class="text-[26px] font-semibold text-ink">Sleeping since {{ sleepingSince }}</p>
           <div class="flex flex-col gap-2">
             <SheetLabel>Woke up</SheetLabel>
-            <RTimeStepper v-model="at" :min="minAt" :max="now.toISOString()" :time-zone="tz" />
+            <RTimeStepper :model-value="at" :min="minAt" :max="max" :time-zone="tz" @update:model-value="adjust" />
           </div>
         </template>
         <template v-else>
           <div class="flex flex-col gap-2">
             <SheetLabel>Fell asleep</SheetLabel>
-            <RTimeStepper v-model="at" :min="minAt" :max="now.toISOString()" :time-zone="tz" />
+            <RTimeStepper :model-value="at" :min="minAt" :max="max" :time-zone="tz" @update:model-value="adjust" />
           </div>
           <div class="flex flex-col gap-2">
             <SheetLabel>Type</SheetLabel>

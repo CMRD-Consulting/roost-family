@@ -21,6 +21,7 @@ import {
   attributionFor, defaultChildId, doseWarningMessages, eligibleChildren, medicineScheduleLabel,
 } from './logSheetModel'
 import { useLogSheet, type SaveResult } from './useLogSheet'
+import { useSheetTime } from './useSheetTime'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: []; saved: [result: SaveResult] }>()
@@ -29,10 +30,9 @@ const LOOKBACK_MS = 24 * 3_600_000
 
 const { view, identity, busy, error, submit, clearError } = useLogSheet()
 
-const now = ref(new Date())
+const { now, at, max, adjust, reset: resetTime, catchUp } = useSheetTime(() => minAt.value)
 const childId = ref<string | null>(null)
 const medicineId = ref<string | null>(null)
-const at = ref(now.value.toISOString())
 const who = ref<string | null>(null)
 const note = ref('')
 /** The dose waiting for "Log anyway" because other adults' doses couldn't be checked. */
@@ -62,8 +62,7 @@ watch(
   () => props.open,
   (open) => {
     if (!open) return
-    now.value = new Date()
-    at.value = now.value.toISOString()
+    resetTime()
     medicineId.value = null
     who.value = null
     note.value = ''
@@ -96,6 +95,7 @@ async function send(cmd: LogCommand, confirmOffline: boolean): Promise<void> {
 }
 
 async function save(): Promise<void> {
+  catchUp()
   if (!view.value || !child.value || !medicine.value || who.value === null || !canSave.value) return
   const attribution = attributionFor(identity.value, who.value, view.value.members)
   await send(
@@ -166,7 +166,7 @@ async function logAnyway(): Promise<void> {
           </div>
           <div class="flex flex-col gap-2">
             <SheetLabel>Time given</SheetLabel>
-            <RTimeStepper v-model="at" :min="minAt" :max="now.toISOString()" :time-zone="tz" />
+            <RTimeStepper :model-value="at" :min="minAt" :max="max" :time-zone="tz" @update:model-value="adjust" />
           </div>
 
           <div

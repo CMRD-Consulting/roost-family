@@ -9,14 +9,14 @@ import SheetError from './SheetError.vue'
 import SheetLabel from './SheetLabel.vue'
 import { attributionFor, openSleepFor, startedAtLabel } from './logSheetModel'
 import { useLogSheet, type SaveResult } from './useLogSheet'
+import { useSheetTime } from './useSheetTime'
 
 const props = defineProps<{ open: boolean; childId: string }>()
 const emit = defineEmits<{ close: []; saved: [result: SaveResult] }>()
 
 const { view, identity, busy, error, submit, clearError } = useLogSheet()
 
-const now = ref(new Date())
-const at = ref(now.value.toISOString())
+const { now, at, max, adjust, reset: resetTime, catchUp } = useSheetTime(() => entry.value?.startAt ?? '')
 const confirmingDiscard = ref(false)
 /** Captured on open so the optimistic update doesn't blank the sheet while it saves. */
 const entry = ref<SleepEntry | null>(null)
@@ -33,8 +33,7 @@ watch(
   () => [props.open, props.childId] as const,
   ([open]) => {
     if (!open) return
-    now.value = new Date()
-    at.value = now.value.toISOString()
+    resetTime()
     confirmingDiscard.value = false
     clearError()
     entry.value = view.value ? openSleepFor(view.value, props.childId) : null
@@ -60,6 +59,7 @@ async function finish(cmd: Parameters<typeof submit>[0]): Promise<void> {
 
 async function endSleep(): Promise<void> {
   if (!view.value || !entry.value || busy.value) return
+  catchUp()
   await finish({
     kind: 'sleep.end',
     householdId: view.value.household.id,
@@ -91,7 +91,7 @@ async function discard(): Promise<void> {
         <p class="text-[22px] text-ink">{{ message }}</p>
         <div class="flex flex-col gap-2">
           <SheetLabel>Woke up</SheetLabel>
-          <RTimeStepper v-model="at" :min="entry.startAt" :max="now.toISOString()" :time-zone="tz" />
+          <RTimeStepper :model-value="at" :min="entry.startAt" :max="max" :time-zone="tz" @update:model-value="adjust" />
         </div>
       </template>
       <SheetError :message="error" />
