@@ -391,6 +391,11 @@ deno_version = 2
 [functions.weather]
 verify_jwt = true
 
+# Photo storage sweep (spec §11.1, §11.3). Service role only: the function checks the key itself, so the gateway's JWT
+# check is off (it would refuse the newer non-JWT secret keys).
+[functions.storage-sweep]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 55327

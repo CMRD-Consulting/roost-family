@@ -569,6 +569,7 @@ All household-owned tables are scoped to a household, directly through `househol
 6. Trademark clearance search for "Roost Family"
 7. Invite codes enabled; per-household limits enforced
 8. pg_cron purge jobs scheduled and monitored (`supabase/manual-checks/cron_check.sql` reports READY)
+9. Photo storage sweep (`storage-sweep` Edge Function) deployed and scheduled hourly, so deleted photos' files are erased, not just unreadable
 
 ## 16. Revision History
 

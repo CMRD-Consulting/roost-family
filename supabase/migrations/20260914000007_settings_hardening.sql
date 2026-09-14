@@ -267,3 +267,81 @@ end $$;
 
 revoke execute on function public.revoke_member_invite(text) from public, anon;
 grant execute on function public.revoke_member_invite(text) to authenticated;
+
+-- ═══ Photo files: unreadable at once, erased by the storage sweep (spec §11.1, §11.3) ═══
+-- Migration 6 deleted storage.objects records from SQL, which hides a file but leaves its bytes in the storage backend,
+-- with no record left for anything to find and erase them. Now SQL leaves the records alone and the `storage-sweep`
+-- Edge Function (service role, scheduled) erases, through the Storage API, every file with no `photos` row older than
+-- an hour and every file of a household that no longer exists. Until then a deleted photo's file can't be read:
+-- members and displays read (and sign URLs for) only objects that have a `photos` row in their household.
+
+-- True when the object is a recorded photo of a household the caller belongs to. Runs inside the storage policy.
+create function private.photo_object_readable(p_name text) returns boolean
+language sql stable security definer set search_path = '' as $$
+  select exists (
+    select 1 from public.photos p
+    where p.storage_path = p_name and private.is_household_member(p.household_id)
+  )
+$$;
+
+drop policy household_photos_select on storage.objects;
+create policy household_photos_select on storage.objects for select to authenticated
+  using (bucket_id = 'household-photos' and private.photo_object_readable(name));
+
+-- ─── delete_photo (replaces migration 6's): the file is left for the sweep ─
+create or replace function public.delete_photo(p_membership_id uuid, p_pin text, p_photo_id uuid) returns void
+language plpgsql security definer set search_path = '' as $$
+declare
+  v_household uuid := private.require_settings_pin(p_membership_id, p_pin);
+  v_path text;
+  v_kind text;
+begin
+  delete from public.photos where id = p_photo_id and household_id = v_household returning storage_path, kind into v_path, v_kind;
+  if v_path is null then
+    raise exception 'photo not found' using errcode = '42501';
+  end if;
+
+  update public.children c set photo_id = null
+  from public.child_households ch
+  where ch.child_id = c.id and ch.household_id = v_household and c.photo_id = p_photo_id;
+
+  update public.routines r
+  set steps = (
+    select coalesce(jsonb_agg(case when s ->> 'photoId' = p_photo_id::text then jsonb_set(s, '{photoId}', 'null') else s end
+                              order by i), '[]'::jsonb)
+    from jsonb_array_elements(r.steps) with ordinality as e (s, i)
+  )
+  where r.household_id = v_household and r.steps @> jsonb_build_array(jsonb_build_object('photoId', p_photo_id::text));
+
+  perform private.audit_setting(v_household, p_membership_id, 'photos', 'delete', p_photo_id, jsonb_build_object('kind', v_kind));
+end $$;
+
+-- ─── Purge (replaces the one above): files are left for the sweep ────────
+create or replace function private.purge_deleted_households() returns int
+language plpgsql security definer set search_path = '' as $$
+declare
+  v_count int;
+  v_devices uuid[];
+begin
+  select coalesce(array_agg(distinct d.auth_user_id), '{}') into v_devices
+  from public.displays d
+  join public.households h on h.id = d.household_id
+  join auth.users u on u.id = d.auth_user_id and u.is_anonymous
+  where h.deleted_at is not null and h.deleted_at < now() - interval '30 days';
+
+  -- Photo files stay until the storage sweep finds their household gone and erases them through the Storage API.
+  delete from public.households where deleted_at is not null and deleted_at < now() - interval '30 days';
+  get diagnostics v_count = row_count;
+
+  -- After the households (and so their displays) are gone; a device bound to a display elsewhere is kept.
+  delete from auth.users u
+  where u.id = any (v_devices) and u.is_anonymous
+    and not exists (select 1 from public.displays d where d.auth_user_id = u.id);
+  return v_count;
+end $$;
+
+drop function private.delete_photo_objects(uuid, text);
+
+revoke execute on function private.photo_object_readable(text) from public, anon;
+grant execute on function private.photo_object_readable(text) to authenticated;
+revoke execute on function private.purge_deleted_households() from public, anon, authenticated;

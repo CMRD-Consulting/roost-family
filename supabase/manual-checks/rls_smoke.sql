@@ -1225,7 +1225,7 @@ select pg_temp.expect('B household and its data gone', not exists (select 1 from
   and not exists (select 1 from public.children where id = pg_temp.v('kid_b'))
   and not exists (select 1 from public.memberships where household_id = pg_temp.v('household_b'))
   and not exists (select 1 from public.displays where household_id = pg_temp.v('household_b')));
-select pg_temp.expect('B photo objects purged with the household', not exists (
+select pg_temp.expect('B photo files are left for the storage sweep (only the Storage API erases file bytes)', exists (
   select 1 from storage.objects where bucket_id = 'household-photos' and name like pg_temp.v('household_b')::text || '/%'));
 select pg_temp.expect('F (deleted 29 days ago) kept', exists (select 1 from public.households where id = pg_temp.v('household_f'))
   and exists (select 1 from storage.objects where bucket_id = 'household-photos' and name like pg_temp.v('household_f')::text || '/%'));
@@ -1485,7 +1485,7 @@ select pg_temp.expect('household_weather: RLS on, one select policy, realtime pu
 -- ─── Photos (spec §7.9, §11.1) ────────────────────────────────────────────
 -- Storage uploads and reads are simulated by writing storage.objects as `authenticated` with the caller's claims,
 -- which is what the Storage API does (it runs the same RLS policies).
-\echo '[73] household-photos bucket: private; members and displays upload and read their own household''s folder only'
+\echo '[73] household-photos bucket: private; members and displays upload into their own household''s folder only'
 reset role;
 select gen_random_uuid() as photo_f1, gen_random_uuid() as photo_f2, gen_random_uuid() as photo_k1 \gset
 select set_config('smoke.photo_f1', :'photo_f1', true), set_config('smoke.photo_f2', :'photo_f2', true),
@@ -1497,9 +1497,8 @@ insert into storage.objects (bucket_id, name) values ('household-photos', :'hous
 set local role authenticated;
 select set_config('request.jwt.claims', :'F', true);
 insert into storage.objects (bucket_id, name) values ('household-photos', :'household_f' || '/' || :'photo_f1' || '.jpg');
-select pg_temp.expect('member reads own household''s objects only', (
-  select array_agg(name) from storage.objects where bucket_id = 'household-photos')
-  = array[pg_temp.v('household_f')::text || '/' || pg_temp.v('photo_f1')::text || '.jpg']);
+select pg_temp.expect('an uploaded object is not readable until add_photo records it', not exists (
+  select 1 from storage.objects where bucket_id = 'household-photos'));
 select pg_temp.expect_error('member cannot upload into another household''s folder',
   $q$insert into storage.objects (bucket_id, name) values ('household-photos', pg_temp.v('household_k')::text || '/' || gen_random_uuid()::text || '.jpg')$q$, '42501');
 select pg_temp.expect_error('member cannot upload a name other than <household>/<uuid>.jpg',
@@ -1513,12 +1512,16 @@ update storage.objects set name = pg_temp.v('household_f')::text || '/' || gen_r
 select set_config('storage.allow_delete_query', 'true', true);
 delete from storage.objects where bucket_id = 'household-photos';
 select set_config('storage.allow_delete_query', 'false', true);
+reset role;
 select pg_temp.expect('member cannot rename or delete objects directly', (
   select count(*) from storage.objects where name = pg_temp.v('household_f')::text || '/' || pg_temp.v('photo_f1')::text || '.jpg') = 1);
+set local role authenticated;
 select set_config('request.jwt.claims', :'J', true);
 insert into storage.objects (bucket_id, name) values ('household-photos', :'household_f' || '/' || :'photo_f2' || '.jpg');
-select pg_temp.expect('display uploads and reads its household''s objects', (
-  select count(*) from storage.objects where bucket_id = 'household-photos') = 2);
+reset role;
+select pg_temp.expect('display uploads into its household''s folder', (
+  select count(*) from storage.objects where bucket_id = 'household-photos' and name like pg_temp.v('household_f')::text || '/%') = 2);
+set local role authenticated;
 select set_config('request.jwt.claims', :'A', true);
 select pg_temp.expect('non-member sees no objects', not exists (select 1 from storage.objects where bucket_id = 'household-photos'));
 set local role anon;
@@ -1545,6 +1548,15 @@ select pg_temp.expect('photo row written with its storage path', exists (
   select 1 from public.photos where id = pg_temp.v('photo_f1') and household_id = pg_temp.v('household_f') and kind = 'slideshow'
     and storage_path = pg_temp.v('household_f')::text || '/' || pg_temp.v('photo_f1')::text || '.jpg'));
 select pg_temp.expect('add_photo audited', pg_temp.audited(pg_temp.v('household_f'), pg_temp.v('membership_f'), 'photos', 'add', pg_temp.v('photo_f1')));
+select pg_temp.expect('a recorded photo is readable by its household''s display', (
+  select array_agg(name) from storage.objects where bucket_id = 'household-photos')
+  = array[pg_temp.v('household_f')::text || '/' || pg_temp.v('photo_f1')::text || '.jpg']);
+select set_config('request.jwt.claims', :'F', true);
+select pg_temp.expect('a recorded photo is readable by its household''s members', exists (
+  select 1 from storage.objects where bucket_id = 'household-photos' and name = pg_temp.v('household_f')::text || '/' || pg_temp.v('photo_f1')::text || '.jpg'));
+select set_config('request.jwt.claims', :'A', true);
+select pg_temp.expect('another household cannot read a recorded photo', not exists (select 1 from storage.objects where bucket_id = 'household-photos'));
+select set_config('request.jwt.claims', :'J', true);
 select public.add_photo(:'membership_f', '2468', :'photo_f1', 'slideshow');
 select pg_temp.expect('add_photo retried with the same id is a no-op', (select count(*) from public.photos where id = pg_temp.v('photo_f1')) = 1);
 select pg_temp.expect_error('add_photo retried as another kind',
@@ -1569,7 +1581,7 @@ select public.add_photo(:'membership_f', '2468', :'photo_k1', 'step');
 select pg_temp.expect('the slideshow limit does not apply to step photos', exists (
   select 1 from public.photos where id = pg_temp.v('photo_k1') and kind = 'step'));
 
-\echo '[75] delete_photo: PIN, own household only; removes the row, the object and references to it'
+\echo '[75] delete_photo: PIN, own household only; removes the row and references to it, and the file stops being readable'
 reset role;
 update public.children set photo_id = :'photo_k1'
   where id = (select child_id from public.child_households where household_id = :'household_f' order by child_id limit 1);
@@ -1585,10 +1597,14 @@ select pg_temp.expect_error('delete_photo of another household''s photo',
   $q$select public.delete_photo(pg_temp.v('membership_a'), '4242', pg_temp.v('photo_k1'))$q$, '42501');
 select pg_temp.expect_error('delete_photo of an unknown photo',
   $q$select public.delete_photo(pg_temp.v('membership_f'), '2468', gen_random_uuid())$q$, '42501');
+select pg_temp.expect('the photo is readable before it is deleted', exists (select 1 from storage.objects
+  where bucket_id = 'household-photos' and name = pg_temp.v('household_f')::text || '/' || pg_temp.v('photo_k1')::text || '.jpg'));
 select public.delete_photo(:'membership_f', '2468', :'photo_k1');
+select pg_temp.expect('a deleted photo''s file is unreadable at once', not exists (select 1 from storage.objects
+  where bucket_id = 'household-photos' and name = pg_temp.v('household_f')::text || '/' || pg_temp.v('photo_k1')::text || '.jpg'));
 reset role;
-select pg_temp.expect('delete_photo removes the row and the object', not exists (select 1 from public.photos where id = pg_temp.v('photo_k1'))
-  and not exists (select 1 from storage.objects where bucket_id = 'household-photos'
+select pg_temp.expect('delete_photo removes the row and leaves the file for the storage sweep', not exists (select 1 from public.photos where id = pg_temp.v('photo_k1'))
+  and exists (select 1 from storage.objects where bucket_id = 'household-photos'
     and name = pg_temp.v('household_f')::text || '/' || pg_temp.v('photo_k1')::text || '.jpg'));
 select pg_temp.expect('the other household''s object with the same id is untouched', exists (
   select 1 from storage.objects where bucket_id = 'household-photos' and name = pg_temp.v('household_k')::text || '/' || pg_temp.v('photo_k1')::text || '.jpg'));
@@ -1597,7 +1613,7 @@ select pg_temp.expect('delete_photo clears the child photo and routine step phot
   and (select steps -> 0 ->> 'photoId' from public.routines where id = pg_temp.v('routine_photo')) is null
   and (select steps -> 0 ->> 'label' from public.routines where id = pg_temp.v('routine_photo')) = 'Shoes');
 select pg_temp.expect('delete_photo audited', pg_temp.audited(pg_temp.v('household_f'), pg_temp.v('membership_f'), 'photos', 'delete', pg_temp.v('photo_k1')));
-select pg_temp.expect('direct deletes from storage are still blocked outside delete_photo', coalesce(current_setting('storage.allow_delete_query', true), 'false') <> 'true');
+select pg_temp.expect('direct deletes from storage stay blocked', coalesce(current_setting('storage.allow_delete_query', true), 'false') <> 'true');
 set local role authenticated;
 
 \echo '[76] Photo privileges'
@@ -1607,13 +1623,15 @@ select pg_temp.expect('only authenticated can execute add_photo and delete_photo
     and has_function_privilege('authenticated', p.oid, 'execute') and not has_function_privilege('anon', p.oid, 'execute')) = 2);
 select pg_temp.expect('PUBLIC cannot execute the photo RPCs', not exists (
   select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
-  where n.nspname in ('public', 'private') and p.proname in ('add_photo', 'delete_photo', 'photo_object_household')
+  where n.nspname in ('public', 'private') and p.proname in ('add_photo', 'delete_photo', 'photo_object_household', 'photo_object_readable')
     and a.grantee = 0 and a.privilege_type = 'EXECUTE'));
 select pg_temp.expect('photos: clients cannot write directly',
   not has_table_privilege('authenticated', 'public.photos', 'insert, update, delete')
   and not has_table_privilege('anon', 'public.photos', 'select, insert, update, delete'));
 select pg_temp.expect('photos published to realtime', exists (
   select 1 from pg_publication_tables where pubname = 'supabase_realtime' and tablename = 'photos'));
+select pg_temp.expect('the old SQL object-deletion helper is gone', not exists (
+  select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'private' and p.proname = 'delete_photo_objects'));
 select pg_temp.expect('storage policies: select and insert only, for this bucket', (
   select array_agg(cmd order by cmd) from pg_policies where schemaname = 'storage' and tablename = 'objects'
     and policyname like 'household_photos_%') = array['INSERT', 'SELECT']);

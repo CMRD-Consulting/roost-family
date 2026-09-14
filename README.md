@@ -42,6 +42,46 @@ pnpm dev               # http://localhost:5173
 - A new version waits and is applied only at a safe moment (spec §5.8, `src/app/appUpdates.ts`): during
   Night Mode, or after 5 minutes without a touch outside Kids' Corner, never while a visual timer runs.
 
+## Scheduled jobs (production)
+
+Deleted households and deleted photo files are erased only by scheduled jobs (spec §11.3; launch gate §15). SQL can't
+erase Storage file bytes, so `delete_photo` and the household purge leave the files (unreadable at once) for the
+`storage-sweep` Edge Function, which erases them through the Storage API.
+
+1. Enable **pg_cron** and **pg_net** (Dashboard → Database → Extensions).
+2. Purge households deleted more than 30 days ago, daily (SQL editor, as `postgres`):
+   ```sql
+   select cron.schedule('roost-purge-deleted-households', '17 3 * * *', 'select private.purge_deleted_households()');
+   ```
+3. Deploy the sweep: `supabase functions deploy storage-sweep`. It accepts only the service role key (the gateway's JWT
+   check is off for it in `config.toml`; the function checks the key itself).
+4. Keep the project URL and service role key in Vault and run the sweep hourly:
+   ```sql
+   select vault.create_secret('https://<project-ref>.supabase.co', 'roost_project_url');
+   select vault.create_secret('<service role key>', 'roost_service_role_key');
+   select cron.schedule('roost-storage-sweep', '41 * * * *', $$
+     select net.http_post(
+       url := (select decrypted_secret from vault.decrypted_secrets where name = 'roost_project_url') || '/functions/v1/storage-sweep',
+       headers := jsonb_build_object(
+         'Content-Type', 'application/json',
+         'Authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'roost_service_role_key')),
+       body := '{}'::jsonb,
+       timeout_milliseconds := 60000)
+   $$);
+   ```
+   It erases files with no `photos` row older than 60 minutes and every file of a household that no longer exists,
+   and returns counts (`scanned`, `kept`, `removedOrphans`, `removedGoneHousehold`, `skipped`, `failed`); pg_net keeps
+   recent responses in `net._http_response`, and the function logs each report.
+5. Monitor: `psql "$DATABASE_URL" -f supabase/manual-checks/cron_check.sql` prints a READY or NOT READY line per job
+   and the jobs' recent runs.
+
+Run the sweep by hand (or locally, with `supabase functions serve` and `SERVICE_ROLE_KEY` from `supabase status -o env`):
+
+```bash
+curl -X POST "$SUPABASE_URL/functions/v1/storage-sweep" -H "Authorization: Bearer $SERVICE_ROLE_KEY" \
+  -H 'Content-Type: application/json' -d '{"minAgeMinutes": 60}'
+```
+
 ## Commands
 
 | Command | What it does |

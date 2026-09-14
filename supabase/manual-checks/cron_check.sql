@@ -1,7 +1,8 @@
--- Reports whether the scheduled jobs Roost depends on are in place (spec §11.3, §15 launch gate). Read-only.
+-- Reports whether the scheduled jobs Roost depends on are in place (spec §11.3, §15 launch gate; README "Scheduled
+-- jobs"): the household purge and the photo storage sweep. Read-only.
 --   psql "$DATABASE_URL" -f supabase/manual-checks/cron_check.sql
 -- Prints one READY / NOT READY line per requirement, then the jobs' recent runs. Run it against prod before launch and
--- after any restore; a NOT READY line means deleted households (or photo files) are not being purged.
+-- after any restore; a NOT READY line means deleted households or photo files are not being erased.
 \set QUIET 1
 \pset footer off
 
@@ -21,6 +22,23 @@ select exists (select 1 from pg_catalog.pg_extension where extname = 'pg_cron') 
     \echo '           select cron.schedule(''roost-purge-deleted-households'', ''17 3 * * *'', ''select private.purge_deleted_households()'');'
   \endif
 
+  select exists (
+    select 1 from cron.job
+    where jobname = 'roost-storage-sweep' and active and command ilike '%/functions/v1/storage-sweep%'
+  ) as sweep_job \gset
+  \if :sweep_job
+    \echo 'READY      roost-storage-sweep is scheduled and active'
+  \else
+    \echo 'NOT READY  roost-storage-sweep is missing or inactive, so deleted photo files are never erased (README, "Scheduled jobs").'
+  \endif
+
+  select exists (select 1 from pg_catalog.pg_extension where extname = 'pg_net') as pg_net_installed \gset
+  \if :pg_net_installed
+    \echo 'READY      pg_net is installed (the storage sweep job calls the Edge Function with it)'
+  \else
+    \echo 'NOT READY  pg_net is not installed, so the storage sweep job cannot call its Edge Function.'
+  \endif
+
   \echo ''
   \echo 'Roost jobs:'
   select jobid, jobname, schedule, active, command from cron.job where jobname like 'roost-%' order by jobname;
@@ -35,7 +53,7 @@ select exists (select 1 from pg_catalog.pg_extension where extname = 'pg_cron') 
   select count(*) as failed_last_7_days from cron.job_run_details r join cron.job j on j.jobid = r.jobid
   where j.jobname like 'roost-%' and r.status = 'failed' and r.start_time > now() - interval '7 days';
 \else
-  \echo 'NOT READY  pg_cron is not installed, so nothing purges deleted households.'
+  \echo 'NOT READY  pg_cron is not installed, so nothing purges deleted households or sweeps photo files.'
   \echo '           Enable it (Database > Extensions > pg_cron on hosted Supabase), then schedule the jobs:'
   \echo '           select cron.schedule(''roost-purge-deleted-households'', ''17 3 * * *'', ''select private.purge_deleted_households()'');'
 \endif
