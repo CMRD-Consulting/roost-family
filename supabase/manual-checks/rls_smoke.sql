@@ -205,10 +205,13 @@ select pg_temp.expect('sleep logged_by_name = Alex', (select logged_by_name from
 update public.sleep_entries set logged_by_name = 'Spoofed' where id = :'sleep_a';
 select pg_temp.expect('logged_by_name not client-writable', (select logged_by_name from public.sleep_entries where id = pg_temp.v('sleep_a')) = 'Alex');
 
-\echo '[12] Members can append to the settings audit, attributed only within their household'
-insert into public.settings_audit (household_id, membership_id, change) values (:'household_a', :'membership_a', '{"k":"v"}');
-select pg_temp.expect_error('settings audit attributed to B membership',
-  $q$insert into public.settings_audit (household_id, membership_id, change) values (pg_temp.v('household_a'), pg_temp.v('membership_b'), '{}')$q$, '23503');
+\echo '[12] settings_audit is written only by RPCs: display and adult cannot insert it directly'
+select set_config('request.jwt.claims', :'D', true);
+select pg_temp.expect_error('display inserts settings audit directly',
+  $q$insert into public.settings_audit (household_id, membership_id, change) values (pg_temp.v('household_a'), pg_temp.v('membership_a'), '{"k":"v"}')$q$, '42501');
+select set_config('request.jwt.claims', :'A', true);
+select pg_temp.expect_error('adult inserts settings audit directly',
+  $q$insert into public.settings_audit (household_id, membership_id, change) values (pg_temp.v('household_a'), pg_temp.v('membership_a'), '{"k":"v"}')$q$, '42501');
 select pg_temp.expect_error('settings audit update',
   $q$update public.settings_audit set change = '{}' where household_id = pg_temp.v('household_a')$q$, '42501');
 

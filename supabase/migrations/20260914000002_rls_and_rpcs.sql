@@ -104,8 +104,9 @@ from authenticated;
 -- Doses are append-only: insert here, void and acknowledge through RPCs (spec §11.4).
 revoke update, delete on public.dose_entries from authenticated;
 
--- The settings audit trail is append-only.
-revoke update, delete on public.settings_audit from authenticated;
+-- The settings audit trail is written only by the security-definer settings RPCs (private.audit_setting),
+-- never inserted directly by a member's own client.
+revoke insert, update, delete on public.settings_audit from authenticated;
 
 -- ─── Policies ────────────────────────────────────────────────────────────
 -- Tables with RLS on and no policies (app_config, invite_codes, member_pins, display_claims)
@@ -169,10 +170,10 @@ create policy dose_entries_select on public.dose_entries for select to authentic
 create policy dose_entries_insert on public.dose_entries for insert to authenticated
   with check (private.is_household_member(household_id));
 
+-- No insert policy: settings_audit is written only by security-definer RPCs (private.audit_setting),
+-- which are not subject to RLS; a member's own client can never insert into it directly.
 create policy settings_audit_select on public.settings_audit for select to authenticated
   using (private.is_household_member(household_id));
-create policy settings_audit_insert on public.settings_audit for insert to authenticated
-  with check (private.is_household_member(household_id));
 
 -- ─── RPC: consent and household creation ─────────────────────────────────
 create function public.record_consent(p_policy_version text, p_health_data_consent boolean) returns void
