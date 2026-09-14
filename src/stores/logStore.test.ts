@@ -14,6 +14,19 @@ import { requiresOnline } from '@/data/logCommands'
 import { useHouseholdStore } from './householdStore'
 import { NeedsOfflineDoseConfirmation, STUCK_COMMAND_MESSAGE, useLogStore } from './logStore'
 
+// householdStore.start() reads/writes the device cache. Most tests here run under fake timers, and
+// fake-indexeddb schedules its work with real timers (see the "plain data" test below), so the real
+// cache would hang; keep it a no-op here, as the (irrelevant to these tests) real cache would be.
+vi.mock('@/data/deviceCache', () => ({
+  createDeviceCache: () => ({
+    loadSnapshot: async () => null,
+    saveSnapshot: async () => {},
+    loadIdentity: async () => null,
+    saveIdentity: async () => {},
+    clear: async () => {},
+  }),
+}))
+
 /** Reports realtime as connected (like a healthy Supabase or the demo source) unless told otherwise. */
 function fakeSource(snapshot: HouseholdSnapshot, realtime: 'connected' | 'disconnected' | null = 'connected'): HouseholdSource {
   return {
