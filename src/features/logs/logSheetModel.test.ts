@@ -5,7 +5,7 @@ import type { DoseWarning } from '@/domain/medicine'
 import type { Medicine } from '@/domain/types'
 import {
   attributionFor, defaultChildId, doseWarningMessages, eligibleChildren, feedingAmounts,
-  openSleepFor, startedAtLabel, visibleGroceries,
+  medicineScheduleLabel, openSleepFor, startedAtLabel, visibleGroceries,
 } from './logSheetModel'
 
 const now = new Date('2026-09-14T19:00:00Z') // 3:00 PM EDT
@@ -88,6 +88,13 @@ describe('openSleepFor', () => {
     const s = buildDemoSnapshot(now)
     s.sleeps.push({ id: 'stray', childId: THEO, startAt: ago(5 * H), endAt: null, type: 'nap' })
     expect(openSleepFor(s, THEO)).toBeNull()
+  })
+})
+
+describe('medicineScheduleLabel', () => {
+  it('shows the interval and the daily maximum, dropping a trailing .0', () => {
+    expect(medicineScheduleLabel({ id: 'm', childId: THEO, name: 'X', minIntervalHours: 6, maxDosesPer24h: 4 })).toBe('Every 6h · max 4/day')
+    expect(medicineScheduleLabel({ id: 'm', childId: THEO, name: 'X', minIntervalHours: 4.5, maxDosesPer24h: null })).toBe('Every 4.5h')
   })
 })
 

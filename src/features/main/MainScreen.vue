@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useNow } from '@/composables/useNow'
 import { DEMO_DISPLAY, isDemo, selectSource, type HouseholdSource } from '@/data/householdSource'
+import DosePinDialog from '@/features/logs/DosePinDialog.vue'
 import { checkStillRegistered } from '@/session/displaySession'
 import { useDisplayStore } from '@/session/displayStore'
 import { useHouseholdStore } from '@/stores/householdStore'
@@ -52,6 +53,9 @@ function onOpenLog(): void {
   clearTimeout(toastTimer)
   toastTimer = setTimeout(() => (toast.value = null), TOAST_MS)
 }
+
+/** The dose whose conflict alert an adult is acknowledging with their PIN (spec §7.3). */
+const acknowledgingDoseId = ref<string | null>(null)
 
 let source: HouseholdSource | null = null
 let disposed = false
@@ -188,7 +192,7 @@ const MODE_BUTTONS = [
                a compact roster (5+ kids) and an unacknowledged conflict, the kid grid is the one thing
                allowed to scroll below the fold, so it goes last. -->
           <template v-if="model.layout === 'compact' && model.conflicts.length > 0">
-            <ConflictBanner :conflicts="model.conflicts" />
+            <ConflictBanner :conflicts="model.conflicts" @acknowledge="acknowledgingDoseId = $event" />
             <MedicineZone :lines="model.medicine" />
             <div class="grid shrink-0 grid-cols-2 gap-2.5 min-[1300px]:grid-cols-3">
               <KidCardCompact v-for="card in model.kidCards" :key="card.childId" :card="card" />
@@ -202,7 +206,7 @@ const MODE_BUTTONS = [
             <div v-else class="grid shrink-0 grid-cols-2 gap-3">
               <KidCard v-for="card in model.kidCards" :key="card.childId" :card="card" />
             </div>
-            <ConflictBanner :conflicts="model.conflicts" />
+            <ConflictBanner :conflicts="model.conflicts" @acknowledge="acknowledgingDoseId = $event" />
             <MedicineZone :lines="model.medicine" />
           </template>
         </div>
@@ -229,6 +233,13 @@ const MODE_BUTTONS = [
     <div v-else class="flex h-full items-center justify-center text-orange" aria-label="Loading" role="status">
       <RLogo :size="64" />
     </div>
+
+    <DosePinDialog
+      action="acknowledge"
+      :open="acknowledgingDoseId !== null"
+      :dose-id="acknowledgingDoseId"
+      @close="acknowledgingDoseId = null"
+    />
 
     <p
       v-if="toast"

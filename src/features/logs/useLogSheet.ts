@@ -4,7 +4,7 @@ import type { LogCommand } from '@/data/logCommands'
 import { LogWriteError } from '@/data/logWriter'
 import { useDisplayStore } from '@/session/displayStore'
 import { useHouseholdStore } from '@/stores/householdStore'
-import { useLogStore } from '@/stores/logStore'
+import { NeedsOfflineDoseConfirmation, useLogStore } from '@/stores/logStore'
 
 export type SaveResult = 'saved' | 'queued'
 
@@ -30,13 +30,17 @@ export function useLogSheet() {
   const busy = computed(() => pending.value > 0)
   const error = ref<string | null>(null)
 
-  /** Submits through the log store. Returns the result, or null after showing an inline error. */
-  async function submit(cmd: LogCommand): Promise<SaveResult | null> {
+  /**
+   * Submits through the log store. Returns the result, or null after showing an inline error.
+   * `NeedsOfflineDoseConfirmation` is rethrown so the medicine sheet can ask before logging anyway.
+   */
+  async function submit(cmd: LogCommand, opts: { confirmOffline?: boolean } = {}): Promise<SaveResult | null> {
     pending.value++
     error.value = null
     try {
-      return await logStore.submit(cmd)
+      return await logStore.submit(cmd, opts)
     } catch (e) {
+      if (e instanceof NeedsOfflineDoseConfirmation) throw e
       error.value = messageFor(e)
       return null
     } finally {

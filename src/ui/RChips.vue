@@ -5,6 +5,8 @@ import { ref } from 'vue'
 export interface ChipOption {
   value: string
   label: string
+  /** Optional smaller second line, e.g. a medicine's schedule. */
+  detail?: string
   disabled?: boolean
 }
 
@@ -61,7 +63,16 @@ function onKeydown(e: KeyboardEvent, index: number): void {
       @click="select(option)"
       @keydown="onKeydown($event, i)"
     >
-      {{ option.label }}
+      <template v-if="option.detail">
+        <span class="flex flex-col items-center py-2">
+          <span>{{ option.label }}</span>
+          <span
+            class="text-[18px] font-normal"
+            :class="model === option.value ? 'text-surface' : 'text-ink-3'"
+          >{{ option.detail }}</span>
+        </span>
+      </template>
+      <template v-else>{{ option.label }}</template>
     </button>
   </div>
 </template>

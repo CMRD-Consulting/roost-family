@@ -86,6 +86,15 @@ export function doseWarningMessages(warnings: DoseWarning[], medicine: Medicine)
   })
 }
 
+/** The void reason recorded when a dose is undone from the undo toast. */
+export const UNDO_DOSE_REASON = 'Undone within 10 seconds'
+
+/** "Every 6h · max 4/day", or "Every 6h" with no daily maximum (shown under a medicine's name). */
+export function medicineScheduleLabel(medicine: Medicine): string {
+  const every = `Every ${hoursLabel(medicine.minIntervalHours)}h`
+  return medicine.maxDosesPer24h === null ? every : `${every} · max ${medicine.maxDosesPer24h}/day`
+}
+
 /** Attribution for a kid log: the display it was logged on and the optional "Who?" adult (spec §6.5). */
 export function attributionFor(
   identity: { displayId: string } | null,

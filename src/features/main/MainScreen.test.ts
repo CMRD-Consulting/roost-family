@@ -79,6 +79,24 @@ describe('MainScreen (demo source)', () => {
     wrapper.unmount()
   })
 
+  it('opens the PIN pad to acknowledge a dose alert', async () => {
+    window.history.replaceState({}, '', '/home?conflict')
+    const wrapper = await mountMain()
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+
+    await wrapper.get('[data-testid="conflict"] button').trigger('click')
+    await flushPromises()
+
+    const dialog = wrapper.get('[role="dialog"]')
+    expect(dialog.text()).toContain('Acknowledge dose alert')
+    expect(dialog.find('button[aria-label="Sam"]').exists()).toBe(true)
+
+    await dialog.findAll('button').find((b) => b.text() === 'Cancel')!.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
   it('renders the conflict banner and medicine zone before kid cards when compact with a conflict', async () => {
     window.history.replaceState({}, '', '/home?conflict&manyKids')
     const wrapper = await mountMain()

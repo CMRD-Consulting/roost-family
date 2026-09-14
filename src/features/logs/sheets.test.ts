@@ -3,9 +3,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import { buildDemoSnapshot } from '@/data/demo/demoFixture'
 import type { HouseholdSource } from '@/data/householdSource'
-import { requiresOnline, type LogCommand } from '@/data/logCommands'
-import { LogWriteError, type LogWriter } from '@/data/logWriter'
-import type { OfflineQueue, QueuedCommand } from '@/data/offlineQueue'
+import { LogWriteError } from '@/data/logWriter'
 import type { HouseholdSnapshot } from '@/data/snapshot'
 import { useDisplayStore } from '@/session/displayStore'
 import { useHouseholdStore } from '@/stores/householdStore'
@@ -18,6 +16,7 @@ import JotSheet from './JotSheet.vue'
 import SleepSheet from './SleepSheet.vue'
 import StaleSleepSheet from './StaleSleepSheet.vue'
 import StickerSheet from './StickerSheet.vue'
+import { button, checked, click, createFakeQueue, createFakeWriter, radio, type FakeWriter } from './sheetTestHelpers'
 
 vi.mock('@/ui/sound', () => ({ playChime: vi.fn(), unlockAudio: vi.fn(), setMuted: vi.fn() }))
 import { playChime } from '@/ui/sound'
@@ -26,55 +25,6 @@ const HOUSEHOLD_ID = 'aaaaaaaa-0000-0000-0000-000000000001'
 const IVY = 'cccccccc-0000-0000-0000-000000000001'
 const THEO = 'cccccccc-0000-0000-0000-000000000002'
 const SAM = 'bbbbbbbb-0000-0000-0000-000000000001'
-
-interface FakeWriter extends LogWriter {
-  calls: LogCommand[]
-  failNextWith: Error | null
-}
-
-function createFakeWriter(): FakeWriter {
-  const writer: FakeWriter = {
-    calls: [],
-    failNextWith: null,
-    async execute(cmd) {
-      writer.calls.push(cmd)
-      if (writer.failNextWith) {
-        const e = writer.failNextWith
-        writer.failNextWith = null
-        throw e
-      }
-    },
-    async verifyPin() {
-      return true
-    },
-  }
-  return writer
-}
-
-function createFakeQueue(): OfflineQueue {
-  let items: QueuedCommand[] = []
-  let nextKey = 1
-  return {
-    async enqueue(cmd) {
-      if (requiresOnline(cmd)) throw new Error('requires online')
-      const key = nextKey++
-      items = [...items, { key, command: JSON.parse(JSON.stringify(cmd)), enqueuedAt: new Date().toISOString() }]
-      return key
-    },
-    async list() {
-      return items
-    },
-    async remove(key) {
-      items = items.filter((i) => i.key !== key)
-    },
-    async count() {
-      return items.length
-    },
-    async clear() {
-      items = []
-    },
-  }
-}
 
 let pinia: Pinia
 let writer: FakeWriter
@@ -100,28 +50,6 @@ async function setup(nowIso: string, mutate: (s: HouseholdSnapshot) => void = ()
 function mountSheet(component: any, props: Record<string, unknown> = {}): VueWrapper {
   wrapper = mount(component, { props: { open: true, ...props }, global: { plugins: [pinia] }, attachTo: document.body })
   return wrapper
-}
-
-const button = (w: VueWrapper, label: string) => {
-  const found = w.findAll('button').find((b) => b.text() === label)
-  if (!found) throw new Error(`No button "${label}"`)
-  return found
-}
-const radio = (w: VueWrapper, group: string, label: string) => {
-  const found = w.get(`[role="radiogroup"][aria-label="${group}"]`).findAll('[role="radio"]').find((r) => r.text().includes(label))
-  if (!found) throw new Error(`No radio "${label}" in ${group}`)
-  return found
-}
-const checked = (w: VueWrapper, group: string) =>
-  w
-    .get(`[role="radiogroup"][aria-label="${group}"]`)
-    .findAll('[role="radio"]')
-    .filter((r) => r.attributes('aria-checked') === 'true')
-    .map((r) => r.text())
-
-async function click(el: { trigger: (e: string) => Promise<void> }) {
-  await el.trigger('click')
-  await flushPromises()
 }
 
 describe('log sheets', () => {

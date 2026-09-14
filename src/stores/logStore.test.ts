@@ -752,5 +752,53 @@ describe('useLogStore', () => {
 
       expect(logStore.lastAction).toBeNull()
     })
+
+    it('voiding the just-logged dose clears the undo slot instead of offering the void for undo', async () => {
+      const { logStore, writer, queue } = await setup()
+      await logStore.init(writer, queue)
+      await logStore.submit(doseCmd('dose-v'))
+      expect(logStore.lastAction?.command.kind).toBe('dose.add')
+
+      await logStore.submit({
+        kind: 'dose.void', householdId: HOUSEHOLD_ID, doseId: 'dose-v',
+        membershipId: 'bbbbbbbb-0000-0000-0000-000000000001', pin: '1234', reason: 'Undone within 10 seconds',
+      })
+
+      expect(logStore.lastAction).toBeNull()
+    })
+
+    it('acknowledging a dose alert clears the undo slot', async () => {
+      const { logStore, writer, queue } = await setup()
+      await logStore.init(writer, queue)
+      await logStore.submit(dinnerCmd('Pizza'))
+
+      await logStore.submit({
+        kind: 'dose.acknowledge', householdId: HOUSEHOLD_ID, doseId: 'ffffffff-0000-0000-0000-000000000001',
+        membershipId: 'bbbbbbbb-0000-0000-0000-000000000001', pin: '1234',
+      })
+
+      expect(logStore.lastAction).toBeNull()
+    })
+  })
+
+  describe('verifyPin', () => {
+    it("delegates to the writer's PIN check", async () => {
+      const { logStore, writer, queue } = await setup()
+      const seen: [string, string][] = []
+      writer.verifyPin = async (membershipId, pin) => {
+        seen.push([membershipId, pin])
+        return pin === '1234'
+      }
+      await logStore.init(writer, queue)
+
+      await expect(logStore.verifyPin('mem-1', '1234')).resolves.toBe(true)
+      await expect(logStore.verifyPin('mem-1', '0000')).resolves.toBe(false)
+      expect(seen).toEqual([['mem-1', '1234'], ['mem-1', '0000']])
+    })
+
+    it('requires init', async () => {
+      const { logStore } = await setup()
+      expect(() => logStore.verifyPin('mem-1', '1234')).toThrow(/init/)
+    })
   })
 })

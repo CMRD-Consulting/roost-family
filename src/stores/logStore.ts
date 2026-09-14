@@ -72,6 +72,12 @@ export const useLogStore = defineStore('log', () => {
 
   function setLastAction(command: LogCommand, queueKey: number | null): void {
     clearUndoTimer()
+    // The undo slot always refers to the latest action. One that can't be undone (acknowledging a dose
+    // alert, voiding a dose) clears it, so e.g. a just-voided dose is no longer offered for undo.
+    if (command.kind !== 'dose.add' && inverseCommand(command) === null) {
+      lastAction.value = null
+      return
+    }
     lastAction.value = { command, expiresAt: Date.now() + UNDO_WINDOW_MS, queueKey }
     undoTimer = setTimeout(() => {
       lastAction.value = null
@@ -302,5 +308,10 @@ export const useLogStore = defineStore('log', () => {
     }
   }
 
-  return { lastAction, pendingCount, failures, init, stop, submit, undo, replay }
+  /** Checks an adult's PIN with the writer (for PIN pads guarding dose voids and alert acknowledgements). */
+  function verifyPin(membershipId: string, pin: string): Promise<boolean> {
+    return requireWriter().verifyPin(membershipId, pin)
+  }
+
+  return { lastAction, pendingCount, failures, init, stop, submit, undo, replay, verifyPin }
 })
