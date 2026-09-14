@@ -396,6 +396,14 @@ verify_jwt = true
 [functions.storage-sweep]
 verify_jwt = false
 
+# ICS subscription connect (spec §5.5, §6.3). Callers must send a valid JWT; the function requires a full sign-in adult.
+[functions.calendar-connect-ics]
+verify_jwt = true
+
+# Today's calendar events (spec §5.5, §7.2). Callers must send a valid JWT; the function checks display or membership.
+[functions.calendar-events]
+verify_jwt = true
+
 [analytics]
 enabled = true
 port = 55327

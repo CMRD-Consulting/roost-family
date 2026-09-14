@@ -2330,6 +2330,36 @@ select pg_temp.expect('column privileges: authenticated selects every selection 
   select bool_and(has_column_privilege('authenticated', 'public.calendar_selections', a.attname, 'select') = (a.attname <> 'external_calendar_id'))
   from pg_attribute a where a.attrelid = 'public.calendar_selections'::regclass and a.attnum > 0 and not a.attisdropped)
   and has_table_privilege('service_role', 'public.calendar_selections', 'select'));
+
+\echo '[98] Calendar Edge Function callers: my_calendar_caller (member or display) and my_calendar_membership (full sign-in adult)'
+-- Privilege checks for anon (see the note above [26]); calls for everyone else.
+select pg_temp.expect('only authenticated can execute my_calendar_caller and my_calendar_membership',
+  has_function_privilege('authenticated', 'public.my_calendar_caller(uuid)', 'execute')
+  and has_function_privilege('authenticated', 'public.my_calendar_membership(uuid)', 'execute')
+  and not has_function_privilege('anon', 'public.my_calendar_caller(uuid)', 'execute')
+  and not has_function_privilege('anon', 'public.my_calendar_membership(uuid)', 'execute'));
+set local role authenticated;
+select set_config('request.jwt.claims', :'F', true);
+select pg_temp.expect('the owner is a member caller', (
+  select kind = 'member' and membership_id = pg_temp.v('membership_f') and user_id = '00000000-0000-0000-0000-00000000000f'
+  from public.my_calendar_caller(pg_temp.v('household_f'))));
+select pg_temp.expect('the owner''s full sign-in returns their membership',
+  public.my_calendar_membership(:'household_f') = :'membership_f'::uuid);
+select pg_temp.expect_error('the owner, for a household they are not in',
+  $q$select public.my_calendar_membership(pg_temp.v('household_b'))$q$, '42501');
+select pg_temp.expect('no caller row for a household they are not in', not exists (select 1 from public.my_calendar_caller(pg_temp.v('household_b'))));
+select set_config('request.jwt.claims', :'J', true);
+select pg_temp.expect('a display is a display caller without a membership', (
+  select kind = 'display' and membership_id is null from public.my_calendar_caller(pg_temp.v('household_f'))));
+select pg_temp.expect_error('a display JWT is not a full sign-in', $q$select public.my_calendar_membership(pg_temp.v('household_f'))$q$, '42501');
+select set_config('request.jwt.claims', :'G', true);
+select pg_temp.expect('a caregiver is a member caller', (
+  select kind = 'member' from public.my_calendar_caller(pg_temp.v('household_f'))));
+select pg_temp.expect_error('a caregiver cannot connect calendars', $q$select public.my_calendar_membership(pg_temp.v('household_f'))$q$, '42501');
+select set_config('request.jwt.claims', :'H', true);
+select pg_temp.expect('a former member is no caller', not exists (select 1 from public.my_calendar_caller(pg_temp.v('household_f'))));
+select pg_temp.expect_error('a former member cannot connect calendars', $q$select public.my_calendar_membership(pg_temp.v('household_f'))$q$, '42501');
+reset role;
 \o
 \echo 'ALL RLS SMOKE CHECKS PASSED'
 rollback;

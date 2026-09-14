@@ -195,3 +195,38 @@ end $$;
 -- ─── Grants ──────────────────────────────────────────────────────────────
 -- `create or replace` keeps the replaced functions' grants; the new trigger function is not callable by anyone.
 revoke execute on function private.disconnect_calendars_on_role_change() from public, anon, authenticated, service_role;
+
+-- ═══ Calendar Edge Function callers (spec §5.5, §6.3) ═══
+-- The calendar Edge Functions decide who is calling with the caller's own JWT, so these rules stay the source of truth:
+--   - my_calendar_caller(household): a member or display of the household (calendar-events). One row, or none.
+--   - my_calendar_membership(household): a full sign-in owner or adult of the household (calendar-connect-ics,
+--     calendar-oauth-start), through private.require_adult. Returns the membership id or raises 42501. The functions
+--     create connections for this membership only, never for one named in a request.
+
+-- The caller's relation to a live household: 'member' (an active membership, with its id) or 'display' (an active
+-- display's device account). No row for anyone else.
+create function public.my_calendar_caller(p_household_id uuid)
+returns table (user_id uuid, kind text, membership_id uuid)
+language sql stable security definer set search_path = '' as $$
+  select auth.uid(),
+    case when private.my_membership_id(p_household_id) is null then 'display' else 'member' end,
+    private.my_membership_id(p_household_id)
+  where auth.uid() is not null and p_household_id is not null and private.is_household_member(p_household_id)
+$$;
+
+create function public.my_calendar_membership(p_household_id uuid) returns uuid
+language plpgsql stable security definer set search_path = '' as $$
+declare v_membership uuid;
+begin
+  perform private.require_adult();
+  v_membership := private.my_membership_id(p_household_id);
+  if v_membership is null or not exists (
+    select 1 from public.memberships m where m.id = v_membership and m.role in ('owner', 'adult')
+  ) then
+    raise exception 'adult sign-in required' using errcode = '42501';
+  end if;
+  return v_membership;
+end $$;
+
+revoke execute on function public.my_calendar_caller(uuid), public.my_calendar_membership(uuid) from public, anon;
+grant execute on function public.my_calendar_caller(uuid), public.my_calendar_membership(uuid) to authenticated;

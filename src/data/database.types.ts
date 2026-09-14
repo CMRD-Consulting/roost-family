@@ -1676,6 +1676,18 @@ export type Database = {
         Args: { p_session_id: string }
         Returns: undefined
       }
+      my_calendar_caller: {
+        Args: { p_household_id: string }
+        Returns: {
+          kind: string
+          membership_id: string
+          user_id: string
+        }[]
+      }
+      my_calendar_membership: {
+        Args: { p_household_id: string }
+        Returns: string
+      }
       my_display: {
         Args: never
         Returns: {
