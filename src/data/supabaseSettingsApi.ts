@@ -41,8 +41,31 @@ const PATCH_COLUMNS: Record<keyof EntryPatch, string> = {
   endAt: 'end_at',
   type: 'type',
   amount: 'amount',
+  note: 'note',
+  categoryId: 'category_id',
   kind: 'kind',
+  text: 'text',
   doneAt: 'done_at',
+}
+
+const ENTRY_GONE = 'That entry no longer exists.'
+const END_BEFORE_START = 'The end time can’t be before the start.'
+
+/** update_entry/delete_entry failures in the adult's words: a missing entry, or a sleep ending before it starts
+ *  (the server says so itself; a bare check violation, 23514, means the same on these tables). */
+function runEntryRpc(op: () => PromiseLike<OpResult>): Promise<void> {
+  return run(async () => {
+    const result = await op()
+    const error = result.error
+    if (!error) return result
+    if (error.code === '23514' || /end time can.t be before the start/i.test(error.message)) {
+      return { ...result, error: { message: END_BEFORE_START, code: '22023' } }
+    }
+    if (error.code === '22023' && /entry not found/i.test(error.message)) {
+      return { ...result, error: { message: ENTRY_GONE, code: '22023' } }
+    }
+    return result
+  })
 }
 
 /**
@@ -52,6 +75,7 @@ const PATCH_COLUMNS: Record<keyof EntryPatch, string> = {
 function classify(status: number | null, code: string | null): SettingsErrorCode {
   if (code === '42501') return 'auth'
   if (code === '22023') return 'invalid'
+  if (code === '23514') return 'invalid'
   if (status === null && code === null) return 'network'
   if (status === 401 || status === 408 || status === 429 || (status !== null && status >= 500)) return 'network'
   if (code?.startsWith('PGRST3')) return 'network'
@@ -248,20 +272,22 @@ export function createSupabaseSettingsApi(client: RoostClient): SettingsApi {
     }))
   }
 
-  async function updateEntry(table: EntryTable, entryId: string, patch: EntryPatch): Promise<void> {
-    const values: Record<string, unknown> = {}
+  async function updateEntry(auth: SettingsAuth, table: EntryTable, entryId: string, patch: EntryPatch): Promise<void> {
+    const fields: Record<string, unknown> = {}
     for (const [key, value] of Object.entries(patch)) {
-      if (value !== undefined) values[PATCH_COLUMNS[key as keyof EntryPatch]] = value
+      if (value !== undefined) fields[PATCH_COLUMNS[key as keyof EntryPatch]] = value
     }
-    // The table varies per call; see listEntries.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const builder: any = client.from(table)
-    const rows = await run<unknown[] | null>(() => builder.update(values).eq('id', entryId).select('id'))
-    if (!rows || rows.length === 0) throw new SettingsError('That entry no longer exists.', 'invalid')
+    await runEntryRpc(() =>
+      client.rpc('update_entry', {
+        p_membership_id: auth.membershipId, p_pin: auth.pin, p_table: table, p_entry_id: entryId, p_fields: fields as never,
+      }),
+    )
   }
 
-  async function deleteEntry(table: EntryTable, entryId: string): Promise<void> {
-    await run(() => client.from(table).delete().eq('id', entryId))
+  async function deleteEntry(auth: SettingsAuth, table: EntryTable, entryId: string): Promise<void> {
+    await runEntryRpc(() =>
+      client.rpc('delete_entry', { p_membership_id: auth.membershipId, p_pin: auth.pin, p_table: table, p_entry_id: entryId }),
+    )
   }
 
   async function voidDose(auth: SettingsAuth, doseId: string, reason: string): Promise<void> {

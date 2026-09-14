@@ -1512,6 +1512,15 @@ export type Database = {
           out_token: string
         }[]
       }
+      delete_entry: {
+        Args: {
+          p_entry_id: string
+          p_membership_id: string
+          p_pin: string
+          p_table: string
+        }
+        Returns: undefined
+      }
       delete_household: {
         Args: { p_confirm_name: string; p_household_id: string }
         Returns: undefined
@@ -1678,6 +1687,16 @@ export type Database = {
           p_night_end: string
           p_night_start: string
           p_pin: string
+        }
+        Returns: undefined
+      }
+      update_entry: {
+        Args: {
+          p_entry_id: string
+          p_fields: Json
+          p_membership_id: string
+          p_pin: string
+          p_table: string
         }
         Returns: undefined
       }

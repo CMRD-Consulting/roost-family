@@ -112,7 +112,8 @@ export interface LogEntryRow {
 }
 
 /** Fields an adult can change on a non-dose log entry or jot from Settings > Logs and Inbox (spec §7.9). Only
- *  the keys present are written. Doses are never edited this way (spec §11.4): they are voided with `voidDose`. */
+ *  the keys present are written; the server allows only each table's own fields. Doses are never edited this way
+ *  (spec §11.4): they are voided with `voidDose`. */
 export interface EntryPatch {
   /** feeding, sticker and diaper entries */
   at?: string
@@ -122,9 +123,13 @@ export interface EntryPatch {
   /** feeding entries */
   type?: 'milk' | 'meal' | 'snack'
   amount?: string | null
+  note?: string | null
+  /** sticker entries */
+  categoryId?: string
   /** diaper entries */
   kind?: 'wet' | 'dirty' | 'both'
-  /** jots: checked off (a timestamp) or reopened (null) */
+  /** jots: the text, and checked off (a timestamp) or reopened (null) */
+  text?: string
   doneAt?: string | null
 }
 
@@ -181,10 +186,12 @@ export interface SettingsApi {
   /** Reads a page of one log table directly (not PIN-checked: it's a read, and the display can always read its
    *  own household's logs). Newest first; pass the last row's `at` as `before` to load more. */
   listEntries(query: ListEntriesQuery): Promise<LogEntryRow[]>
-  /** Edits one non-dose entry or jot directly in its member-writable table (the UI requires the settings session). */
-  updateEntry(table: EntryTable, entryId: string, patch: EntryPatch): Promise<void>
-  /** Deletes one non-dose entry or jot directly (the UI requires the settings session and a confirmation). */
-  deleteEntry(table: EntryTable, entryId: string): Promise<void>
+  /** Edits one non-dose entry or jot, checked against the settings session's PIN and audited. 'invalid' with
+   *  "That entry no longer exists." when it's gone. */
+  updateEntry(auth: SettingsAuth, table: EntryTable, entryId: string, patch: EntryPatch): Promise<void>
+  /** Deletes one non-dose entry or jot, checked against the settings session's PIN and audited (the UI also asks
+   *  for a confirmation). 'invalid' with "That entry no longer exists." when it's gone. */
+  deleteEntry(auth: SettingsAuth, table: EntryTable, entryId: string): Promise<void>
   /** Voids a dose with a reason (1–200 characters), checked against the settings session's PIN (spec §11.4). */
   voidDose(auth: SettingsAuth, doseId: string, reason: string): Promise<void>
 

@@ -217,19 +217,22 @@ describe('createDemoSettingsApi', () => {
   describe('log entries', () => {
     it('updateEntry changes the given fields of one entry', async () => {
       const api = createDemoSettingsApi()
-      await api.updateEntry('feeding_entries', 'feed-theo-milk', { at: '2026-09-14T12:00:00.000Z', type: 'meal', amount: null })
+      await expect(api.updateEntry({ membershipId: SAM_ID, pin: '0000' }, 'jots', 'jot-1', { doneAt: null })).rejects.toMatchObject({ code: 'auth' })
+      await api.updateEntry(auth, 'feeding_entries', 'feed-theo-milk', { at: '2026-09-14T12:00:00.000Z', type: 'meal', amount: null })
       expect(getDemoSnapshot(new Date()).feedings.find((f) => f.id === 'feed-theo-milk')).toMatchObject({
         at: '2026-09-14T12:00:00.000Z', type: 'meal', amount: null, note: null,
       })
-      await api.updateEntry('jots', 'jot-1', { doneAt: '2026-09-14T19:00:00.000Z' })
+      await api.updateEntry(auth, 'jots', 'jot-1', { doneAt: '2026-09-14T19:00:00.000Z' })
       expect(getDemoSnapshot(new Date()).jots[0]!.doneAt).toBe('2026-09-14T19:00:00.000Z')
-      await expect(api.updateEntry('jots', 'nope', { doneAt: null })).rejects.toMatchObject({ code: 'invalid' })
+      await expect(api.updateEntry(auth, 'jots', 'nope', { doneAt: null })).rejects.toMatchObject({ code: 'invalid', message: 'That entry no longer exists.' })
     })
 
-    it('deleteEntry removes one entry', async () => {
+    it('deleteEntry needs the PIN, removes one entry, and reports a missing one', async () => {
       const api = createDemoSettingsApi()
-      await api.deleteEntry('sleep_entries', 'sleep-theo-nap')
+      await expect(api.deleteEntry({ membershipId: SAM_ID, pin: '0000' }, 'sleep_entries', 'sleep-theo-nap')).rejects.toMatchObject({ code: 'auth' })
+      await api.deleteEntry(auth, 'sleep_entries', 'sleep-theo-nap')
       expect(getDemoSnapshot(new Date()).sleeps.map((s) => s.id)).toEqual(['sleep-theo-night'])
+      await expect(api.deleteEntry(auth, 'sleep_entries', 'sleep-theo-nap')).rejects.toMatchObject({ code: 'invalid', message: 'That entry no longer exists.' })
     })
 
     it('voidDose needs the PIN and a reason, and voids once', async () => {

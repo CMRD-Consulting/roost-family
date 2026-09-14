@@ -839,7 +839,7 @@ describe('SettingsShell', () => {
       await buttonByText(w, 'Save').trigger('click')
       await settle()
 
-      expect(settingsApi.updateEntry).toHaveBeenCalledWith('sleep_entries', 'sleep-theo-nap', {
+      expect(settingsApi.updateEntry).toHaveBeenCalledWith(SAM_AUTH, 'sleep_entries', 'sleep-theo-nap', {
         startAt: '2026-09-14T14:30:00.000Z', endAt: '2026-09-14T16:20:00.000Z',
       })
       expect(rows(w)[0]!.text()).toContain('10:30 AM–12:20 PM · 1h 50m')
@@ -876,7 +876,7 @@ describe('SettingsShell', () => {
       await buttonByText(w, 'Delete entry').trigger('click')
       await settle()
 
-      expect(settingsApi.deleteEntry).toHaveBeenCalledWith('feeding_entries', 'feed-theo-milk')
+      expect(settingsApi.deleteEntry).toHaveBeenCalledWith(SAM_AUTH, 'feeding_entries', 'feed-theo-milk')
       expect(rows(w)).toHaveLength(0)
       w.unmount()
     })
@@ -997,7 +997,7 @@ describe('SettingsShell', () => {
       await w.find('button[aria-label="Mark done: Buy birthday card"]').trigger('click')
       await settle()
 
-      expect(settingsApi.updateEntry).toHaveBeenCalledWith('jots', 'jot-new', { doneAt: expect.stringMatching(/^2026-09-14T19:0/) })
+      expect(settingsApi.updateEntry).toHaveBeenCalledWith(SAM_AUTH, 'jots', 'jot-new', { doneAt: expect.stringMatching(/^2026-09-14T19:0/) })
       expect(w.findAll('[data-testid="open-jot"]')).toHaveLength(1)
       expect(buttonByText(w, 'Done in the last 7 days (2)').exists()).toBe(true)
       w.unmount()
@@ -1013,7 +1013,7 @@ describe('SettingsShell', () => {
       await buttonByText(w, 'Delete jot').trigger('click')
       await settle()
 
-      expect(settingsApi.deleteEntry).toHaveBeenCalledWith('jots', 'jot-new')
+      expect(settingsApi.deleteEntry).toHaveBeenCalledWith(SAM_AUTH, 'jots', 'jot-new')
       expect(w.text()).not.toContain('Buy birthday card')
       w.unmount()
     })

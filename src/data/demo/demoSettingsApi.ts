@@ -306,7 +306,8 @@ export function createDemoSettingsApi(): SettingsApi {
     }))
   }
 
-  async function updateEntry(table: EntryTable, entryId: string, patch: EntryPatch): Promise<void> {
+  async function updateEntry(auth: SettingsAuth, table: EntryTable, entryId: string, patch: EntryPatch): Promise<void> {
+    requirePin(auth)
     const changes = Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined))
     mutateDemo((s) => {
       const key = SNAPSHOT_KEY[table]
@@ -316,10 +317,13 @@ export function createDemoSettingsApi(): SettingsApi {
     })
   }
 
-  async function deleteEntry(table: EntryTable, entryId: string): Promise<void> {
+  async function deleteEntry(auth: SettingsAuth, table: EntryTable, entryId: string): Promise<void> {
+    requirePin(auth)
     mutateDemo((s) => {
       const key = SNAPSHOT_KEY[table]
-      return { ...s, [key]: (s[key] as unknown as Array<{ id: string }>).filter((e) => e.id !== entryId) }
+      const list = s[key] as unknown as Array<{ id: string }>
+      if (!list.some((e) => e.id === entryId)) throw new SettingsError('That entry no longer exists.', 'invalid')
+      return { ...s, [key]: list.filter((e) => e.id !== entryId) }
     })
   }
 

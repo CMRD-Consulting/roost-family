@@ -285,36 +285,63 @@ describe('createSupabaseSettingsApi', () => {
   })
 
   describe('log entries (Settings > Logs and Inbox)', () => {
-    it('updateEntry writes the changed columns of one entry', async () => {
-      const { client, calls } = createFakeClient({ from: { error: null, data: [{ id: 's1' }] } })
-      await createSupabaseSettingsApi(client).updateEntry('sleep_entries', 's1', { startAt: '2026-09-14T13:00:00Z', endAt: null })
+    it('updateEntry -> update_entry with the settings PIN and the changed columns of one entry', async () => {
+      const { client, calls } = createFakeClient()
+      await createSupabaseSettingsApi(client).updateEntry(auth, 'sleep_entries', 's1', { startAt: '2026-09-14T13:00:00Z', endAt: null })
       expect(calls).toEqual([{
-        op: 'from', table: 'sleep_entries',
-        chain: [['update', { start_at: '2026-09-14T13:00:00Z', end_at: null }], ['eq', 'id', 's1'], ['select', 'id']],
+        op: 'rpc', name: 'update_entry',
+        args: {
+          p_membership_id: membershipId, p_pin: '1234', p_table: 'sleep_entries', p_entry_id: 's1',
+          p_fields: { start_at: '2026-09-14T13:00:00Z', end_at: null },
+        },
       }])
     })
 
-    it('updateEntry maps every editable field to its column', async () => {
-      const { client, calls } = createFakeClient({ from: { error: null, data: [{ id: 'x' }] } })
+    it('updateEntry maps every editable field to its column and leaves out undefined ones', async () => {
+      const { client, calls } = createFakeClient()
       const api = createSupabaseSettingsApi(client)
-      await api.updateEntry('feeding_entries', 'f1', { at: '2026-09-14T12:00:00Z', type: 'meal', amount: null })
-      await api.updateEntry('diaper_entries', 'd1', { kind: 'wet' })
-      await api.updateEntry('jots', 'j1', { doneAt: '2026-09-14T19:00:00Z' })
-      expect((calls[0] as FromCall).chain[0]).toEqual(['update', { at: '2026-09-14T12:00:00Z', type: 'meal', amount: null }])
-      expect((calls[1] as FromCall).chain[0]).toEqual(['update', { kind: 'wet' }])
-      expect((calls[2] as FromCall).chain[0]).toEqual(['update', { done_at: '2026-09-14T19:00:00Z' }])
+      await api.updateEntry(auth, 'feeding_entries', 'f1', { at: '2026-09-14T12:00:00Z', type: 'meal', amount: null, note: 'Peas', kind: undefined })
+      await api.updateEntry(auth, 'diaper_entries', 'd1', { kind: 'wet' })
+      await api.updateEntry(auth, 'sticker_entries', 'st1', { categoryId: 'cat-2' })
+      await api.updateEntry(auth, 'jots', 'j1', { text: 'Call Dr. Lee', doneAt: '2026-09-14T19:00:00Z' })
+      const fields = calls.map((c) => ((c as RpcCall).args as { p_fields: unknown }).p_fields)
+      expect(fields).toEqual([
+        { at: '2026-09-14T12:00:00Z', type: 'meal', amount: null, note: 'Peas' },
+        { kind: 'wet' },
+        { category_id: 'cat-2' },
+        { text: 'Call Dr. Lee', done_at: '2026-09-14T19:00:00Z' },
+      ])
     })
 
     it('updateEntry on an entry that no longer exists is an invalid SettingsError', async () => {
-      const { client } = createFakeClient({ from: { error: null, data: [] } })
-      const err = await createSupabaseSettingsApi(client).updateEntry('jots', 'gone', { doneAt: null }).catch((e: unknown) => e)
+      const { client } = createFakeClient({ rpc: { update_entry: { error: { message: 'entry not found', code: '22023' }, status: 400 } } })
+      const err = await createSupabaseSettingsApi(client).updateEntry(auth, 'jots', 'gone', { doneAt: null }).catch((e: unknown) => e)
+      expect(err).toBeInstanceOf(SettingsError)
       expect(err).toMatchObject({ code: 'invalid', message: 'That entry no longer exists.' })
     })
 
-    it('deleteEntry deletes one entry by id', async () => {
+    it('updateEntry reports a check violation (23514) as an end before the start', async () => {
+      const { client } = createFakeClient({
+        rpc: { update_entry: { error: { message: 'new row violates check constraint "sleep_entries_check"', code: '23514' }, status: 400 } },
+      })
+      const err = await createSupabaseSettingsApi(client)
+        .updateEntry(auth, 'sleep_entries', 's1', { endAt: '2026-09-14T10:00:00Z' })
+        .catch((e: unknown) => e)
+      expect(err).toMatchObject({ code: 'invalid', message: 'The end time can’t be before the start.' })
+    })
+
+    it('updateEntry with a wrong PIN is an auth SettingsError', async () => {
+      const { client } = createFakeClient({ rpc: { update_entry: { error: { message: 'incorrect PIN', code: '42501' }, status: 403 } } })
+      await expect(createSupabaseSettingsApi(client).updateEntry(auth, 'jots', 'j1', { doneAt: null })).rejects.toMatchObject({ code: 'auth' })
+    })
+
+    it('deleteEntry -> delete_entry with the settings PIN', async () => {
       const { client, calls } = createFakeClient()
-      await createSupabaseSettingsApi(client).deleteEntry('feeding_entries', 'f1')
-      expect(calls).toEqual([{ op: 'from', table: 'feeding_entries', chain: [['delete'], ['eq', 'id', 'f1']] }])
+      await createSupabaseSettingsApi(client).deleteEntry(auth, 'feeding_entries', 'f1')
+      expect(calls).toEqual([{
+        op: 'rpc', name: 'delete_entry',
+        args: { p_membership_id: membershipId, p_pin: '1234', p_table: 'feeding_entries', p_entry_id: 'f1' },
+      }])
     })
 
     it('voidDose -> void_dose with the settings PIN and the reason', async () => {

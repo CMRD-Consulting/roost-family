@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * Settings > Logs (spec §7.9, §11.2, §11.4): history per child, type and day, read a page at a time straight
- * from the log tables. Non-dose entries can be edited or deleted; doses can only be voided with a reason (they
+ * from the log tables. Non-dose entries can be edited or deleted (PIN-checked and audited); doses can only be voided with a reason (they
  * stay listed, struck through). Logs older than 2 years can be bulk-deleted per type, never doses.
  */
 import { computed, ref, useId, watch } from 'vue'
@@ -169,7 +169,7 @@ async function submitEdit(item: LogItem): Promise<void> {
   if (Object.keys(editErrors.value).length > 0) return
   const patch = toEntryPatch(item, form, timeZone.value)
   const table: EntryTable = item.table
-  const ok = await saveEdit((api) => api.updateEntry(table, item.id, patch))
+  const ok = await saveEdit((api, auth) => api.updateEntry(auth, table, item.id, patch))
   if (!ok) return
   close()
   await refresh()
@@ -178,7 +178,7 @@ async function submitEdit(item: LogItem): Promise<void> {
 async function confirmDelete(item: LogItem): Promise<void> {
   if (item.table === 'dose_entries') return
   const table: EntryTable = item.table
-  const ok = await saveDelete((api) => api.deleteEntry(table, item.id))
+  const ok = await saveDelete((api, auth) => api.deleteEntry(auth, table, item.id))
   if (!ok) return
   close()
   await refresh()

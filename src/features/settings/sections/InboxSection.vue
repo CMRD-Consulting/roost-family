@@ -56,7 +56,7 @@ const { saving: checking, error: checkError, offline, save: saveCheck } = useSet
 
 async function markDone(jot: Jot): Promise<void> {
   const doneAt = new Date().toISOString()
-  const ok = await saveCheck((api) => api.updateEntry('jots', jot.id, { doneAt }))
+  const ok = await saveCheck((api, auth) => api.updateEntry(auth, 'jots', jot.id, { doneAt }))
   if (!ok) return
   doneHere.value = new Set([...doneHere.value, jot.id])
   listed.value = [...listed.value.filter((j) => j.id !== jot.id), { ...jot, doneAt }]
@@ -67,7 +67,7 @@ const deletingId = ref<string | null>(null)
 const { saving: deleting, error: deleteError, save: saveDelete } = useSettingsSave()
 
 async function confirmDelete(jot: Jot): Promise<void> {
-  const ok = await saveDelete((api) => api.deleteEntry('jots', jot.id))
+  const ok = await saveDelete((api, auth) => api.deleteEntry(auth, 'jots', jot.id))
   if (!ok) return
   deletingId.value = null
   deletedHere.value = new Set([...deletedHere.value, jot.id])

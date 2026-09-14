@@ -1603,6 +1603,130 @@ select pg_temp.expect('storage policies: select and insert only, for this bucket
   select array_agg(cmd order by cmd) from pg_policies where schemaname = 'storage' and tablename = 'objects'
     and policyname like 'household_photos_%') = array['INSERT', 'SELECT']);
 
+
+-- ─── Settings hardening (migration 7) ────────────────────────────────────
+\echo '[77] revoke_display and set_my_pin are audited'
+set local role authenticated;
+select set_config('request.jwt.claims', :'F', true);
+select out_display_id as display_spare from public.register_display(:'household_f', 'Spare tablet') \gset
+select public.revoke_display(:'display_spare');
+select pg_temp.expect('revoke_display audited', pg_temp.audited(pg_temp.v('household_f'), pg_temp.v('membership_f'), 'displays', 'revoke', :'display_spare'::uuid));
+select public.set_my_pin(:'household_f', '2468');
+select pg_temp.expect('set_my_pin audited without the PIN', pg_temp.audited(pg_temp.v('household_f'), pg_temp.v('membership_f'), 'my_account', 'pin', pg_temp.v('membership_f'))
+  and not exists (select 1 from public.settings_audit where change::text like '%2468%'));
+select set_config('request.jwt.claims', :'A', true);
+select pg_temp.expect_error('set_my_pin in a household the adult is not a member of',
+  $q$select public.set_my_pin(pg_temp.v('household_f'), '1234')$q$, '42501');
+
+\echo '[78] update_entry: PIN-checked, allow-listed tables and fields, own household only, audited'
+reset role;
+select child_id as kid_edit from public.child_households where household_id = :'household_f' order by child_id limit 1 \gset
+select id as category_f from public.sticker_categories where household_id = :'household_f' limit 1 \gset
+insert into public.sticker_categories (household_id, name, icon_key) values (:'household_k', 'K cat', 'star') returning id as category_k \gset
+insert into public.sleep_entries (household_id, child_id, start_at, end_at, type)
+  values (:'household_f', :'kid_edit', now() - interval '3 hours', now() - interval '2 hours', 'nap') returning id as sleep_edit \gset
+insert into public.feeding_entries (household_id, child_id, at, type) values (:'household_f', :'kid_edit', now() - interval '1 hour', 'milk')
+  returning id as feeding_edit \gset
+insert into public.sticker_entries (household_id, child_id, category_id, at) values (:'household_f', :'kid_edit', :'category_f', now())
+  returning id as sticker_edit \gset
+insert into public.diaper_entries (household_id, child_id, at, kind) values (:'household_f', :'kid_edit', now(), 'wet')
+  returning id as diaper_edit \gset
+insert into public.jots (household_id, text) values (:'household_f', 'Edit me') returning id as jot_edit \gset
+insert into public.jots (household_id, text) values (:'household_k', 'K jot') returning id as jot_k \gset
+select set_config('smoke.sleep_edit', :'sleep_edit', true), set_config('smoke.feeding_edit', :'feeding_edit', true),
+       set_config('smoke.sticker_edit', :'sticker_edit', true), set_config('smoke.jot_edit', :'jot_edit', true),
+       set_config('smoke.jot_k', :'jot_k', true), set_config('smoke.category_k', :'category_k', true),
+       set_config('smoke.kid_edit', :'kid_edit', true);
+set local role authenticated;
+select set_config('request.jwt.claims', :'J', true);
+select public.update_entry(:'membership_f', '2468', 'sleep_entries', :'sleep_edit',
+  jsonb_build_object('start_at', now() - interval '4 hours', 'end_at', now() - interval '90 minutes'));
+select pg_temp.expect('sleep times changed from the display', (
+  select start_at = now() - interval '4 hours' and end_at = now() - interval '90 minutes' from public.sleep_entries where id = pg_temp.v('sleep_edit')));
+select pg_temp.expect('update_entry audited with the PIN''s membership', pg_temp.audited(pg_temp.v('household_f'), pg_temp.v('membership_f'), 'logs', 'update_entry', pg_temp.v('sleep_edit'))
+  and (select change -> 'fields' -> 'fields' ? 'start_at' and change -> 'fields' ->> 'table' = 'sleep_entries' from public.settings_audit order by id desc limit 1));
+select public.update_entry(:'membership_f', '2468', 'sleep_entries', :'sleep_edit', '{"end_at": null}');
+select pg_temp.expect('a sleep can be reopened', (select end_at is null from public.sleep_entries where id = pg_temp.v('sleep_edit')));
+select public.update_entry(:'membership_f', '2468', 'feeding_entries', :'feeding_edit', '{"type": "meal", "amount": "4 oz", "note": "Peas"}');
+select pg_temp.expect('feeding fields changed', (
+  select type = 'meal' and amount = '4 oz' and note = 'Peas' from public.feeding_entries where id = pg_temp.v('feeding_edit')));
+select public.update_entry(:'membership_f', '2468', 'diaper_entries', :'diaper_edit', '{"kind": "both"}');
+select pg_temp.expect('diaper kind changed', (select kind = 'both' from public.diaper_entries where id = :'diaper_edit'::uuid));
+select public.update_entry(:'membership_f', '2468', 'jots', :'jot_edit', jsonb_build_object('text', '  Edited  ', 'done_at', now()));
+select pg_temp.expect('jot text trimmed and checked off', (
+  select text = 'Edited' and done_at = now() from public.jots where id = pg_temp.v('jot_edit')));
+select pg_temp.expect_error('end before start',
+  $q$select public.update_entry(pg_temp.v('membership_f'), '2468', 'sleep_entries', pg_temp.v('sleep_edit'), jsonb_build_object('end_at', now() - interval '5 hours'))$q$, '22023');
+select pg_temp.expect_error('a field that is not editable',
+  $q$select public.update_entry(pg_temp.v('membership_f'), '2468', 'sleep_entries', pg_temp.v('sleep_edit'), jsonb_build_object('child_id', gen_random_uuid()))$q$, '22023');
+select pg_temp.expect_error('attribution is not editable',
+  $q$select public.update_entry(pg_temp.v('membership_f'), '2468', 'feeding_entries', pg_temp.v('feeding_edit'), '{"logged_by_name": "Someone"}')$q$, '22023');
+select pg_temp.expect_error('doses are never edited',
+  $q$select public.update_entry(pg_temp.v('membership_f'), '2468', 'dose_entries', gen_random_uuid(), '{"at": "2026-01-01T00:00:00Z"}')$q$, '22023');
+select pg_temp.expect_error('other tables are not editable',
+  $q$select public.update_entry(pg_temp.v('membership_f'), '2468', 'households', pg_temp.v('household_f'), '{"name": "X"}')$q$, '22023');
+select pg_temp.expect_error('empty fields',
+  $q$select public.update_entry(pg_temp.v('membership_f'), '2468', 'jots', pg_temp.v('jot_edit'), '{}')$q$, '22023');
+select pg_temp.expect_error('fields that are not an object',
+  $q$select public.update_entry(pg_temp.v('membership_f'), '2468', 'jots', pg_temp.v('jot_edit'), '["text"]')$q$, '22023');
+select pg_temp.expect_error('a malformed time',
+  $q$select public.update_entry(pg_temp.v('membership_f'), '2468', 'feeding_entries', pg_temp.v('feeding_edit'), '{"at": "yesterday-ish"}')$q$, '22023');
+select pg_temp.expect_error('an unknown feeding type',
+  $q$select public.update_entry(pg_temp.v('membership_f'), '2468', 'feeding_entries', pg_temp.v('feeding_edit'), '{"type": "juice"}')$q$, '22023');
+select pg_temp.expect_error('a required field set to null',
+  $q$select public.update_entry(pg_temp.v('membership_f'), '2468', 'feeding_entries', pg_temp.v('feeding_edit'), '{"at": null}')$q$, '22023');
+select pg_temp.expect_error('a blank jot',
+  $q$select public.update_entry(pg_temp.v('membership_f'), '2468', 'jots', pg_temp.v('jot_edit'), '{"text": "   "}')$q$, '22023');
+select pg_temp.expect_error('another household''s sticker category',
+  $q$select public.update_entry(pg_temp.v('membership_f'), '2468', 'sticker_entries', pg_temp.v('sticker_edit'), jsonb_build_object('category_id', pg_temp.v('category_k')))$q$, '22023');
+select pg_temp.expect_error('another household''s entry reads as not found',
+  $q$select public.update_entry(pg_temp.v('membership_f'), '2468', 'jots', pg_temp.v('jot_k'), '{"text": "Mine"}')$q$, '22023');
+select pg_temp.expect_error('an unknown entry',
+  $q$select public.update_entry(pg_temp.v('membership_f'), '2468', 'jots', gen_random_uuid(), '{"text": "Mine"}')$q$, '22023');
+select pg_temp.expect_error('update_entry with a wrong PIN',
+  $q$select public.update_entry(pg_temp.v('membership_f'), '0000', 'jots', pg_temp.v('jot_edit'), '{"text": "Nope"}')$q$, '42501');
+select pg_temp.expect_error('update_entry as a caregiver',
+  $q$select public.update_entry(pg_temp.v('membership_g'), '3333', 'jots', pg_temp.v('jot_edit'), '{"text": "Nope"}')$q$, '42501');
+select set_config('request.jwt.claims', :'A', true);
+select pg_temp.expect_error('a non-member uses F''s PIN',
+  $q$select public.update_entry(pg_temp.v('membership_f'), '2468', 'jots', pg_temp.v('jot_edit'), '{"text": "Nope"}')$q$, '42501');
+reset role;
+select pg_temp.expect('rejected edits changed nothing', (select text = 'Edited' from public.jots where id = pg_temp.v('jot_edit'))
+  and (select text = 'K jot' from public.jots where id = pg_temp.v('jot_k'))
+  and (select type = 'meal' and at = now() - interval '1 hour' from public.feeding_entries where id = pg_temp.v('feeding_edit')));
+
+\echo '[79] delete_entry: PIN-checked, never doses, own household only, audited'
+set local role authenticated;
+select set_config('request.jwt.claims', :'J', true);
+select pg_temp.expect_error('delete_entry with a wrong PIN',
+  $q$select public.delete_entry(pg_temp.v('membership_f'), '0000', 'feeding_entries', pg_temp.v('feeding_edit'))$q$, '42501');
+select pg_temp.expect_error('doses are never deleted',
+  $q$select public.delete_entry(pg_temp.v('membership_f'), '2468', 'dose_entries', gen_random_uuid())$q$, '22023');
+select pg_temp.expect_error('another household''s jot reads as not found',
+  $q$select public.delete_entry(pg_temp.v('membership_f'), '2468', 'jots', pg_temp.v('jot_k'))$q$, '22023');
+select public.delete_entry(:'membership_f', '2468', 'feeding_entries', :'feeding_edit');
+select pg_temp.expect('feeding deleted', not exists (select 1 from public.feeding_entries where id = pg_temp.v('feeding_edit')));
+select pg_temp.expect('delete_entry audited', pg_temp.audited(pg_temp.v('household_f'), pg_temp.v('membership_f'), 'logs', 'delete_entry', pg_temp.v('feeding_edit')));
+select pg_temp.expect_error('deleting it again reads as not found',
+  $q$select public.delete_entry(pg_temp.v('membership_f'), '2468', 'feeding_entries', pg_temp.v('feeding_edit'))$q$, '22023');
+select public.delete_entry(:'membership_f', '2468', 'jots', :'jot_edit');
+reset role;
+select pg_temp.expect('K jot untouched', exists (select 1 from public.jots where id = pg_temp.v('jot_k')));
+
+\echo '[80] Entry RPC privileges'
+select pg_temp.expect('only authenticated can execute update_entry and delete_entry',
+  has_function_privilege('authenticated', 'public.update_entry(uuid, text, text, uuid, jsonb)', 'execute')
+  and has_function_privilege('authenticated', 'public.delete_entry(uuid, text, text, uuid)', 'execute')
+  and not has_function_privilege('anon', 'public.update_entry(uuid, text, text, uuid, jsonb)', 'execute')
+  and not has_function_privilege('anon', 'public.delete_entry(uuid, text, text, uuid)', 'execute'));
+select pg_temp.expect('PUBLIC cannot execute the entry RPCs', not exists (
+  select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+  where n.nspname in ('public', 'private') and p.proname in ('update_entry', 'delete_entry', 'editable_entry_columns')
+    and a.grantee = 0 and a.privilege_type = 'EXECUTE'));
+select pg_temp.expect('no client role can execute the editable-columns helper',
+  not has_function_privilege('authenticated', 'private.editable_entry_columns(text)', 'execute')
+  and not has_function_privilege('anon', 'private.editable_entry_columns(text)', 'execute'));
+
 \o
 \echo 'ALL RLS SMOKE CHECKS PASSED'
 rollback;
