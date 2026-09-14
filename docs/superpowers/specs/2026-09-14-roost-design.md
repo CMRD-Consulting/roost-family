@@ -284,7 +284,8 @@ All log sheets are modal overlays with:
 **Sleep**
 - One button toggles "Start sleep" → "End sleep" per child.
 - A sleep starting inside **that child's night-sleep window** is *Night*, otherwise *Nap*. Each child's window defaults to the household default (**6:00 PM–5:00 AM**, household time) and can be changed per child in Settings → Children. The type can be changed in the sheet.
-- **Wake window** = time since the most recent sleep ended. With no sleep ended today, the card shows "Log wake-up".
+- **Wake window** = time since the most recent sleep ended. With no sleep ended in the last 18 hours, the card shows "Log wake-up". (A calendar-day rule would show "Log wake-up" at 12:10 AM for a child who fell asleep at 11:50 PM.)
+- **Forgotten "End sleep":** an open sleep that started more than 16 hours ago shows "Still sleeping?" with End sleep and Discard actions instead of a growing duration. An open sleep followed by a later ended sleep is ignored.
 
 **Feeding**
 - Type: Milk / Meal / Snack.
@@ -299,7 +300,7 @@ All log sheets are modal overlays with:
 - **Next dose after** = time given + minimum interval.
 - **Warnings** (confirmation required to save, never blocked):
   - Early: "Last dose was 3h 20m ago by Sam. Minimum is 6h."
-  - Over daily max: "This would be dose 5 in 24 hours. Maximum is 4."
+  - Over daily max: "This would be dose 5 in 24 hours. Maximum is 4." Any 24-hour window containing the dose counts, so backdated doses are checked against doses logged after them too.
 - **Offline:** "Can't check whether another adult gave a dose. Log anyway?" Confirming queues the dose, marked as logged offline. If it syncs and triggers an early or over-max warning, every display shows an alert until an adult acknowledges it with their PIN.
 - The app gives no dosing guidance and has no dose calculator.
 
@@ -330,7 +331,7 @@ A full-screen, toddler-friendly mode. No text-only controls; everything is a pic
 - Each step shows an icon from Roost's **built-in illustrated icon library** (breakfast, teeth, shoes, car, nap, bath, books, bed…) or an optional parent photo, plus a label that's spoken aloud when tapped.
 - The child taps a big checkmark to finish the current step: a small celebration, then the next step becomes current.
 - **Routines** are ordered lists of steps (icon or photo, label, optional time) defined per child in Settings. Each weekday has a default routine; an adult can switch today's routine from Settings.
-- Steps with a time become current automatically at that time if not already completed.
+- Steps with a time become current automatically at that time if not already completed. Unfinished earlier steps are skipped, not revisited: the current step is the first unfinished step at or after the latest step whose time has passed.
 
 **Visual Timer**
 - Preset buttons: 1, 2, 5, 10 minutes.
