@@ -1789,6 +1789,16 @@ select pg_temp.expect('only authenticated can execute set_household_location',
   has_function_privilege('authenticated', 'public.set_household_location(uuid, text, double precision, double precision)', 'execute')
   and not has_function_privilege('anon', 'public.set_household_location(uuid, text, double precision, double precision)', 'execute'));
 
+
+\echo '[82] A wrong PIN is slowed on the server but still just false (no lockout)'
+set local role authenticated;
+select set_config('request.jwt.claims', :'F', true);
+select clock_timestamp() as wrong_pin_started \gset
+select pg_temp.expect('wrong PIN still returns false', not public.verify_pin(:'membership_f', '0000'));
+select pg_temp.expect('the wrong PIN took at least half a second', clock_timestamp() - :'wrong_pin_started'::timestamptz >= interval '500 milliseconds');
+select pg_temp.expect('the right PIN still works right after', public.verify_pin(:'membership_f', '2468'));
+reset role;
+
 \o
 \echo 'ALL RLS SMOKE CHECKS PASSED'
 rollback;

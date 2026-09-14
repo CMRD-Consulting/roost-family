@@ -221,3 +221,25 @@ begin
 end $$;
 
 revoke execute on function private.purge_deleted_households() from public, anon, authenticated;
+
+-- ═══ PIN guessing (spec §7.3) ═══
+-- pin_ok (replaces migration 2's): a wrong PIN waits 0.75 s before answering, so guessing a 4-digit PIN through any
+-- PIN-checked RPC is slow. Still no lockout: the right PIN always works at once.
+create or replace function private.pin_ok(p_membership_id uuid, p_pin text) returns boolean
+language plpgsql stable security definer set search_path = '' as $$
+declare v_ok boolean;
+begin
+  select exists (
+    select 1 from public.member_pins p
+    join public.memberships m on m.id = p.membership_id and m.left_at is null
+    where p.membership_id = p_membership_id
+      and p_pin ~ '^\d{4}$'
+      and p.pin_hash = extensions.crypt(p_pin, p.pin_hash)
+  ) into v_ok;
+  if not v_ok then
+    perform pg_catalog.pg_sleep(0.75);
+  end if;
+  return v_ok;
+end $$;
+
+revoke execute on function private.pin_ok(uuid, text) from public, anon, authenticated;

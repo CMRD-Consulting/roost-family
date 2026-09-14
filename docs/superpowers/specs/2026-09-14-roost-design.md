@@ -271,7 +271,7 @@ Defaults are re-evaluated daily, so a feature turns on the day a child reaches i
 | Sensitive actions ([6.3](#63-adult-sessions-on-a-display)) | Full sign-in |
 
 - **PIN pad** shows adult avatars first; the adult taps theirs, then enters their PIN.
-- **No lockout** after wrong attempts.
+- **No lockout** after wrong attempts. Wrong PINs are slowed on the server (each wrong answer waits 0.75 s), so guessing is slow.
 - **Forgot PIN:** full sign-in, then set a new PIN.
 
 ### 7.4 Logs
