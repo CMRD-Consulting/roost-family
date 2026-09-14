@@ -17,6 +17,15 @@ export class NeedsOfflineDoseConfirmation extends Error {
 /** How long an action stays undoable after it's submitted. */
 const UNDO_WINDOW_MS = 10_000
 
+/**
+ * A queued command whose target row never appears (e.g. ending a sleep that another display discarded)
+ * keeps failing with a retryable NOT_FOUND. Because replay is strictly ordered, it would block every
+ * command behind it forever, so after this many failures spread over this long it's dropped.
+ */
+const STUCK_MAX_ATTEMPTS = 5
+const STUCK_AFTER_MS = 10 * 60_000
+export const STUCK_COMMAND_MESSAGE = "A log couldn't be saved because its entry no longer exists."
+
 interface LastAction {
   command: LogCommand
   expiresAt: number
@@ -58,6 +67,8 @@ export const useLogStore = defineStore('log', () => {
   let inFlightKey: number | null = null
   /** A command being sent directly (not via the queue), including its fall-back enqueue on a network error. */
   let directSend: Promise<unknown> | null = null
+  /** NOT_FOUND failures per queue key, for the stuck-command policy. In memory only: a reload starts over. */
+  const notFoundFailures = new Map<number, { attempts: number; firstFailedAt: number }>()
 
   const lastAction = ref<LastAction | null>(null)
   const pendingCount = ref(0)
@@ -107,6 +118,7 @@ export const useLogStore = defineStore('log', () => {
 
   function removeFromMirror(key: number): void {
     queued = queued.filter((i) => i.key !== key)
+    notFoundFailures.delete(key)
     syncPendingCount()
   }
 
@@ -220,6 +232,16 @@ export const useLogStore = defineStore('log', () => {
     return 'undone'
   }
 
+  /** Records a replay failure; true when the command is stuck on a row that no longer exists and should be dropped. */
+  function isStuck(key: number, e: LogWriteError): boolean {
+    if (e.code !== 'NOT_FOUND') return false
+    const now = Date.now()
+    const record = notFoundFailures.get(key) ?? { attempts: 0, firstFailedAt: now }
+    record.attempts++
+    notFoundFailures.set(key, record)
+    return record.attempts > STUCK_MAX_ATTEMPTS && now - record.firstFailedAt > STUCK_AFTER_MS
+  }
+
   async function runReplay(): Promise<void> {
     const writer = requireWriter()
     const q = queue
@@ -236,10 +258,14 @@ export const useLogStore = defineStore('log', () => {
         await writer.execute(item.command)
       } catch (e) {
         if (isNetworkError(e)) {
-          inFlightKey = null
-          break
+          if (!isStuck(item.key, e)) {
+            inFlightKey = null
+            break
+          }
+          error = new Error(STUCK_COMMAND_MESSAGE)
+        } else {
+          error = e
         }
-        error = e
       }
       // Leave the mirror before the async queue removal, so an undo in between sees the command as sent.
       removeFromMirror(item.key)
@@ -279,6 +305,7 @@ export const useLogStore = defineStore('log', () => {
     writer = w
     queue = null
     queued = []
+    notFoundFailures.clear()
     // Listen and schedule retries first, so a queue that fails to open can't leave the store without them.
     window.addEventListener('online', handleOnline)
     replayTimer = setInterval(() => void replayIfPending(), 30_000)

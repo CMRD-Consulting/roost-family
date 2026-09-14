@@ -12,7 +12,7 @@ import type { LogWriter } from '@/data/logWriter'
 import type { OfflineQueue, QueuedCommand } from '@/data/offlineQueue'
 import { requiresOnline } from '@/data/logCommands'
 import { useHouseholdStore } from './householdStore'
-import { NeedsOfflineDoseConfirmation, useLogStore } from './logStore'
+import { NeedsOfflineDoseConfirmation, STUCK_COMMAND_MESSAGE, useLogStore } from './logStore'
 
 /** Reports realtime as connected (like a healthy Supabase or the demo source) unless told otherwise. */
 function fakeSource(snapshot: HouseholdSnapshot, realtime: 'connected' | 'disconnected' | null = 'connected'): HouseholdSource {
@@ -778,6 +778,89 @@ describe('useLogStore', () => {
       })
 
       expect(logStore.lastAction).toBeNull()
+    })
+  })
+
+  describe('stuck commands', () => {
+    const notFound = () => new LogWriteError('Not found yet', true, 'NOT_FOUND')
+
+    /** Fails `sleep.end` for 'sleep-gone' with NOT_FOUND (its sleep was discarded elsewhere); everything else saves. */
+    function failGoneSleepEnd(writer: FakeWriter): void {
+      writer.execute = async (cmd) => {
+        writer.calls.push(cmd)
+        if (cmd.kind === 'sleep.end' && cmd.entryId === 'sleep-gone') throw notFound()
+      }
+    }
+
+    it('drops a command that fails NOT_FOUND more than 5 times over more than 10 minutes, then sends the rest', async () => {
+      const { householdStore, logStore, writer, queue } = await setup()
+      failGoneSleepEnd(writer)
+      await logStore.init(writer, queue)
+      setOnline(false)
+      await logStore.submit(sleepEndCmd('sleep-gone'))
+      await logStore.submit(feedingCmd('feed-1'))
+      setOnline(true)
+      await vi.advanceTimersByTimeAsync(0) // attempt 1 (online event)
+
+      await vi.advanceTimersByTimeAsync(5 * 30_000) // attempts 2–6, only 2.5 minutes in
+      expect(await queue.count()).toBe(2)
+      expect(logStore.failures).toEqual([])
+      expect(writer.calls.some((c) => c.kind === 'feeding.add')).toBe(false)
+
+      await vi.advanceTimersByTimeAsync(8 * 60_000) // past 10 minutes since the first failure
+      expect(await queue.count()).toBe(0)
+      expect(logStore.pendingCount).toBe(0)
+      expect(logStore.failures).toEqual([STUCK_COMMAND_MESSAGE])
+      expect(householdStore.overlay.some((o) => o.command.kind === 'sleep.end')).toBe(false)
+      expect(writer.calls.filter((c) => c.kind === 'feeding.add')).toHaveLength(1)
+      logStore.stop()
+    })
+
+    it('keeps a NOT_FOUND command past 10 minutes until it has failed more than 5 times', async () => {
+      const { logStore, writer, queue } = await setup()
+      failGoneSleepEnd(writer)
+      await queue.enqueue(sleepEndCmd('sleep-gone'))
+      await logStore.init(writer, queue) // attempt 1
+      logStore.stop()
+      vi.setSystemTime(Date.now() + 11 * 60_000)
+
+      for (let i = 2; i <= 5; i++) await logStore.replay()
+      expect(await queue.count()).toBe(1)
+      expect(logStore.failures).toEqual([])
+
+      await logStore.replay() // attempt 6
+      expect(await queue.count()).toBe(0)
+      expect(logStore.failures).toEqual([STUCK_COMMAND_MESSAGE])
+    })
+
+    it('never drops a command for other retryable errors', async () => {
+      const { logStore, writer, queue } = await setup()
+      writer.failAlwaysWith = new LogWriteError('fetch failed', true, null)
+      await queue.enqueue(dinnerCmd('Pizza'))
+      await logStore.init(writer, queue)
+
+      await vi.advanceTimersByTimeAsync(20 * 60_000)
+
+      expect(await queue.count()).toBe(1)
+      expect(logStore.failures).toEqual([])
+      logStore.stop()
+    })
+
+    it('a reload starts the count over', async () => {
+      const { logStore, writer, queue } = await setup()
+      failGoneSleepEnd(writer)
+      await queue.enqueue(sleepEndCmd('sleep-gone'))
+      await logStore.init(writer, queue) // attempt 1
+      logStore.stop()
+      for (let i = 2; i <= 6; i++) await logStore.replay()
+
+      // A reload forgets the counts: after re-init, the 10 minutes and 5 attempts start over.
+      vi.setSystemTime(Date.now() + 11 * 60_000)
+      await logStore.init(writer, queue)
+      logStore.stop()
+      for (let i = 2; i <= 6; i++) await logStore.replay()
+      expect(await queue.count()).toBe(1)
+      expect(logStore.failures).toEqual([])
     })
   })
 
