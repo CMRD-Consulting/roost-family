@@ -796,6 +796,73 @@ describe('useLogStore', () => {
     })
   })
 
+  describe('undoDose', () => {
+    const SAM = 'bbbbbbbb-0000-0000-0000-000000000001'
+    const voidCmd = (doseId: string): Extract<LogCommand, { kind: 'dose.void' }> => ({
+      kind: 'dose.void', householdId: HOUSEHOLD_ID, doseId, membershipId: SAM, pin: '1234', reason: 'Undone within 10 seconds',
+    })
+    const hasDose = (store: ReturnType<typeof useHouseholdStore>, id: string) => store.view?.doses.some((d) => d.id === id) ?? false
+
+    it('removes a dose that is still queued from the queue and the overlay, with no server call and no PIN', async () => {
+      const { householdStore, logStore, writer, queue } = await setup()
+      await logStore.init(writer, queue)
+      setOnline(false)
+      expect(await logStore.submit(doseCmd('dose-q'), { confirmOffline: true })).toBe('queued')
+      expect(logStore.isDoseUnsent('dose-q')).toBe(true)
+      expect(hasDose(householdStore, 'dose-q')).toBe(true)
+
+      expect(await logStore.undoDose('dose-q', null)).toBe('removed')
+
+      expect(writer.calls).toEqual([])
+      expect(await queue.count()).toBe(0)
+      expect(logStore.pendingCount).toBe(0)
+      expect(hasDose(householdStore, 'dose-q')).toBe(false)
+      expect(householdStore.overlay).toHaveLength(0)
+      expect(logStore.lastAction).toBeNull()
+      expect(logStore.isDoseUnsent('dose-q')).toBe(false)
+    })
+
+    it('waits for a dose that is being sent, then voids it', async () => {
+      const { logStore, writer, queue } = await setup()
+      await logStore.init(writer, queue)
+      setOnline(false)
+      await logStore.submit(doseCmd('dose-f'), { confirmOffline: true })
+      Object.defineProperty(window.navigator, 'onLine', { value: true, configurable: true })
+
+      const gate = deferred()
+      writer.gate = gate.promise
+      const replaying = logStore.replay()
+      await Promise.resolve()
+      expect(writer.calls.map((c) => c.kind)).toEqual(['dose.add']) // in flight
+      expect(logStore.isDoseUnsent('dose-f')).toBe(false)
+
+      const undoing = logStore.undoDose('dose-f', voidCmd('dose-f'))
+      await Promise.resolve()
+      expect(writer.calls.map((c) => c.kind)).toEqual(['dose.add']) // not voided before it has landed
+      writer.gate = null
+      gate.resolve()
+      await replaying
+
+      expect(await undoing).toBe('voided')
+      expect(writer.calls).toEqual([expect.objectContaining({ kind: 'dose.add' }), voidCmd('dose-f')])
+      expect(await queue.count()).toBe(0)
+    })
+
+    it('voids a synced dose, and asks for a PIN when none was given', async () => {
+      const { logStore, writer, queue } = await setup()
+      await logStore.init(writer, queue)
+      await logStore.submit(doseCmd('dose-s'))
+      expect(logStore.isDoseUnsent('dose-s')).toBe(false)
+
+      expect(await logStore.undoDose('dose-s', null)).toBe('needsPin')
+      expect(writer.calls.map((c) => c.kind)).toEqual(['dose.add'])
+
+      expect(await logStore.undoDose('dose-s', voidCmd('dose-s'))).toBe('voided')
+      expect(writer.calls.at(-1)).toEqual(voidCmd('dose-s'))
+      expect(logStore.lastAction).toBeNull()
+    })
+  })
+
   describe('stuck commands', () => {
     const notFound = () => new LogWriteError('Not found yet', true, 'NOT_FOUND')
 

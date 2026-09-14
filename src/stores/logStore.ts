@@ -232,6 +232,51 @@ export const useLogStore = defineStore('log', () => {
     return 'undone'
   }
 
+  /** The queued `dose.add` for this dose, if it hasn't left the queue. */
+  function queuedDose(doseId: string): QueuedCommand | undefined {
+    return queued.find((i) => i.command.kind === 'dose.add' && i.command.entry.id === doseId)
+  }
+
+  /** True while the dose's `dose.add` is waiting in the offline queue and not being sent: it never reached the server. */
+  function isDoseUnsent(doseId: string): boolean {
+    const item = queuedDose(doseId)
+    return item !== undefined && item.key !== inFlightKey
+  }
+
+  /**
+   * Undoes a just-logged dose (spec §7.3, §11.4). A dose that never left the queue is simply removed from the
+   * queue and the view: nothing reached the server, so there is nothing to void and no PIN is needed. One being
+   * sent right now is waited for; a sent dose is voided with `voidCmd` (built after a verified PIN), or
+   * 'needsPin' is returned when there is none.
+   */
+  async function undoDose(
+    doseId: string,
+    voidCmd: Extract<LogCommand, { kind: 'dose.void' }> | null,
+  ): Promise<'removed' | 'voided' | 'needsPin'> {
+    while (directSend !== null) await directSend.catch(() => {})
+    let item = queuedDose(doseId)
+    while (item !== undefined && item.key === inFlightKey && replayPromise !== null) {
+      await replayPromise.catch(() => {})
+      item = queuedDose(doseId)
+    }
+
+    if (item !== undefined) {
+      removeFromMirror(item.key)
+      householdStore.removeOverlay(item.command)
+      const action = lastAction.value
+      if (action?.command.kind === 'dose.add' && action.command.entry.id === doseId) {
+        clearUndoTimer()
+        lastAction.value = null
+      }
+      await queue?.remove(item.key)
+      return 'removed'
+    }
+
+    if (voidCmd === null) return 'needsPin'
+    await submit(voidCmd)
+    return 'voided'
+  }
+
   /** Records a replay failure; true when the command is stuck on a row that no longer exists and should be dropped. */
   function isStuck(key: number, e: LogWriteError): boolean {
     if (e.code !== 'NOT_FOUND') return false
@@ -344,5 +389,5 @@ export const useLogStore = defineStore('log', () => {
     return requireWriter().verifyPin(membershipId, pin)
   }
 
-  return { lastAction, pendingCount, failures, init, stop, submit, undo, replay, verifyPin }
+  return { lastAction, pendingCount, failures, init, stop, submit, undo, undoDose, isDoseUnsent, replay, verifyPin }
 })

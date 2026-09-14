@@ -291,6 +291,66 @@ describe('medicine', () => {
       expect(w.emitted('close')).toHaveLength(1)
     })
 
+    it('offline, undoing a dose that never synced removes it without a PIN', async () => {
+      await setup()
+      const logStore = useLogStore()
+      setOnline(false)
+      const sheet = mountIt(MedicineSheet)
+      await flushPromises()
+      await click(radio(sheet, 'Child', 'Theo'))
+      await click(radio(sheet, 'Medicine', 'Infant acetaminophen'))
+      await click(radio(sheet, 'Who', 'Sam'))
+      await click(button(sheet, 'Save'))
+      await click(button(sheet, 'Log anyway'))
+      sheet.unmount()
+      wrapper = null
+      const doseId = logStore.lastAction?.command.kind === 'dose.add' ? logStore.lastAction.command.entry.id : ''
+      expect(useHouseholdStore().view?.doses.some((d) => d.id === doseId)).toBe(true)
+
+      const w = mountIt(DosePinDialog, { action: 'undo', doseId })
+      await flushPromises()
+
+      expect(w.get('[role="status"]').text()).toBe("This dose hadn't synced yet — removed.")
+      expect(w.find('[data-keypad]').exists()).toBe(false)
+      expect(w.text()).not.toContain('Connect to undo')
+      expect(writer.calls).toEqual([])
+      expect(useHouseholdStore().view?.doses.some((d) => d.id === doseId)).toBe(false)
+      expect(logStore.pendingCount).toBe(0)
+      expect(w.emitted('done')).toHaveLength(1)
+      await click(button(w, 'Close'))
+      expect(w.emitted('close')).toHaveLength(1)
+    })
+
+    it('online, undoing a dose still waiting in the queue removes it after the PIN instead of voiding it', async () => {
+      await setup()
+      const logStore = useLogStore()
+      writer.ready = async () => false // no session yet: the queue can't send
+      setOnline(false)
+      const sheet = mountIt(MedicineSheet)
+      await flushPromises()
+      await click(radio(sheet, 'Child', 'Theo'))
+      await click(radio(sheet, 'Medicine', 'Infant acetaminophen'))
+      await click(radio(sheet, 'Who', 'Sam'))
+      await click(button(sheet, 'Save'))
+      await click(button(sheet, 'Log anyway'))
+      sheet.unmount()
+      wrapper = null
+      const doseId = logStore.lastAction?.command.kind === 'dose.add' ? logStore.lastAction.command.entry.id : ''
+      setOnline(true)
+      await flushPromises()
+      expect(logStore.pendingCount).toBe(1)
+
+      const w = mountIt(DosePinDialog, { action: 'undo', doseId })
+      await flushPromises()
+      await enterPin(w, 'Sam', '1234')
+
+      expect(writer.calls).toEqual([])
+      expect(logStore.pendingCount).toBe(0)
+      expect(useHouseholdStore().view?.doses.some((d) => d.id === doseId)).toBe(false)
+      expect(w.emitted('done')).toHaveLength(1)
+      expect(w.emitted('close')).toHaveLength(1)
+    })
+
     it('undoes a just-logged dose by voiding it after the PIN, even once the undo window has passed', async () => {
       await setup()
       const logStore = useLogStore()
