@@ -735,6 +735,60 @@ export type Database = {
           },
         ]
       }
+      household_exports: {
+        Row: {
+          created_at: string
+          error: string | null
+          expires_at: string
+          household_id: string
+          id: string
+          ready_at: string | null
+          requested_by: string
+          started_at: string | null
+          status: string
+          storage_path: string | null
+        }
+        Insert: {
+          created_at?: string
+          error?: string | null
+          expires_at?: string
+          household_id: string
+          id?: string
+          ready_at?: string | null
+          requested_by: string
+          started_at?: string | null
+          status?: string
+          storage_path?: string | null
+        }
+        Update: {
+          created_at?: string
+          error?: string | null
+          expires_at?: string
+          household_id?: string
+          id?: string
+          ready_at?: string | null
+          requested_by?: string
+          started_at?: string | null
+          status?: string
+          storage_path?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "household_exports_household_id_fkey"
+            columns: ["household_id"]
+            isOneToOne: false
+            referencedRelation: "households"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "household_exports_requested_by_household_id_fkey"
+            columns: ["requested_by", "household_id"]
+            isOneToOne: false
+            referencedRelation: "memberships"
+            referencedColumns: ["id", "household_id"]
+          },
+        ]
+      }
       household_weather: {
         Row: {
           current_temp_f: number | null
@@ -1748,6 +1802,19 @@ export type Database = {
           out_revoked: boolean
         }[]
       }
+      my_household_export: {
+        Args: { p_export_id: string }
+        Returns: {
+          created_at: string
+          error: string
+          expired: boolean
+          expires_at: string
+          household_id: string
+          id: string
+          ready_at: string
+          status: string
+        }[]
+      }
       record_consent: {
         Args: { p_health_data_consent: boolean; p_policy_version: string }
         Returns: undefined
@@ -1763,6 +1830,10 @@ export type Database = {
       rename_display: {
         Args: { p_display_id: string; p_name: string }
         Returns: undefined
+      }
+      request_household_export: {
+        Args: { p_household_id: string }
+        Returns: string
       }
       revoke_display: { Args: { p_display_id: string }; Returns: undefined }
       revoke_member_invite: {
@@ -1885,6 +1956,15 @@ export type Database = {
         Args: { p_connection_id: string }
         Returns: string
       }
+      svc_claim_household_export: {
+        Args: { p_export_id: string }
+        Returns: {
+          household_id: string
+          household_name: string
+          requester_email: string
+          time_zone: string
+        }[]
+      }
       svc_consume_calendar_oauth_state: {
         Args: { p_state_hash: string }
         Returns: {
@@ -1916,6 +1996,14 @@ export type Database = {
           p_state_hash: string
         }
         Returns: string
+      }
+      svc_mark_export_failed: {
+        Args: { p_error: string; p_export_id: string }
+        Returns: undefined
+      }
+      svc_mark_export_ready: {
+        Args: { p_export_id: string; p_storage_path: string }
+        Returns: undefined
       }
       svc_set_calendar_selection_gone: {
         Args: { p_gone: boolean; p_selection_id: string }

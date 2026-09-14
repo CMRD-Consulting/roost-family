@@ -44,9 +44,10 @@ pnpm dev               # http://localhost:5173
 
 ## Scheduled jobs (production)
 
-Deleted households and deleted photo files are erased only by scheduled jobs (spec §11.3; launch gate §15). SQL can't
-erase Storage file bytes, so `delete_photo` and the household purge leave the files (unreadable at once) for the
-`storage-sweep` Edge Function, which erases them through the Storage API.
+Deleted households, deleted photo files and expired exports are erased only by scheduled jobs (spec §11.3; launch gate
+§15). SQL can't erase Storage file bytes, so `delete_photo`, the household purge and export expiry leave the files
+(unreadable at once) for the `storage-sweep` Edge Function, which erases them through the Storage API. The daily purge
+also fails exports stuck pending for 15 minutes and deletes export rows older than 7 days.
 
 1. Enable **pg_cron** and **pg_net** (Dashboard → Database → Extensions).
 2. Purge households deleted more than 30 days ago, daily (SQL editor, as `postgres`):
@@ -70,7 +71,9 @@ erase Storage file bytes, so `delete_photo` and the household purge leave the fi
    $$);
    ```
    It erases files with no `photos` row older than 60 minutes and every file of a household that no longer exists,
-   and returns counts (`scanned`, `kept`, `removedOrphans`, `removedGoneHousehold`, `skipped`, `failed`); pg_net keeps
+   then export ZIPs whose `household_exports` row is failed, expired (24 hours after it became ready) or gone, and
+   returns counts (`scanned`, `kept`, `removedOrphans`, `removedGoneHousehold`, `skipped`, `failed`, and
+   `exports: { scanned, kept, removedExpired, removedUnrecorded, skipped, failed }`); pg_net keeps
    recent responses in `net._http_response`, and the function logs each report.
 5. Monitor: `psql "$DATABASE_URL" -f supabase/manual-checks/cron_check.sql` prints a READY or NOT READY line per job
    and the jobs' recent runs.

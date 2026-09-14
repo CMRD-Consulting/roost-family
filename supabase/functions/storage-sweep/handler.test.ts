@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from 'vitest'
 import { createSweepHandler, type SweepHandlerDeps } from './handler.ts'
 
 const URL_ = 'http://127.0.0.1:55321/functions/v1/storage-sweep'
-const REPORT = { scanned: 2, kept: 1, removedOrphans: 1, removedGoneHousehold: 0, skipped: 0, failed: 0 }
+const REPORT = {
+  scanned: 2, kept: 1, removedOrphans: 1, removedGoneHousehold: 0, skipped: 0, failed: 0,
+  exports: { scanned: 1, kept: 0, removedExpired: 1, removedUnrecorded: 0, skipped: 0, failed: 0 },
+}
 
 function deps(overrides: Partial<SweepHandlerDeps> = {}): SweepHandlerDeps & Record<'sweep', ReturnType<typeof vi.fn>> {
   return {

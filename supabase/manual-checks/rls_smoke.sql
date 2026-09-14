@@ -1972,14 +1972,14 @@ select pg_temp.expect('anon and authenticated cannot execute any private calenda
     'set_calendar_status', 'set_calendar_selection_gone', 'require_calendar_assignee', 'hide_unassigned_calendar_selection',
     'delete_calendar_vault_secret', 'end_membership')
     and (has_function_privilege('authenticated', p.oid, 'execute') or has_function_privilege('anon', p.oid, 'execute'))));
-select pg_temp.expect('only service_role can execute the 8 svc_ wrappers (6 here, 2 OAuth state wrappers in migration 9)', (
+select pg_temp.expect('only service_role can execute the 11 svc_ wrappers (6 here, 2 OAuth state wrappers in migration 9, 3 export wrappers in migration 10)', (
   select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
   where n.nspname = 'public' and p.proname like 'svc\_%'
     and has_function_privilege('service_role', p.oid, 'execute')
     and not has_function_privilege('authenticated', p.oid, 'execute')
-    and not has_function_privilege('anon', p.oid, 'execute')) = 8
+    and not has_function_privilege('anon', p.oid, 'execute')) = 11
   and (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-       where n.nspname = 'public' and p.proname like 'svc\_%') = 8);
+       where n.nspname = 'public' and p.proname like 'svc\_%') = 11);
 select pg_temp.expect('anon cannot execute svc_calendar_secret',
   not has_function_privilege('anon', 'public.svc_calendar_secret(uuid)', 'execute'));
 select pg_temp.expect('PUBLIC cannot execute any calendar function', not exists (
@@ -2434,6 +2434,240 @@ select pg_temp.expect('creating a state also removes expired ones', not exists (
 select pg_temp.expect('states are deleted with their household and their membership', (
   select confdeltype = 'c' from pg_constraint where conrelid = 'public.calendar_oauth_states'::regclass and contype = 'f' and array_length(conkey, 1) = 1)
   and (select confdeltype = 'c' from pg_constraint where conrelid = 'public.calendar_oauth_states'::regclass and contype = 'f' and array_length(conkey, 1) = 2));
+
+-- ─── Household export (spec §6.3, §11.3) ─────────────────────────────────
+-- Fresh fixtures: household X with owner X, second owner X2, adult Y, caregiver Z and display W; household V with
+-- owner V.
+\set X '{"sub":"00000000-0000-0000-0000-000000000020","role":"authenticated","is_anonymous":false}'
+\set X2 '{"sub":"00000000-0000-0000-0000-000000000024","role":"authenticated","is_anonymous":false}'
+\set Y '{"sub":"00000000-0000-0000-0000-000000000021","role":"authenticated","is_anonymous":false}'
+\set Z '{"sub":"00000000-0000-0000-0000-000000000022","role":"authenticated","is_anonymous":false}'
+\set W '{"sub":"00000000-0000-0000-0000-000000000023","role":"authenticated","is_anonymous":true}'
+\set V '{"sub":"00000000-0000-0000-0000-000000000025","role":"authenticated","is_anonymous":false}'
+reset role;
+insert into auth.users (id, instance_id, aud, role, email, raw_app_meta_data, raw_user_meta_data, is_anonymous, created_at, updated_at)
+values
+  ('00000000-0000-0000-0000-000000000020', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'x@roost.test', '{}', '{}', false, now(), now()),
+  ('00000000-0000-0000-0000-000000000021', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'y@roost.test', '{}', '{}', false, now(), now()),
+  ('00000000-0000-0000-0000-000000000022', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'z@roost.test', '{}', '{}', false, now(), now()),
+  ('00000000-0000-0000-0000-000000000023', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', null, '{}', '{}', true, now(), now()),
+  ('00000000-0000-0000-0000-000000000024', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'x2@roost.test', '{}', '{}', false, now(), now()),
+  ('00000000-0000-0000-0000-000000000025', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'v@roost.test', '{}', '{}', false, now(), now());
+insert into public.households (name, time_zone) values ('X family', 'America/New_York') returning id as household_x \gset
+insert into public.households (name, time_zone) values ('V family', 'America/Denver') returning id as household_v \gset
+insert into public.memberships (user_id, household_id, role, display_name, color) values
+  ('00000000-0000-0000-0000-000000000020', :'household_x', 'owner', 'Xan', '#2F86A6') returning id as membership_x \gset
+insert into public.memberships (user_id, household_id, role, display_name, color) values
+  ('00000000-0000-0000-0000-000000000024', :'household_x', 'owner', 'Xia', '#2F86A6') returning id as membership_x2 \gset
+insert into public.memberships (user_id, household_id, role, display_name, color) values
+  ('00000000-0000-0000-0000-000000000021', :'household_x', 'adult', 'Yael', '#2F86A6'),
+  ('00000000-0000-0000-0000-000000000022', :'household_x', 'caregiver', 'Zed', '#2F86A6');
+insert into public.memberships (user_id, household_id, role, display_name, color) values
+  ('00000000-0000-0000-0000-000000000025', :'household_v', 'owner', 'Val', '#2F86A6') returning id as membership_v \gset
+insert into public.displays (household_id, name, auth_user_id) values (:'household_x', 'X kitchen', '00000000-0000-0000-0000-000000000023');
+select set_config('smoke.household_x', :'household_x', true), set_config('smoke.household_v', :'household_v', true),
+       set_config('smoke.membership_x', :'membership_x', true);
+
+\echo '[100] household_exports: RLS on, owners of the household read, nobody writes; exports bucket is private'
+select pg_temp.expect('table: RLS on, one SELECT policy, clients read only, anon nothing', (
+  select relrowsecurity from pg_class where oid = 'public.household_exports'::regclass)
+  and (select count(*) from pg_policies where schemaname = 'public' and tablename = 'household_exports') = 1
+  and (select cmd from pg_policies where schemaname = 'public' and tablename = 'household_exports') = 'SELECT'
+  and has_table_privilege('authenticated', 'public.household_exports', 'select')
+  and not has_table_privilege('authenticated', 'public.household_exports', 'insert, update, delete, truncate, references, trigger')
+  and not has_table_privilege('anon', 'public.household_exports', 'select, insert, update, delete, truncate, references, trigger')
+  and not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and tablename = 'household_exports'));
+select pg_temp.expect('exports bucket exists, private, ZIP only', exists (
+  select 1 from storage.buckets where id = 'exports' and not public and allowed_mime_types = array['application/zip']));
+select pg_temp.expect('no storage policy mentions the exports bucket', not exists (
+  select 1 from pg_policies where schemaname = 'storage' and (coalesce(qual, '') || coalesce(with_check, '')) ilike '%exports%'));
+
+\echo '[101] request_household_export: full sign-in owner of a live household only'
+select pg_temp.expect('only authenticated can execute request_household_export and my_household_export',
+  has_function_privilege('authenticated', 'public.request_household_export(uuid)', 'execute')
+  and has_function_privilege('authenticated', 'public.my_household_export(uuid)', 'execute')
+  and not has_function_privilege('anon', 'public.request_household_export(uuid)', 'execute')
+  and not has_function_privilege('anon', 'public.my_household_export(uuid)', 'execute'));
+set local role authenticated;
+select set_config('request.jwt.claims', :'Y', true);
+select pg_temp.expect_error('an adult cannot request', $q$select public.request_household_export(pg_temp.v('household_x'))$q$, '42501');
+select set_config('request.jwt.claims', :'Z', true);
+select pg_temp.expect_error('a caregiver cannot request', $q$select public.request_household_export(pg_temp.v('household_x'))$q$, '42501');
+select set_config('request.jwt.claims', :'W', true);
+select pg_temp.expect_error('a display cannot request', $q$select public.request_household_export(pg_temp.v('household_x'))$q$, '42501');
+select set_config('request.jwt.claims', :'V', true);
+select pg_temp.expect_error('another household''s owner cannot request', $q$select public.request_household_export(pg_temp.v('household_x'))$q$, '42501');
+select pg_temp.expect_error('a null household', $q$select public.request_household_export(null)$q$, '42501');
+select set_config('request.jwt.claims', :'X', true);
+select public.request_household_export(:'household_x') as export_x \gset
+select set_config('smoke.export_x', :'export_x', true);
+select pg_temp.expect('the owner''s request is pending, for their membership, expiring in a day', (
+  select status = 'pending' and requested_by = pg_temp.v('membership_x') and storage_path is null and error is null
+    and ready_at is null and expires_at > now() + interval '23 hours'
+  from public.household_exports where id = pg_temp.v('export_x')));
+select pg_temp.expect('the request is audited', exists (
+  select 1 from public.settings_audit where household_id = pg_temp.v('household_x') and membership_id = pg_temp.v('membership_x')
+    and change ->> 'section' = 'export' and change ->> 'action' = 'request' and change ->> 'target_id' = pg_temp.v('export_x')::text));
+
+\echo '[102] One export per household per hour: a distinct error with the minutes to wait'
+select pg_temp.expect_error('a second request within the hour', $q$select public.request_household_export(pg_temp.v('household_x'))$q$, 'RL001');
+select set_config('request.jwt.claims', :'X2', true);
+select pg_temp.expect_error('another owner of the same household is limited too', $q$select public.request_household_export(pg_temp.v('household_x'))$q$, 'RL001');
+do $$
+declare v_detail text;
+begin
+  perform public.request_household_export(current_setting('smoke.household_x')::uuid);
+  raise exception 'FAIL: rate limit did not raise';
+exception when sqlstate 'RL001' then
+  get stacked diagnostics v_detail = pg_exception_detail;
+  if v_detail !~ '^retry_after_minutes=(60|59)$' then
+    raise exception 'FAIL: rate limit detail was %', v_detail;
+  end if;
+end $$;
+select set_config('request.jwt.claims', :'V', true);
+select public.request_household_export(:'household_v') as export_v \gset
+select pg_temp.expect('another household is not limited', :'export_v'::uuid is not null);
+reset role;
+update public.household_exports set status = 'failed', error = 'internal', started_at = now() where id = :'export_x';
+set local role authenticated;
+select set_config('request.jwt.claims', :'X', true);
+select public.request_household_export(:'household_x') as export_x2 \gset
+select pg_temp.expect('a failed export does not count toward the limit', :'export_x2'::uuid is not null);
+reset role;
+update public.household_exports set created_at = now() - interval '61 minutes', expires_at = now() + interval '1 hour' where id = :'export_x2';
+set local role authenticated;
+select public.request_household_export(:'household_x') as export_x3 \gset
+select pg_temp.expect('after an hour the owner can request again, and the stale pending export is marked failed (timeout)', (
+  select status = 'failed' and error = 'timeout' from public.household_exports where id = :'export_x2')
+  and :'export_x3'::uuid is not null);
+reset role;
+select set_config('smoke.export_x3', :'export_x3', true), set_config('smoke.export_v', :'export_v', true);
+
+\echo '[103] Owners of the household see its exports; nobody else does'
+set local role authenticated;
+select set_config('request.jwt.claims', :'X2', true);
+select pg_temp.expect('a second owner sees the household''s exports', (
+  select count(*) from public.household_exports where household_id = pg_temp.v('household_x')) = 3);
+select pg_temp.expect('my_household_export returns the row to an owner', (
+  select status = 'pending' and household_id = pg_temp.v('household_x') and not expired
+  from public.my_household_export(pg_temp.v('export_x3'))));
+select pg_temp.expect('owners never see another household''s exports', not exists (
+  select 1 from public.household_exports where household_id = pg_temp.v('household_v')));
+select pg_temp.expect_error('my_household_export: another household''s export reads as not found',
+  $q$select * from public.my_household_export(pg_temp.v('export_v'))$q$, '42501');
+select pg_temp.expect_error('my_household_export: an unknown id', $q$select * from public.my_household_export(gen_random_uuid())$q$, '42501');
+select set_config('request.jwt.claims', :'Y', true);
+select pg_temp.expect('an adult sees no exports', not exists (select 1 from public.household_exports));
+select pg_temp.expect_error('an adult cannot read an export through my_household_export',
+  $q$select * from public.my_household_export(pg_temp.v('export_x3'))$q$, '42501');
+select set_config('request.jwt.claims', :'Z', true);
+select pg_temp.expect('a caregiver sees no exports', not exists (select 1 from public.household_exports));
+select set_config('request.jwt.claims', :'W', true);
+select pg_temp.expect('a display sees no exports', not exists (select 1 from public.household_exports));
+select pg_temp.expect_error('a display cannot read an export through my_household_export',
+  $q$select * from public.my_household_export(pg_temp.v('export_x3'))$q$, '42501');
+select set_config('request.jwt.claims', :'X', true);
+select pg_temp.expect_error('an owner cannot insert', $q$insert into public.household_exports (household_id, requested_by) values (pg_temp.v('household_x'), pg_temp.v('membership_x'))$q$, '42501');
+select pg_temp.expect_error('an owner cannot mark an export ready', $q$update public.household_exports set status = 'ready' where id = pg_temp.v('export_x3')$q$, '42501');
+select pg_temp.expect_error('an owner cannot delete an export', $q$delete from public.household_exports where id = pg_temp.v('export_x3')$q$, '42501');
+reset role;
+
+\echo '[104] Export service wrappers: service role only'
+-- Privilege checks only: calling an unprivileged function from a pg_temp helper crashes this image (see the note above [26]).
+select pg_temp.expect('only service_role can execute the export wrappers; nobody can execute the private helpers',
+  has_function_privilege('service_role', 'public.svc_claim_household_export(uuid)', 'execute')
+  and has_function_privilege('service_role', 'public.svc_mark_export_ready(uuid, text)', 'execute')
+  and has_function_privilege('service_role', 'public.svc_mark_export_failed(uuid, text)', 'execute')
+  and not has_function_privilege('authenticated', 'public.svc_claim_household_export(uuid)', 'execute')
+  and not has_function_privilege('authenticated', 'public.svc_mark_export_ready(uuid, text)', 'execute')
+  and not has_function_privilege('authenticated', 'public.svc_mark_export_failed(uuid, text)', 'execute')
+  and not has_function_privilege('anon', 'public.svc_claim_household_export(uuid)', 'execute')
+  and not has_function_privilege('anon', 'public.svc_mark_export_ready(uuid, text)', 'execute')
+  and not has_function_privilege('anon', 'public.svc_mark_export_failed(uuid, text)', 'execute')
+  and not exists (
+    select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'private' and p.proname in ('purge_old_exports', 'delete_exports_of_deleted_household')
+      and (has_function_privilege('anon', p.oid, 'execute') or has_function_privilege('authenticated', p.oid, 'execute')
+           or has_function_privilege('service_role', p.oid, 'execute'))));
+
+\echo '[105] Claim, ready and failed: once each, the right path, short error codes'
+set local role service_role;
+select pg_temp.expect('claiming returns the household and the requesting owner''s email', (
+  select household_id = pg_temp.v('household_x') and household_name = 'X family' and time_zone = 'America/New_York'
+    and requester_email = 'x@roost.test'
+  from public.svc_claim_household_export(pg_temp.v('export_x3'))));
+select pg_temp.expect('an export is claimed once', not exists (select 1 from public.svc_claim_household_export(pg_temp.v('export_x3'))));
+select pg_temp.expect('a failed export cannot be claimed', not exists (select 1 from public.svc_claim_household_export(pg_temp.v_text('export_x')::uuid)));
+select pg_temp.expect_error('ready with another path',
+  $q$select public.svc_mark_export_ready(pg_temp.v('export_x3'), pg_temp.v('household_v')::text || '/' || pg_temp.v('export_x3')::text || '.zip')$q$, '22023');
+select public.svc_mark_export_ready(:'export_x3', :'household_x' || '/' || :'export_x3' || '.zip');
+select pg_temp.expect('ready: path, ready_at and a fresh 24-hour expiry', (
+  select status = 'ready' and storage_path = pg_temp.v('household_x')::text || '/' || pg_temp.v('export_x3')::text || '.zip'
+    and ready_at is not null and expires_at > now() + interval '23 hours'
+  from public.household_exports where id = pg_temp.v('export_x3')));
+select pg_temp.expect_error('ready twice', $q$select public.svc_mark_export_ready(pg_temp.v('export_x3'), pg_temp.v('household_x')::text || '/' || pg_temp.v('export_x3')::text || '.zip')$q$, '22023');
+select pg_temp.expect_error('failed after ready', $q$select public.svc_mark_export_failed(pg_temp.v('export_x3'), 'internal')$q$, '22023');
+select public.svc_mark_export_failed(:'export_v', 'Error: stack trace at line 1');
+select pg_temp.expect('failed: an error that is not a short code is stored as "internal"', (
+  select status = 'failed' and error = 'internal' from public.household_exports where id = pg_temp.v('export_v')));
+reset role;
+update public.household_exports set status = 'pending', error = null where id = :'export_v';
+set local role service_role;
+select public.svc_mark_export_failed(:'export_v', 'too_large');
+select pg_temp.expect('failed: a short code is kept', (select error = 'too_large' from public.household_exports where id = pg_temp.v('export_v')));
+reset role;
+set local role authenticated;
+select set_config('request.jwt.claims', :'X', true);
+select pg_temp.expect('the owner sees the ready export', (
+  select status = 'ready' and not expired from public.my_household_export(pg_temp.v('export_x3'))));
+reset role;
+
+\echo '[106] No client access to objects in the exports bucket'
+insert into storage.objects (bucket_id, name) values ('exports', :'household_x' || '/' || :'export_x3' || '.zip');
+set local role authenticated;
+select set_config('request.jwt.claims', :'X', true);
+select pg_temp.expect('the owner cannot read export objects', not exists (select 1 from storage.objects where bucket_id = 'exports'));
+select pg_temp.expect_error('the owner cannot upload into exports',
+  $q$insert into storage.objects (bucket_id, name) values ('exports', pg_temp.v('household_x')::text || '/' || gen_random_uuid()::text || '.zip')$q$, '42501');
+select set_config('request.jwt.claims', :'W', true);
+select pg_temp.expect('a display cannot read export objects', not exists (select 1 from storage.objects where bucket_id = 'exports'));
+select pg_temp.expect_error('a display cannot upload into exports',
+  $q$insert into storage.objects (bucket_id, name) values ('exports', pg_temp.v('household_x')::text || '/' || gen_random_uuid()::text || '.zip')$q$, '42501');
+set local role anon;
+select set_config('request.jwt.claims', :'NO_CLAIMS', true);
+select pg_temp.expect('anon cannot read export objects', not exists (select 1 from storage.objects where bucket_id = 'exports'));
+reset role;
+
+\echo '[107] Expiry and purge: expired reads as expired; the purge fails stale pending exports and deletes week-old rows'
+update public.household_exports set expires_at = now() - interval '1 minute' where id = :'export_x3';
+set local role authenticated;
+select set_config('request.jwt.claims', :'X', true);
+select pg_temp.expect('an expired export reads as expired', (select expired from public.my_household_export(pg_temp.v('export_x3'))));
+reset role;
+insert into public.household_exports (household_id, requested_by, created_at, expires_at)
+values (:'household_v', :'membership_v', now() - interval '20 minutes', now() + interval '1 hour') returning id as export_stale \gset
+insert into public.household_exports (household_id, requested_by, status, error, created_at, expires_at)
+values (:'household_v', :'membership_v', 'failed', 'internal', now() - interval '8 days', now() - interval '7 days') returning id as export_old \gset
+select private.purge_deleted_households();
+select pg_temp.expect('the daily purge marks a pending export older than 15 minutes failed (timeout)', (
+  select status = 'failed' and error = 'timeout' from public.household_exports where id = :'export_stale'));
+select pg_temp.expect('the daily purge deletes exports older than 7 days and keeps newer ones',
+  not exists (select 1 from public.household_exports where id = :'export_old')
+  and exists (select 1 from public.household_exports where id = :'export_x3'));
+
+\echo '[108] Deleting a household removes its exports at once; a member leaving removes nothing'
+update public.memberships set left_at = now() where id = :'membership_x2';
+select pg_temp.expect('a former owner''s membership leaving keeps the household''s exports', (
+  select count(*) from public.household_exports where household_id = :'household_x') = 3);
+set local role authenticated;
+select set_config('request.jwt.claims', :'X2', true);
+select pg_temp.expect('a former owner sees no exports', not exists (select 1 from public.household_exports));
+select set_config('request.jwt.claims', :'X', true);
+select public.delete_household(:'household_x', 'X family');
+reset role;
+select pg_temp.expect('a deleted household has no exports rows (the storage sweep erases the files)', not exists (
+  select 1 from public.household_exports where household_id = :'household_x'));
+select pg_temp.expect('other households keep theirs', exists (select 1 from public.household_exports where household_id = :'household_v'));
 \o
 \echo 'ALL RLS SMOKE CHECKS PASSED'
 rollback;

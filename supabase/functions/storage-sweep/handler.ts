@@ -1,16 +1,16 @@
 /**
  * HTTP handling for the `storage-sweep` Edge Function, kept free of Deno and Supabase so Vitest can exercise it.
  *
- * POST (optional JSON body `{ minAgeMinutes }`, default 60) with `Authorization: Bearer <service role key>` → the sweep
- * report. Only the service role may call it (a scheduled job or an operator); every other caller gets 401 before
+ * POST (optional JSON body `{ minAgeMinutes }`, default 60; it applies to photos only) with
+ * `Authorization: Bearer <service role key>` → the sweep report (photo counts, plus `exports` counts). Only the service role may call it (a scheduled job or an operator); every other caller gets 401 before
  * anything is read. Not meant for browsers, so no CORS.
  */
-import { isServiceCaller, parseSweepOptions, type SweepOptions, type SweepReport } from '../_shared/sweep.ts'
+import { isServiceCaller, parseSweepOptions, type StorageSweepReport, type SweepOptions } from '../_shared/sweep.ts'
 
 export interface SweepHandlerDeps {
   /** Bearer tokens accepted as the service role (empty entries are ignored). */
   serviceKeys: string[]
-  sweep(options: SweepOptions, now: Date): Promise<SweepReport>
+  sweep(options: SweepOptions, now: Date): Promise<StorageSweepReport>
   now(): Date
 }
 

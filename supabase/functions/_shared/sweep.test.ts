@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
-  isServiceCaller, parsePhotoPath, parseSweepOptions, runSweep, selectForSweep, type SweepStore, type StoredObject,
+  isServiceCaller, parseExportPath, parsePhotoPath, parseSweepOptions, runExportSweep, runSweep, selectExportsForSweep, selectForSweep,
+  type ExportRecord, type ExportSweepStore, type SweepStore, type StoredObject,
 } from './sweep.ts'
 
 const H1 = 'aaaaaaaa-0000-0000-0000-000000000001'
@@ -122,5 +123,97 @@ describe('runSweep', () => {
     s.remove.mockRejectedValueOnce(new Error('storage down'))
     const report = await runSweep(s, { minAgeMinutes: 60 }, NOW)
     expect(report).toMatchObject({ failed: 1, removedOrphans: 1, removedGoneHousehold: 0 })
+  })
+})
+
+// ─── Export files ─────────────────────────────────────────────────────────
+const E1 = 'ffffffff-0000-0000-0000-000000000001'
+const E2 = 'ffffffff-0000-0000-0000-000000000002'
+const E3 = 'ffffffff-0000-0000-0000-000000000003'
+const E4 = 'ffffffff-0000-0000-0000-000000000004'
+const zip = (household: string, exportId: string, minutesAgo: number | null = 5) => obj(`${household}/${exportId}.zip`, minutesAgo)
+const rec = (id: string, status: string, expiresInMinutes: number): ExportRecord => ({
+  id,
+  status,
+  expiresAt: new Date(NOW.getTime() + expiresInMinutes * 60_000).toISOString(),
+})
+
+describe('parseExportPath', () => {
+  it('reads <household>/<export>.zip', () => {
+    expect(parseExportPath(`${H1}/${E1}.zip`)).toEqual({ householdId: H1, exportId: E1 })
+  })
+
+  it('rejects anything else', () => {
+    for (const name of [`${H1}/${E1}.jpg`, `${H1}/x/${E1}.zip`, `${E1}.zip`, `${H1}/${E1}.ZIP`, `../${H1}/${E1}.zip`, '']) {
+      expect(parseExportPath(name)).toBeNull()
+    }
+  })
+})
+
+describe('selectExportsForSweep', () => {
+  it('keeps pending and unexpired ready exports; removes failed, expired and unrecorded files, however new', () => {
+    const records = new Map([
+      [E1, rec(E1, 'ready', 60)],
+      [E2, rec(E2, 'ready', -1)],
+      [E3, rec(E3, 'failed', 600)],
+      [E4, rec(E4, 'pending', 1440)],
+    ])
+    const unrecorded = 'ffffffff-0000-0000-0000-0000000000aa'
+    const result = selectExportsForSweep(
+      [zip(H1, E1), zip(H1, E2), zip(H1, E3), zip(H1, E4), zip(H1, unrecorded, 0)],
+      { now: NOW, householdId: H1, records },
+    )
+    expect(result.remove).toEqual([`${H1}/${E2}.zip`, `${H1}/${E3}.zip`, `${H1}/${unrecorded}.zip`])
+    expect(result).toMatchObject({ kept: 2, expired: 2, unrecorded: 1, skipped: 0 })
+  })
+
+  it('leaves names it does not understand, and files filed under another household’s folder, alone', () => {
+    const result = selectExportsForSweep(
+      [obj(`${H1}/notes.txt`, 600), zip(H_GONE, E1)],
+      { now: NOW, householdId: H1, records: new Map([[E1, rec(E1, 'ready', 60)]]) },
+    )
+    expect(result.remove).toEqual([])
+    expect(result.skipped).toBe(2)
+  })
+})
+
+describe('runExportSweep', () => {
+  function store(files: Record<string, StoredObject[]>, records: Record<string, ExportRecord[]>): ExportSweepStore & {
+    remove: ReturnType<typeof vi.fn>
+    calls: string[]
+  } {
+    const calls: string[] = []
+    return {
+      calls,
+      listFolders: vi.fn(async () => Object.keys(files)),
+      listObjects: vi.fn(async (folder: string) => {
+        calls.push(`list ${folder}`)
+        return files[folder] ?? []
+      }),
+      exportsOf: vi.fn(async (householdId: string) => {
+        calls.push(`records ${householdId}`)
+        return records[householdId] ?? []
+      }),
+      remove: vi.fn(async () => {}),
+    } as never
+  }
+
+  it('reads each folder’s rows after listing its files, removes what is no longer downloadable, and reports counts', async () => {
+    const s = store(
+      { [H1]: [zip(H1, E1), zip(H1, E2)], [H_GONE]: [zip(H_GONE, E3)], 'not-a-household': [obj('not-a-household/x.zip', 600)] },
+      { [H1]: [rec(E1, 'ready', 60), rec(E2, 'ready', -5)] },
+    )
+    const report = await runExportSweep(s, NOW)
+    expect(s.calls).toEqual([`list ${H1}`, `records ${H1}`, `list ${H_GONE}`, `records ${H_GONE}`])
+    expect(s.remove).toHaveBeenCalledWith([`${H1}/${E2}.zip`])
+    expect(s.remove).toHaveBeenCalledWith([`${H_GONE}/${E3}.zip`])
+    expect(report).toEqual({ scanned: 3, kept: 1, removedExpired: 1, removedUnrecorded: 1, skipped: 1, failed: 0 })
+  })
+
+  it('counts a failed removal and carries on', async () => {
+    const s = store({ [H_GONE]: [zip(H_GONE, E1)], [H1]: [zip(H1, E2)] }, {})
+    s.remove.mockRejectedValueOnce(new Error('storage down'))
+    const report = await runExportSweep(s, NOW)
+    expect(report).toMatchObject({ failed: 1, removedUnrecorded: 1 })
   })
 })
