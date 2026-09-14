@@ -4,7 +4,7 @@ import { DEFAULT_SECTION_ID, findSection, SETTINGS_SECTIONS } from './settingsNa
 describe('settingsNav', () => {
   it('lists every Settings section in order', () => {
     expect(SETTINGS_SECTIONS.map((s) => s.label)).toEqual([
-      'Household', 'Children', 'Routines', 'Medicines', 'Stickers', 'Sitter info', 'Logs', 'Inbox',
+      'Household', 'Children', 'Routines', 'Medicines', 'Stickers', 'Sitter info', 'Photos', 'Logs', 'Inbox',
       'My account', 'Members', 'Displays', 'Delete household', 'About',
     ])
   })

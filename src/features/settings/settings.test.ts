@@ -209,7 +209,7 @@ describe('SettingsShell', () => {
     expect(w.find('h1').text()).toBe('Settings')
     expect(w.find('[data-testid="settings-adult"]').text()).toContain('Sam')
     const links = w.findAll('nav[aria-label="Settings sections"] a')
-    expect(links).toHaveLength(13)
+    expect(links).toHaveLength(14)
     expect(links[0]!.attributes('aria-current')).toBe('page')
     expect(w.findAll('nav a').filter((a) => a.text().includes('Requires owner sign-in')).map((a) => a.text().replace('Requires owner sign-in', '').trim())).toEqual([
       'Members', 'Displays', 'Delete household',

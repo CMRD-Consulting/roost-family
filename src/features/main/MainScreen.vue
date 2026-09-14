@@ -233,7 +233,14 @@ const SETTINGS_BUTTON = {
 <template>
   <!-- Focusable so a closing sheet whose opener has gone can return focus here. -->
   <main tabindex="-1" class="relative h-dvh overflow-hidden bg-app text-ink outline-none">
-    <NightScreen v-if="model && modes.nightActive" :clock="model.clock" :date="model.dateLabel" @peek="modes.peek()" />
+    <NightScreen
+      v-if="model && modes.nightActive"
+      :clock="model.clock"
+      :date="model.dateLabel"
+      :photos="store.view?.photos"
+      :time-zone="store.view?.household.timeZone"
+      @peek="modes.peek()"
+    />
 
     <!-- Rows: header, zones, the undo toast's own fixed-height row (so it never covers the medicine zone
          or a dose alert), and the log row. -->

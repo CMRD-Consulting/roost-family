@@ -5,6 +5,7 @@ export type SettingsSectionId =
   | 'medicines'
   | 'stickers'
   | 'sitter-info'
+  | 'photos'
   | 'logs'
   | 'inbox'
   | 'my-account'
@@ -28,6 +29,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
   { id: 'medicines', label: 'Medicines', ownerSignIn: false },
   { id: 'stickers', label: 'Stickers', ownerSignIn: false },
   { id: 'sitter-info', label: 'Sitter info', ownerSignIn: false },
+  { id: 'photos', label: 'Photos', ownerSignIn: false },
   { id: 'logs', label: 'Logs', ownerSignIn: false },
   { id: 'inbox', label: 'Inbox', ownerSignIn: false },
   { id: 'my-account', label: 'My account', ownerSignIn: false },

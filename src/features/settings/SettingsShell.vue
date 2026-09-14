@@ -24,6 +24,7 @@ import LogsSection from './sections/LogsSection.vue'
 import MedicinesSection from './sections/MedicinesSection.vue'
 import MembersSection from './sections/MembersSection.vue'
 import MyAccountSection from './sections/MyAccountSection.vue'
+import PhotosSection from './sections/PhotosSection.vue'
 import RoutinesSection from './sections/RoutinesSection.vue'
 import SitterInfoSection from './sections/SitterInfoSection.vue'
 import StickersSection from './sections/StickersSection.vue'
@@ -37,6 +38,7 @@ const SECTION_COMPONENTS: Record<SettingsSectionId, Component> = {
   medicines: MedicinesSection,
   stickers: StickersSection,
   'sitter-info': SitterInfoSection,
+  photos: PhotosSection,
   logs: LogsSection,
   inbox: InboxSection,
   'my-account': MyAccountSection,

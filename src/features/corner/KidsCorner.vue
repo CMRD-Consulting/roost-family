@@ -164,7 +164,14 @@ useNightPeekTaps()
 
 <template>
   <main tabindex="-1" class="relative h-dvh overflow-hidden bg-corner text-ink-2 outline-none">
-    <NightScreen v-if="view && modes.nightActive" :clock="nightClock" :date="nightDate" @peek="modes.peek()" />
+    <NightScreen
+      v-if="view && modes.nightActive"
+      :clock="nightClock"
+      :date="nightDate"
+      :photos="view.photos"
+      :time-zone="view.household.timeZone"
+      @peek="modes.peek()"
+    />
 
     <template v-else-if="view">
       <section
