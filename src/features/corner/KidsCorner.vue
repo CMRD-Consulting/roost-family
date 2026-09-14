@@ -5,8 +5,9 @@
  * the PIN can't be checked (no connection) a second 2 s hold on an adults-only confirm lets the tablet out.
  * Night and Nap Mode apply here as on the main screen (§7.7).
  */
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { useAppUpdatesStore } from '@/app/appUpdates'
 import { useNow } from '@/composables/useNow'
 import { LogWriteError } from '@/data/logWriter'
 import { formatClock } from '@/domain/time'
@@ -41,6 +42,11 @@ const modes = useModesStore()
 const tick = useNow(15_000)
 const { unreachable } = useHouseholdSession()
 const timer = useVisualTimer()
+
+// A waiting app update must never reload the tablet mid-countdown (spec §5.8).
+const appUpdates = useAppUpdatesStore()
+watch(() => timer.phase.value === 'running', (running) => appUpdates.setTimerRunning(running), { immediate: true })
+onBeforeUnmount(() => appUpdates.setTimerRunning(false))
 
 /** Like the main screen: read the clock when the view changes too, so a step finished "now" counts now. */
 const now = computed(() => new Date(Math.max(tick.value.getTime(), Date.now())))

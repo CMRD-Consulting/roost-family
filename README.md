@@ -32,12 +32,23 @@ pnpm dev               # http://localhost:5173
 - `VITE_DATA_SOURCE=demo` in `.env.local` selects the built-in demo household data source
   (`src/data/demo/`) instead of Supabase for household data.
 
+## Installable app and updates
+
+- `vite-plugin-pwa` builds `dist/sw.js` (precaches every built asset, including the Outfit fonts; Supabase
+  API responses are never cached) and `dist/manifest.webmanifest`. There is no service worker in `pnpm dev`.
+- Icons in `public/` (`pwa-192x192.png`, `pwa-512x512.png`, `maskable-icon-512x512.png`,
+  `apple-touch-icon-180x180.png`, `favicon.ico`) are generated from `public/logo.svg` with `pnpm icons`
+  (config: `pwa-assets.config.ts`).
+- A new version waits and is applied only at a safe moment (spec §5.8, `src/app/appUpdates.ts`): during
+  Night Mode, or after 5 minutes without a touch outside Kids' Corner, never while a visual timer runs.
+
 ## Commands
 
 | Command | What it does |
 |---|---|
 | `pnpm test` | Vitest unit tests |
 | `pnpm typecheck` | vue-tsc |
-| `pnpm build` | typecheck + production build |
+| `pnpm build` | typecheck + production build (with service worker) |
+| `pnpm icons` | regenerate the app icons from `public/logo.svg` |
 | `pnpm db:reset` | re-apply migrations and seed |
 | `pnpm db:types` | regenerate `src/data/database.types.ts` |

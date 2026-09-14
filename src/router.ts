@@ -1,4 +1,7 @@
 import { createRouter, createWebHistory, type RouteLocationNormalized } from 'vue-router'
+import { recoverFromChunkError } from '@/app/appUpdates'
+import KidsCorner from '@/features/corner/KidsCorner.vue'
+import MainScreen from '@/features/main/MainScreen.vue'
 import { useDisplayStore, type DisplayStoreKind, type DisplayStoreState } from '@/session/displayStore'
 
 declare module 'vue-router' {
@@ -22,8 +25,10 @@ export const router = createRouter({
     { path: '/join', component: () => import('@/features/setup/JoinWizard.vue'), meta: { requires: 'unregistered' } },
     { path: '/removed', component: () => import('@/features/display/DisplayRemoved.vue'), meta: { requires: 'revoked' } },
     { path: '/offline', component: () => import('@/features/display/DisplayOffline.vue'), meta: { requires: 'offline' } },
-    { path: '/home', component: () => import('@/features/main/MainScreen.vue'), meta: { requires: 'registered' } },
-    { path: '/corner', component: () => import('@/features/corner/KidsCorner.vue'), meta: { requires: 'registered' } },
+    // The household screens are bundled eagerly, not lazily: a registered tablet must reach them with no
+    // network even if its service worker precache were missing (spec §13).
+    { path: '/home', component: MainScreen, meta: { requires: 'registered' } },
+    { path: '/corner', component: KidsCorner, meta: { requires: 'registered' } },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
 })
@@ -52,4 +57,9 @@ router.beforeEach(async (to) => {
     state = { kind: 'offline' }
   }
   return resolveDisplayRoute(to, state, store.lastKnown?.kind ?? null)
+})
+
+// A lazy route chunk that fails to load (stale build after a deploy, or no network) reloads to /home once.
+router.onError((error) => {
+  recoverFromChunkError(error, window.sessionStorage, (url) => window.location.assign(url))
 })
