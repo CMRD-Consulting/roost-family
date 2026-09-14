@@ -12,7 +12,7 @@ import {
   withoutCalendarStatus,
 } from './manageModel'
 
-const ATTEMPT = 'Abc_def-0123456789xyz'
+const ATTEMPT = 'Abc_def-0123456789xyzAbc_def-0123456789xyzA' // 43 characters
 
 const row = (membershipId: string) => ({
   membershipId, householdId: `h-${membershipId}`, householdName: 'Rivera', timeZone: 'UTC', role: 'owner' as const, displayName: 'Sam', color: '#653437',
@@ -71,6 +71,7 @@ describe('pending OAuth attempts', () => {
     expect(calendarFinishRetryable(new CalendarError('invalid_attempt'))).toBe(false)
     expect(calendarFinishRetryable(new CalendarError('forbidden'))).toBe(true)
     expect(calendarFinishRetryable(new CalendarError('network'))).toBe(true)
+    expect(calendarFinishRetryable(new CalendarError('invalid_request'))).toBe(false)
   })
 })
 

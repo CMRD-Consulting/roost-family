@@ -10,14 +10,15 @@ export interface CalendarStatus {
 }
 
 export const CALENDAR_PENDING_MESSAGE = 'Finishing connecting your calendar…'
-/** An OAuth attempt token as the callback sends it: URL-safe characters only. Anything else is ignored. */
-const ATTEMPT_RE = /^[A-Za-z0-9_-]{16,256}$/
+/** An OAuth attempt token as the callback sends it (32 random bytes, base64url). Anything else is ignored. */
+const ATTEMPT_RE = /^[A-Za-z0-9_-]{43}$/
 
 /** Reasons the calendar OAuth callback may send back, in the adult's words. Anything else gets the generic line. */
 const CALENDAR_ERROR_REASONS: Record<string, string> = {
   access_denied: 'access wasn’t allowed.',
   denied: 'access wasn’t allowed.',
   not_configured: 'that calendar provider isn’t set up yet.',
+  expired: 'the connection took too long. Try again.',
   expired_state: 'the connection took too long. Try again.',
   invalid_state: 'the connection took too long. Try again.',
 }
@@ -87,7 +88,7 @@ export function calendarFinishMessage(error: unknown): string {
 /** Whether a failed finish is worth trying again with the same attempt (the attempt itself may still be good). */
 export function calendarFinishRetryable(error: unknown): boolean {
   const code = error instanceof CalendarError ? error.code : null
-  return code !== 'expired' && code !== 'invalid_attempt'
+  return code === 'forbidden' || code === 'network' || code === 'internal'
 }
 
 /** Which household to open at once: the one kept from before if still there, else the only one, else none (pick). */

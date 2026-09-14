@@ -445,7 +445,7 @@ describe('calendar status from the connection callback', () => {
 })
 
 describe('finishing a Google or Microsoft connection', () => {
-  const ATTEMPT = 'attempt_0123456789-abcdef'
+  const ATTEMPT = 'attempt_0123456789-abcdefattempt_0123456789' // 43 characters
 
   it('keeps the attempt through sign-in, finishes it, cleans the URL and reloads the calendar list', async () => {
     const w = await mountPage(`/manage?calendar=pending&attempt=${ATTEMPT}`)
