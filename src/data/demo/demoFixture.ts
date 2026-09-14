@@ -1,4 +1,5 @@
 import { personColor } from '@/ui/personPalette'
+import { householdDate } from '@/domain/time'
 import type { Medicine, Routine, RoutineStep } from '@/domain/types'
 import type { HouseholdSnapshot, Member, SnapshotChild } from '../snapshot'
 
@@ -21,6 +22,8 @@ export function buildDemoSnapshot(now: Date, options: DemoOptions = {}): Househo
   const ago = (ms: number) => new Date(now.getTime() - ms).toISOString()
 
   const householdId = 'aaaaaaaa-0000-0000-0000-000000000001'
+  const timeZone = 'America/New_York'
+  const today = householdDate(now, timeZone)
 
   const sam: Member = {
     id: 'bbbbbbbb-0000-0000-0000-000000000001',
@@ -201,7 +204,7 @@ export function buildDemoSnapshot(now: Date, options: DemoOptions = {}): Househo
   const routines: Routine[] = [homeDay, weekend]
 
   const routineProgress: HouseholdSnapshot['routineProgress'] = [
-    { childId: ivy.id, routineId: homeDay.id, day: '2026-09-14', completed: [0, 1, 2] },
+    { childId: ivy.id, routineId: homeDay.id, day: today, completed: [0, 1, 2] },
   ]
 
   const jots: HouseholdSnapshot['jots'] = [
@@ -217,7 +220,7 @@ export function buildDemoSnapshot(now: Date, options: DemoOptions = {}): Househo
     household: {
       id: householdId,
       name: 'Rivera',
-      timeZone: 'America/New_York',
+      timeZone,
       defaultNightSleep: { start: '18:00', end: '05:00' },
       nightMode: { start: '20:00', end: '06:00' },
       leaveByBufferMin: 20,

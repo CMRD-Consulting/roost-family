@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { sleepStatus } from '@/domain/sleep'
 import { unacknowledgedConflicts } from '@/domain/medicine'
+import { householdDate } from '@/domain/time'
 import { PERSON_COLORS } from '@/ui/personPalette'
 import { buildDemoSnapshot } from './demoFixture'
 
@@ -107,8 +108,18 @@ describe('buildDemoSnapshot', () => {
     const ivy = s.children.find((c) => c.name === 'Ivy')!
     const homeDay = s.routines.find((r) => r.childId === ivy.id && r.name === 'Home day')!
     const progress = s.routineProgress.find((p) => p.childId === ivy.id && p.routineId === homeDay.id)
-    expect(progress?.day).toBe('2026-09-14')
+    expect(progress?.day).toBe(householdDate(now, s.household.timeZone))
     expect(progress?.completed).toEqual([0, 1, 2])
+  })
+
+  it('routine progress day tracks a different `now`, not a fixed date', () => {
+    const laterNow = new Date('2026-12-25T19:00:00Z')
+    const s = buildDemoSnapshot(laterNow)
+    const ivy = s.children.find((c) => c.name === 'Ivy')!
+    const homeDay = s.routines.find((r) => r.childId === ivy.id && r.name === 'Home day')!
+    const progress = s.routineProgress.find((p) => p.childId === ivy.id && p.routineId === homeDay.id)
+    expect(progress?.day).toBe(householdDate(laterNow, s.household.timeZone))
+    expect(progress?.day).toBe('2026-12-25')
   })
 
   it('has sticker categories Potty/Teeth/Tried a new food and an Ivy potty sticker 1h ago', () => {
