@@ -33,19 +33,19 @@ defineProps<{ card: KidCardModel }>()
     <p v-if="card.feeding" class="truncate text-[20px] text-ink-2">{{ card.feeding }}</p>
 
     <div v-if="card.nowNext && (card.nowNext.now || card.nowNext.next)" class="mt-1 flex min-w-0 items-stretch gap-2">
-      <div v-if="card.nowNext.now" class="flex min-w-0 flex-1 items-center gap-2 rounded-[var(--radius-control)] bg-surface-2 px-3 py-2">
-        <RoutineIcon :icon-key="card.nowNext.now.iconKey" :size="40" class="text-ink-2 max-[1099px]:hidden" />
-        <div class="flex min-w-0 flex-col">
+      <div v-if="card.nowNext.now" class="flex min-w-0 flex-1 flex-col gap-1 rounded-[var(--radius-control)] bg-surface-2 px-3 py-2">
+        <div class="flex items-center gap-2">
+          <RoutineIcon :icon-key="card.nowNext.now.iconKey" :size="28" class="shrink-0 text-ink-2" />
           <span class="text-[16px] font-semibold uppercase tracking-[0.08em] text-ink-3">Now</span>
-          <span class="text-[22px] font-semibold leading-tight break-words hyphens-auto">{{ card.nowNext.now.label }}</span>
         </div>
+        <span class="text-[22px] font-semibold leading-tight [overflow-wrap:normal] [hyphens:none]">{{ card.nowNext.now.label }}</span>
       </div>
-      <div v-if="card.nowNext.next" class="flex min-w-0 flex-1 items-center gap-2 rounded-[var(--radius-control)] border-2 border-surface-2 px-3 py-2">
-        <RoutineIcon :icon-key="card.nowNext.next.iconKey" :size="40" class="text-ink-3 max-[1099px]:hidden" />
-        <div class="flex min-w-0 flex-col">
+      <div v-if="card.nowNext.next" class="flex min-w-0 flex-1 flex-col gap-1 rounded-[var(--radius-control)] border-2 border-surface-2 px-3 py-2">
+        <div class="flex items-center gap-2">
+          <RoutineIcon :icon-key="card.nowNext.next.iconKey" :size="28" class="shrink-0 text-ink-3" />
           <span class="text-[16px] font-semibold uppercase tracking-[0.08em] text-ink-3">Next</span>
-          <span class="text-[22px] font-medium leading-tight text-ink-2 break-words hyphens-auto">{{ card.nowNext.next.label }}</span>
         </div>
+        <span class="text-[22px] font-medium leading-tight text-ink-2 [overflow-wrap:normal] [hyphens:none]">{{ card.nowNext.next.label }}</span>
       </div>
     </div>
   </article>

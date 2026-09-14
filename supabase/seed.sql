@@ -40,8 +40,8 @@ insert into public.households (id, name, time_zone, zip, dinner_tonight, sitter_
 update public.invite_codes set used_by_household_id = 'aaaaaaaa-0000-0000-0000-000000000001', used_at = now() where code = 'RIVERA';
 
 insert into public.memberships (id, user_id, household_id, role, display_name, color) values
-  ('bbbbbbbb-0000-0000-0000-000000000001', '11111111-1111-1111-1111-111111111111', 'aaaaaaaa-0000-0000-0000-000000000001', 'owner', 'Sam', '#5B6ACF'),
-  ('bbbbbbbb-0000-0000-0000-000000000002', '22222222-2222-2222-2222-222222222222', 'aaaaaaaa-0000-0000-0000-000000000001', 'adult', 'Alex', '#2F86A6');
+  ('bbbbbbbb-0000-0000-0000-000000000001', '11111111-1111-1111-1111-111111111111', 'aaaaaaaa-0000-0000-0000-000000000001', 'owner', 'Sam', '#2A2A98'),
+  ('bbbbbbbb-0000-0000-0000-000000000002', '22222222-2222-2222-2222-222222222222', 'aaaaaaaa-0000-0000-0000-000000000001', 'adult', 'Alex', '#2C7F8C');
 
 insert into public.member_pins (membership_id, pin_hash) values
   ('bbbbbbbb-0000-0000-0000-000000000001', extensions.crypt('1234', extensions.gen_salt('bf', 8))),
@@ -49,8 +49,8 @@ insert into public.member_pins (membership_id, pin_hash) values
 
 -- Children
 insert into public.children (id, name, birthday, color, allergies, food_rules, night_sleep_start, night_sleep_end, sort_order) values
-  ('cccccccc-0000-0000-0000-000000000001', 'Ivy', '2023-04-10', '#C2477A', 'None', 'No juice after 4 PM', '19:00', '06:00', 0),
-  ('cccccccc-0000-0000-0000-000000000002', 'Theo', '2025-06-02', '#8A56AC', 'Peanuts', 'Whole milk only', null, null, 1);
+  ('cccccccc-0000-0000-0000-000000000001', 'Ivy', '2023-04-10', '#982A5D', 'None', 'No juice after 4 PM', '19:00', '06:00', 0),
+  ('cccccccc-0000-0000-0000-000000000002', 'Theo', '2025-06-02', '#275F90', 'Peanuts', 'Whole milk only', null, null, 1);
 insert into public.child_households (child_id, household_id) values
   ('cccccccc-0000-0000-0000-000000000001', 'aaaaaaaa-0000-0000-0000-000000000001'),
   ('cccccccc-0000-0000-0000-000000000002', 'aaaaaaaa-0000-0000-0000-000000000001');
