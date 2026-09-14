@@ -56,3 +56,18 @@ export function oauthClient(provider: 'google' | 'microsoft'): { clientId: strin
   const clientSecret = Deno.env.get(`${prefix}_CLIENT_SECRET`)?.trim()
   return clientId && clientSecret ? { clientId, clientSecret } : null
 }
+
+/**
+ * The OAuth redirect URI registered with Google and Microsoft: `CALENDAR_OAUTH_REDIRECT_URI` when set (needed locally,
+ * where SUPABASE_URL inside the runtime is not the browser-facing URL), else `${SUPABASE_URL}/functions/v1/calendar-oauth-callback`.
+ */
+export const oauthRedirectUri =
+  Deno.env.get('CALENDAR_OAUTH_REDIRECT_URI')?.trim() || `${SUPABASE_URL.replace(/\/+$/, '')}/functions/v1/calendar-oauth-callback`
+
+/** Where the OAuth callback sends the browser back to: `APP_URL` (default http://localhost:5173), without a trailing slash. */
+export const appUrl = (() => {
+  const raw = Deno.env.get('APP_URL')?.trim() || 'http://localhost:5173'
+  const url = new URL(raw)
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new Error('APP_URL must be an http(s) URL')
+  return `${url.origin}${url.pathname}`.replace(/\/+$/, '')
+})()

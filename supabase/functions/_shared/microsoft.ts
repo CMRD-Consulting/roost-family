@@ -9,6 +9,7 @@
 import {
   CalendarProviderError,
   MAX_PAGES,
+  exchangeAuthorizationCode,
   connectionLevel,
   dateTimeToUtcMs,
   dateToUtcMs,
@@ -19,6 +20,9 @@ import {
   requestJson,
   stringOrNull,
   type AccessToken,
+  type AuthUrlInput,
+  type CodeExchangeInput,
+  type CodeExchangeResult,
   type FetchLike,
   type OAuthClientCredentials,
   type ProviderCalendar,
@@ -29,6 +33,9 @@ import { cleanLocation, cleanTitle, type DayWindow, type SourceEvent } from './e
 export const MICROSOFT_TOKEN_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/token'
 export const MICROSOFT_GRAPH_API = 'https://graph.microsoft.com/v1.0'
 export const MICROSOFT_SCOPES = 'offline_access Calendars.Read'
+export const MICROSOFT_AUTH_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize'
+/** Consent scopes: the calendar scopes plus `openid email`, so the connection can be labelled with the account's email. */
+export const MICROSOFT_OAUTH_SCOPES = `openid email ${MICROSOFT_SCOPES}`
 
 const DAY_MS = 86_400_000
 
@@ -187,4 +194,34 @@ export async function listMicrosoftEventsForDay(
     url = mapped.nextLink ? assertGraphLink(mapped.nextLink) : null
   }
   return events
+}
+
+// ---- Connecting an account (authorization code + PKCE) ----
+
+/** The consent URL (tenant `common`: work, school and personal Microsoft accounts). */
+export function buildMicrosoftAuthUrl({ clientId, redirectUri, state, codeChallenge }: AuthUrlInput): string {
+  const params = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    response_type: 'code',
+    response_mode: 'query',
+    scope: MICROSOFT_OAUTH_SCOPES,
+    state,
+    code_challenge: codeChallenge,
+    code_challenge_method: 'S256',
+  })
+  return `${MICROSOFT_AUTH_URL}?${params}`
+}
+
+export function exchangeMicrosoftCode(fetch: FetchLike, input: CodeExchangeInput, now: Date): Promise<CodeExchangeResult> {
+  const form = new URLSearchParams({
+    grant_type: 'authorization_code',
+    client_id: input.clientId,
+    client_secret: input.clientSecret,
+    code: input.code,
+    code_verifier: input.codeVerifier,
+    redirect_uri: input.redirectUri,
+    scope: MICROSOFT_OAUTH_SCOPES,
+  })
+  return exchangeAuthorizationCode(fetch, MICROSOFT_TOKEN_URL, form, now, classifyMicrosoftError)
 }

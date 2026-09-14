@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { CalendarProviderError } from './calendarProvider'
 import { householdDayWindow } from './events'
 import {
+  buildMicrosoftAuthUrl,
   classifyMicrosoftError,
+  exchangeMicrosoftCode,
   listMicrosoftCalendars,
   listMicrosoftEventsForDay,
   mapMicrosoftCalendars,
@@ -262,5 +264,51 @@ describe('Microsoft network paths (injected fetch)', () => {
       TZ,
     ).catch((e: CalendarProviderError) => e.status)
     expect(status).toBe('auth_expired')
+  })
+})
+
+function idToken(claims: Record<string, unknown>): string {
+  const b64 = (v: unknown) => btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(v)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+  return `${b64({ alg: 'RS256' })}.${b64(claims)}.signature`
+}
+
+describe('Microsoft account connection (authorization code + PKCE)', () => {
+  it('builds the consent URL for the common tenant with offline access and the S256 challenge', () => {
+    const url = new URL(buildMicrosoftAuthUrl({ clientId: 'cid', redirectUri: 'https://x.test/cb', state: 'st', codeChallenge: 'ch' }))
+    expect(`${url.origin}${url.pathname}`).toBe('https://login.microsoftonline.com/common/oauth2/v2.0/authorize')
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      client_id: 'cid',
+      redirect_uri: 'https://x.test/cb',
+      response_type: 'code',
+      response_mode: 'query',
+      scope: 'openid email offline_access Calendars.Read',
+      state: 'st',
+      code_challenge: 'ch',
+      code_challenge_method: 'S256',
+    })
+  })
+
+  it('exchanges the code with the verifier and scopes, reading the refresh token and the username as email', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = []
+    const result = await exchangeMicrosoftCode(
+      async (url, init) => {
+        calls.push({ url, init })
+        return jsonResponse(200, { access_token: 'at', expires_in: 3600, refresh_token: 'rt', id_token: idToken({ preferred_username: 'alex@contoso.com' }) })
+      },
+      { clientId: 'cid', clientSecret: 'cs', code: 'code-1', codeVerifier: 'v'.repeat(43), redirectUri: 'https://x.test/cb' },
+      NOW,
+    )
+    expect(result.token.refreshToken).toBe('rt')
+    expect(result.email).toBe('alex@contoso.com')
+    expect(calls[0]!.url).toBe('https://login.microsoftonline.com/common/oauth2/v2.0/token')
+    expect(Object.fromEntries(new URLSearchParams(String(calls[0]!.init!.body)))).toEqual({
+      grant_type: 'authorization_code',
+      client_id: 'cid',
+      client_secret: 'cs',
+      code: 'code-1',
+      code_verifier: 'v'.repeat(43),
+      redirect_uri: 'https://x.test/cb',
+      scope: 'openid email offline_access Calendars.Read',
+    })
   })
 })

@@ -159,3 +159,80 @@ export function dateTimeToUtcMs(value: unknown, zone: unknown): number {
     timeZone,
   ).getTime()
 }
+
+// ---- Authorization code flow (connecting an account) ----
+
+/** What the code exchange yields: tokens, and the account's email when the ID token carries one (used as a label). */
+export interface CodeExchangeResult {
+  token: AccessToken
+  email: string | null
+}
+
+/** Inputs for the provider's authorization URL (PKCE S256). */
+export interface AuthUrlInput {
+  clientId: string
+  redirectUri: string
+  state: string
+  codeChallenge: string
+}
+
+export interface CodeExchangeInput {
+  clientId: string
+  clientSecret: string
+  code: string
+  codeVerifier: string
+  redirectUri: string
+}
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+$/
+
+/**
+ * The account email from an OpenID Connect ID token (`email`, else an email-shaped `preferred_username`), or null.
+ * The token came straight from the provider's token endpoint over TLS, so its signature is not verified (OIDC Core
+ * §3.1.3.7 allows this for the code flow); it is only ever used as a display label.
+ */
+export function emailFromIdToken(idToken: unknown): string | null {
+  if (typeof idToken !== 'string') return null
+  const payload = idToken.split('.')[1]
+  if (!payload || payload.length > 16_000) return null
+  try {
+    const base64 = payload.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(payload.length / 4) * 4, '=')
+    const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0))
+    const claims: unknown = JSON.parse(new TextDecoder().decode(bytes))
+    if (!isRecord(claims)) return null
+    for (const candidate of [claims.email, claims.preferred_username]) {
+      if (typeof candidate === 'string' && EMAIL_RE.test(candidate.trim()) && candidate.trim().length <= 200) return candidate.trim()
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+/** POSTs an authorization-code grant and reads the tokens. Throws `CalendarProviderError`; messages never hold tokens. */
+export async function exchangeAuthorizationCode(
+  fetch: FetchLike,
+  tokenUrl: string,
+  form: URLSearchParams,
+  now: Date,
+  classify: Classifier,
+): Promise<CodeExchangeResult> {
+  let res: Response
+  try {
+    res = await fetch(tokenUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+      body: form.toString(),
+    })
+  } catch (e) {
+    throw new CalendarProviderError('unreachable', `token request failed: ${e instanceof Error ? e.name : 'error'}`)
+  }
+  let body: unknown
+  try {
+    body = await res.json()
+  } catch {
+    body = null
+  }
+  const token = parseTokenResponse(res.status, body, now, classify)
+  return { token, email: isRecord(body) ? emailFromIdToken(body.id_token) : null }
+}

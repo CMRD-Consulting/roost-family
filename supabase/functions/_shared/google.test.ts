@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { CalendarProviderError } from './calendarProvider'
+import { CalendarProviderError, emailFromIdToken } from './calendarProvider'
 import { householdDayWindow } from './events'
 import {
+  buildGoogleAuthUrl,
   classifyGoogleError,
+  exchangeGoogleCode,
   listGoogleCalendars,
   listGoogleEventsForDay,
   mapGoogleCalendarList,
@@ -332,3 +334,70 @@ function catchStatus(run: () => unknown): string | undefined {
     return (e as CalendarProviderError).status
   }
 }
+
+function idToken(claims: Record<string, unknown>): string {
+  const b64 = (v: unknown) => btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(v)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+  return `${b64({ alg: 'RS256' })}.${b64(claims)}.signature`
+}
+
+describe('Google account connection (authorization code + PKCE)', () => {
+  it('builds the consent URL with offline access, forced consent, the read-only scope and the S256 challenge', () => {
+    const url = new URL(buildGoogleAuthUrl({ clientId: 'cid', redirectUri: 'https://x.test/functions/v1/calendar-oauth-callback', state: 'st', codeChallenge: 'ch' }))
+    expect(`${url.origin}${url.pathname}`).toBe('https://accounts.google.com/o/oauth2/v2/auth')
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      client_id: 'cid',
+      redirect_uri: 'https://x.test/functions/v1/calendar-oauth-callback',
+      response_type: 'code',
+      scope: 'openid email https://www.googleapis.com/auth/calendar.readonly',
+      access_type: 'offline',
+      prompt: 'consent',
+      state: 'st',
+      code_challenge: 'ch',
+      code_challenge_method: 'S256',
+    })
+  })
+
+  it('exchanges the code with the verifier and reads the refresh token and email', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = []
+    const result = await exchangeGoogleCode(
+      async (url, init) => {
+        calls.push({ url, init })
+        return jsonResponse(200, { access_token: 'at', expires_in: 3599, refresh_token: 'rt', id_token: idToken({ email: 'sam@example.com' }) })
+      },
+      { clientId: 'cid', clientSecret: 'cs', code: 'code-1', codeVerifier: 'v'.repeat(43), redirectUri: 'https://x.test/cb' },
+      NOW,
+    )
+    expect(result).toEqual({ token: { accessToken: 'at', expiresAt: new Date(NOW.getTime() + 3599_000), refreshToken: 'rt' }, email: 'sam@example.com' })
+    expect(calls[0]!.url).toBe('https://oauth2.googleapis.com/token')
+    expect(Object.fromEntries(new URLSearchParams(String(calls[0]!.init!.body)))).toEqual({
+      grant_type: 'authorization_code',
+      client_id: 'cid',
+      client_secret: 'cs',
+      code: 'code-1',
+      code_verifier: 'v'.repeat(43),
+      redirect_uri: 'https://x.test/cb',
+    })
+  })
+
+  it('reports a rejected code as auth_expired and a network failure as unreachable', async () => {
+    const input = { clientId: 'c', clientSecret: 's', code: 'bad', codeVerifier: 'v'.repeat(43), redirectUri: 'https://x.test/cb' }
+    await expect(exchangeGoogleCode(async () => jsonResponse(400, { error: 'invalid_grant' }), input, NOW).catch((e: CalendarProviderError) => e.status)).resolves.toBe('auth_expired')
+    await expect(exchangeGoogleCode(async () => { throw new TypeError('x') }, input, NOW).catch((e: CalendarProviderError) => e.status)).resolves.toBe('unreachable')
+  })
+})
+
+describe('emailFromIdToken', () => {
+  it('reads email, else an email-shaped preferred_username', () => {
+    expect(emailFromIdToken(idToken({ email: 'sam@example.com', preferred_username: 'other@example.com' }))).toBe('sam@example.com')
+    expect(emailFromIdToken(idToken({ preferred_username: 'alex@contoso.com' }))).toBe('alex@contoso.com')
+    expect(emailFromIdToken(idToken({ email: 'Zoë@exämple.com' }))).toBe('Zoë@exämple.com')
+  })
+
+  it('returns null for anything else', () => {
+    expect(emailFromIdToken(idToken({ preferred_username: 'not-an-email' }))).toBeNull()
+    expect(emailFromIdToken(idToken({ email: `${'a'.repeat(200)}@example.com` }))).toBeNull()
+    expect(emailFromIdToken('garbage')).toBeNull()
+    expect(emailFromIdToken('a.!!!.c')).toBeNull()
+    expect(emailFromIdToken(undefined)).toBeNull()
+  })
+})

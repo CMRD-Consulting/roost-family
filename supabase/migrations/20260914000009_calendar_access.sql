@@ -230,3 +230,141 @@ end $$;
 
 revoke execute on function public.my_calendar_caller(uuid), public.my_calendar_membership(uuid) from public, anon;
 grant execute on function public.my_calendar_caller(uuid), public.my_calendar_membership(uuid) to authenticated;
+
+-- ═══ Calendar OAuth states (spec §5.5, §6.3) ═══
+-- calendar-oauth-start stores one row per Google / Microsoft consent attempt: the SHA-256 (hex) of the random `state`
+-- sent to the provider (never the state itself), the PKCE code verifier, who is connecting and which page to return
+-- to. calendar-oauth-callback consumes it atomically: the row is deleted on first use, and one past its 10-minute
+-- expiry is refused. Clients have no access at all; only the service-role wrappers touch the table. Expired rows are
+-- removed whenever a state is created and by the daily household purge.
+
+create table public.calendar_oauth_states (
+  id uuid primary key default gen_random_uuid(),
+  state_hash text not null unique check (state_hash ~ '^[0-9a-f]{64}$'),
+  code_verifier text not null check (code_verifier ~ '^[A-Za-z0-9._~-]{43,128}$'),
+  household_id uuid not null references public.households (id) on delete cascade,
+  membership_id uuid not null,
+  provider text not null check (provider in ('google', 'microsoft')),
+  redirect_to text not null check (redirect_to in ('settings', 'manage')),
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null default now() + interval '10 minutes',
+  foreign key (membership_id, household_id) references public.memberships (id, household_id) on delete cascade
+);
+create index on public.calendar_oauth_states (household_id);
+create index on public.calendar_oauth_states (membership_id);
+create index on public.calendar_oauth_states (expires_at);
+
+alter table public.calendar_oauth_states enable row level security;
+revoke all on public.calendar_oauth_states from anon, authenticated, service_role;
+
+-- Deletes expired states; returns how many.
+create function private.purge_calendar_oauth_states() returns int
+language plpgsql security definer set search_path = '' as $$
+declare v_count int;
+begin
+  delete from public.calendar_oauth_states where expires_at <= now();
+  get diagnostics v_count = row_count;
+  return v_count;
+end $$;
+
+-- Records a consent attempt for an active owner or adult of a live household. Returns the state's id.
+create function private.create_calendar_oauth_state(
+  p_state_hash text, p_code_verifier text, p_household_id uuid, p_membership_id uuid, p_provider text, p_redirect_to text
+) returns uuid
+language plpgsql security definer set search_path = '' as $$
+declare v_id uuid;
+begin
+  if not exists (
+    select 1 from public.memberships m
+    join public.households h on h.id = m.household_id and h.deleted_at is null
+    where m.id = p_membership_id and m.household_id = p_household_id
+      and m.role in ('owner', 'adult') and m.left_at is null
+  ) then
+    raise exception 'member not found' using errcode = '42501';
+  end if;
+  if p_provider is null or p_provider not in ('google', 'microsoft') then
+    raise exception 'OAuth provider must be google or microsoft' using errcode = '22023';
+  end if;
+  if p_redirect_to is null or p_redirect_to not in ('settings', 'manage') then
+    raise exception 'return page must be settings or manage' using errcode = '22023';
+  end if;
+  if p_state_hash is null or p_state_hash !~ '^[0-9a-f]{64}$' then
+    raise exception 'state hash must be 64 lowercase hex characters' using errcode = '22023';
+  end if;
+  if p_code_verifier is null or p_code_verifier !~ '^[A-Za-z0-9._~-]{43,128}$' then
+    raise exception 'code verifier must be 43 to 128 unreserved characters' using errcode = '22023';
+  end if;
+
+  perform private.purge_calendar_oauth_states();
+  insert into public.calendar_oauth_states (state_hash, code_verifier, household_id, membership_id, provider, redirect_to)
+  values (p_state_hash, p_code_verifier, p_household_id, p_membership_id, p_provider, p_redirect_to)
+  returning id into v_id;
+  return v_id;
+end $$;
+
+-- Deletes the state with this hash and returns it, with `expired` true when it was already past its expiry (the
+-- caller must refuse it). No row for an unknown or already used state.
+create function private.consume_calendar_oauth_state(p_state_hash text)
+returns table (household_id uuid, membership_id uuid, provider text, code_verifier text, redirect_to text, expired boolean)
+language plpgsql security definer set search_path = '' as $$
+#variable_conflict use_column
+begin
+  return query
+  delete from public.calendar_oauth_states s where s.state_hash = p_state_hash
+  returning s.household_id, s.membership_id, s.provider, s.code_verifier, s.redirect_to, s.expires_at <= now();
+end $$;
+
+create function public.svc_create_calendar_oauth_state(
+  p_state_hash text, p_code_verifier text, p_household_id uuid, p_membership_id uuid, p_provider text, p_redirect_to text
+) returns uuid
+language sql security definer set search_path = '' as $$
+  select private.create_calendar_oauth_state(p_state_hash, p_code_verifier, p_household_id, p_membership_id, p_provider, p_redirect_to)
+$$;
+
+create function public.svc_consume_calendar_oauth_state(p_state_hash text)
+returns table (household_id uuid, membership_id uuid, provider text, code_verifier text, redirect_to text, expired boolean)
+language sql security definer set search_path = '' as $$
+  select * from private.consume_calendar_oauth_state(p_state_hash)
+$$;
+
+-- ─── Purge (replaces migration 7's): also removes expired OAuth states ───
+create or replace function private.purge_deleted_households() returns int
+language plpgsql security definer set search_path = '' as $$
+declare
+  v_count int;
+  v_devices uuid[];
+begin
+  select coalesce(array_agg(distinct d.auth_user_id), '{}') into v_devices
+  from public.displays d
+  join public.households h on h.id = d.household_id
+  join auth.users u on u.id = d.auth_user_id and u.is_anonymous
+  where h.deleted_at is not null and h.deleted_at < now() - interval '30 days';
+
+  -- Photo files stay until the storage sweep finds their household gone and erases them through the Storage API.
+  delete from public.households where deleted_at is not null and deleted_at < now() - interval '30 days';
+  get diagnostics v_count = row_count;
+
+  -- After the households (and so their displays) are gone; a device bound to a display elsewhere is kept.
+  delete from auth.users u
+  where u.id = any (v_devices) and u.is_anonymous
+    and not exists (select 1 from public.displays d where d.auth_user_id = u.id);
+
+  perform private.purge_calendar_oauth_states();
+  return v_count;
+end $$;
+
+revoke execute on function
+  private.purge_calendar_oauth_states(),
+  private.create_calendar_oauth_state(text, text, uuid, uuid, text, text),
+  private.consume_calendar_oauth_state(text),
+  private.purge_deleted_households()
+from public, anon, authenticated, service_role;
+
+revoke execute on function
+  public.svc_create_calendar_oauth_state(text, text, uuid, uuid, text, text),
+  public.svc_consume_calendar_oauth_state(text)
+from public, anon, authenticated;
+grant execute on function
+  public.svc_create_calendar_oauth_state(text, text, uuid, uuid, text, text),
+  public.svc_consume_calendar_oauth_state(text)
+to service_role;

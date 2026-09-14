@@ -8,6 +8,7 @@
 import {
   CalendarProviderError,
   MAX_PAGES,
+  exchangeAuthorizationCode,
   connectionLevel,
   dateTimeToUtcMs,
   dateToUtcMs,
@@ -18,6 +19,9 @@ import {
   requestJson,
   stringOrNull,
   type AccessToken,
+  type AuthUrlInput,
+  type CodeExchangeInput,
+  type CodeExchangeResult,
   type FetchLike,
   type OAuthClientCredentials,
   type ProviderCalendar,
@@ -28,6 +32,12 @@ import { cleanLocation, cleanTitle, type DayWindow, type SourceEvent } from './e
 export const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 export const GOOGLE_CALENDAR_API = 'https://www.googleapis.com/calendar/v3'
 export const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.readonly'
+export const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
+/**
+ * Consent scopes: `calendar.readonly` (the one documented read-only scope covering both calendarList.list and
+ * events.list) plus `openid email`, so the connection can be labelled with the account's email.
+ */
+export const GOOGLE_OAUTH_SCOPES = `openid email ${GOOGLE_CALENDAR_SCOPE}`
 
 const DAY_MS = 86_400_000
 
@@ -217,4 +227,37 @@ export async function listGoogleEventsForDay(
     if (!pageToken) break
   }
   return events
+}
+
+// ---- Connecting an account (authorization code + PKCE) ----
+
+/**
+ * The consent URL. `access_type=offline` asks for a refresh token and `prompt=consent` makes Google issue one even
+ * when the account consented before (otherwise a reconnect would get no refresh token).
+ */
+export function buildGoogleAuthUrl({ clientId, redirectUri, state, codeChallenge }: AuthUrlInput): string {
+  const params = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    response_type: 'code',
+    scope: GOOGLE_OAUTH_SCOPES,
+    access_type: 'offline',
+    prompt: 'consent',
+    state,
+    code_challenge: codeChallenge,
+    code_challenge_method: 'S256',
+  })
+  return `${GOOGLE_AUTH_URL}?${params}`
+}
+
+export function exchangeGoogleCode(fetch: FetchLike, input: CodeExchangeInput, now: Date): Promise<CodeExchangeResult> {
+  const form = new URLSearchParams({
+    grant_type: 'authorization_code',
+    client_id: input.clientId,
+    client_secret: input.clientSecret,
+    code: input.code,
+    code_verifier: input.codeVerifier,
+    redirect_uri: input.redirectUri,
+  })
+  return exchangeAuthorizationCode(fetch, GOOGLE_TOKEN_URL, form, now, classifyGoogleError)
 }

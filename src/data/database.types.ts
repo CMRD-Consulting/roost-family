@@ -100,6 +100,57 @@ export type Database = {
           },
         ]
       }
+      calendar_oauth_states: {
+        Row: {
+          code_verifier: string
+          created_at: string
+          expires_at: string
+          household_id: string
+          id: string
+          membership_id: string
+          provider: string
+          redirect_to: string
+          state_hash: string
+        }
+        Insert: {
+          code_verifier: string
+          created_at?: string
+          expires_at?: string
+          household_id: string
+          id?: string
+          membership_id: string
+          provider: string
+          redirect_to: string
+          state_hash: string
+        }
+        Update: {
+          code_verifier?: string
+          created_at?: string
+          expires_at?: string
+          household_id?: string
+          id?: string
+          membership_id?: string
+          provider?: string
+          redirect_to?: string
+          state_hash?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "calendar_oauth_states_household_id_fkey"
+            columns: ["household_id"]
+            isOneToOne: false
+            referencedRelation: "households"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "calendar_oauth_states_membership_id_household_id_fkey"
+            columns: ["membership_id", "household_id"]
+            isOneToOne: false
+            referencedRelation: "memberships"
+            referencedColumns: ["id", "household_id"]
+          },
+        ]
+      }
       calendar_selections: {
         Row: {
           assigned_child_id: string | null
@@ -1834,6 +1885,17 @@ export type Database = {
         Args: { p_connection_id: string }
         Returns: string
       }
+      svc_consume_calendar_oauth_state: {
+        Args: { p_state_hash: string }
+        Returns: {
+          code_verifier: string
+          expired: boolean
+          household_id: string
+          membership_id: string
+          provider: string
+          redirect_to: string
+        }[]
+      }
       svc_create_calendar_connection: {
         Args: {
           p_household_id: string
@@ -1841,6 +1903,17 @@ export type Database = {
           p_membership_id: string
           p_provider: string
           p_secret: string
+        }
+        Returns: string
+      }
+      svc_create_calendar_oauth_state: {
+        Args: {
+          p_code_verifier: string
+          p_household_id: string
+          p_membership_id: string
+          p_provider: string
+          p_redirect_to: string
+          p_state_hash: string
         }
         Returns: string
       }

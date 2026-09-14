@@ -1972,14 +1972,14 @@ select pg_temp.expect('anon and authenticated cannot execute any private calenda
     'set_calendar_status', 'set_calendar_selection_gone', 'require_calendar_assignee', 'hide_unassigned_calendar_selection',
     'delete_calendar_vault_secret', 'end_membership')
     and (has_function_privilege('authenticated', p.oid, 'execute') or has_function_privilege('anon', p.oid, 'execute'))));
-select pg_temp.expect('only service_role can execute the 6 svc_ wrappers', (
+select pg_temp.expect('only service_role can execute the 8 svc_ wrappers (6 here, 2 OAuth state wrappers in migration 9)', (
   select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
   where n.nspname = 'public' and p.proname like 'svc\_%'
     and has_function_privilege('service_role', p.oid, 'execute')
     and not has_function_privilege('authenticated', p.oid, 'execute')
-    and not has_function_privilege('anon', p.oid, 'execute')) = 6
+    and not has_function_privilege('anon', p.oid, 'execute')) = 8
   and (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-       where n.nspname = 'public' and p.proname like 'svc\_%') = 6);
+       where n.nspname = 'public' and p.proname like 'svc\_%') = 8);
 select pg_temp.expect('anon cannot execute svc_calendar_secret',
   not has_function_privilege('anon', 'public.svc_calendar_secret(uuid)', 'execute'));
 select pg_temp.expect('PUBLIC cannot execute any calendar function', not exists (
@@ -2360,6 +2360,80 @@ select set_config('request.jwt.claims', :'H', true);
 select pg_temp.expect('a former member is no caller', not exists (select 1 from public.my_calendar_caller(pg_temp.v('household_f'))));
 select pg_temp.expect_error('a former member cannot connect calendars', $q$select public.my_calendar_membership(pg_temp.v('household_f'))$q$, '42501');
 reset role;
+
+\echo '[99] Calendar OAuth states: service role only, hashed, single use, 10-minute expiry, purged'
+select pg_temp.expect('calendar_oauth_states: RLS on, no policies, no client or direct service-role privileges', (
+  select relrowsecurity from pg_class where oid = 'public.calendar_oauth_states'::regclass)
+  and not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'calendar_oauth_states')
+  and not has_table_privilege('anon', 'public.calendar_oauth_states', 'select, insert, update, delete, truncate, references, trigger')
+  and not has_table_privilege('authenticated', 'public.calendar_oauth_states', 'select, insert, update, delete, truncate, references, trigger')
+  and not has_table_privilege('service_role', 'public.calendar_oauth_states', 'select, insert, update, delete, truncate, references, trigger')
+  and not has_any_column_privilege('authenticated', 'public.calendar_oauth_states', 'select'));
+select pg_temp.expect('only service_role can execute the OAuth state wrappers; nobody can execute the private helpers',
+  has_function_privilege('service_role', 'public.svc_create_calendar_oauth_state(text, text, uuid, uuid, text, text)', 'execute')
+  and has_function_privilege('service_role', 'public.svc_consume_calendar_oauth_state(text)', 'execute')
+  and not has_function_privilege('authenticated', 'public.svc_create_calendar_oauth_state(text, text, uuid, uuid, text, text)', 'execute')
+  and not has_function_privilege('authenticated', 'public.svc_consume_calendar_oauth_state(text)', 'execute')
+  and not has_function_privilege('anon', 'public.svc_consume_calendar_oauth_state(text)', 'execute')
+  and not has_function_privilege('anon', 'public.svc_create_calendar_oauth_state(text, text, uuid, uuid, text, text)', 'execute')
+  and not exists (
+    select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'private' and p.proname in ('create_calendar_oauth_state', 'consume_calendar_oauth_state', 'purge_calendar_oauth_states')
+      and (has_function_privilege('anon', p.oid, 'execute') or has_function_privilege('authenticated', p.oid, 'execute')
+           or has_function_privilege('service_role', p.oid, 'execute'))));
+select encode(extensions.digest('state-one', 'sha256'), 'hex') as state_one, encode(extensions.digest('state-two', 'sha256'), 'hex') as state_two,
+       encode(extensions.digest('state-old', 'sha256'), 'hex') as state_old \gset
+select set_config('smoke.state_one', :'state_one', true);
+\set VERIFIER 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk'
+set local role service_role;
+select public.svc_create_calendar_oauth_state(:'state_one', :'VERIFIER', :'household_f', :'membership_f', 'google', 'settings') as oauth_one \gset
+select public.svc_create_calendar_oauth_state(:'state_two', :'VERIFIER', :'household_f', :'membership_f', 'microsoft', 'manage') as oauth_two \gset
+select pg_temp.expect_error('a state for a caregiver',
+  format('select public.svc_create_calendar_oauth_state(%L, %L, %L, %L, %L, %L)', repeat('a', 64), :'VERIFIER', :'household_f', :'membership_g', 'google', 'settings'), '42501');
+select pg_temp.expect_error('a state for a former member',
+  format('select public.svc_create_calendar_oauth_state(%L, %L, %L, %L, %L, %L)', repeat('a', 64), :'VERIFIER', :'household_f', :'membership_h', 'google', 'settings'), '42501');
+select pg_temp.expect_error('a state for another household''s member',
+  format('select public.svc_create_calendar_oauth_state(%L, %L, %L, %L, %L, %L)', repeat('a', 64), :'VERIFIER', :'household_f', :'membership_b', 'google', 'settings'), '42501');
+select pg_temp.expect_error('an unknown provider',
+  format('select public.svc_create_calendar_oauth_state(%L, %L, %L, %L, %L, %L)', repeat('a', 64), :'VERIFIER', :'household_f', :'membership_f', 'ics', 'settings'), '22023');
+select pg_temp.expect_error('an arbitrary return page (no open redirects)',
+  format('select public.svc_create_calendar_oauth_state(%L, %L, %L, %L, %L, %L)', repeat('a', 64), :'VERIFIER', :'household_f', :'membership_f', 'google', 'https://evil.test'), '22023');
+select pg_temp.expect_error('a raw (unhashed) state',
+  format('select public.svc_create_calendar_oauth_state(%L, %L, %L, %L, %L, %L)', 'raw-state', :'VERIFIER', :'household_f', :'membership_f', 'google', 'settings'), '22023');
+select pg_temp.expect_error('a short code verifier',
+  format('select public.svc_create_calendar_oauth_state(%L, %L, %L, %L, %L, %L)', repeat('a', 64), 'short', :'household_f', :'membership_f', 'google', 'settings'), '22023');
+select pg_temp.expect_error('the same state twice',
+  format('select public.svc_create_calendar_oauth_state(%L, %L, %L, %L, %L, %L)', :'state_one', :'VERIFIER', :'household_f', :'membership_f', 'google', 'settings'), '23505');
+select pg_temp.expect('consuming returns the attempt once', (
+  select household_id = pg_temp.v('household_f') and membership_id = pg_temp.v('membership_f') and provider = 'google'
+    and code_verifier = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk' and redirect_to = 'settings' and not expired
+  from public.svc_consume_calendar_oauth_state(pg_temp.v_text('state_one'))));
+select pg_temp.expect('a used state is gone', not exists (select 1 from public.svc_consume_calendar_oauth_state(pg_temp.v_text('state_one'))));
+select pg_temp.expect('an unknown state returns nothing', not exists (select 1 from public.svc_consume_calendar_oauth_state(repeat('0', 64))));
+reset role;
+insert into public.calendar_oauth_states (state_hash, code_verifier, household_id, membership_id, provider, redirect_to, created_at, expires_at)
+values (:'state_old', :'VERIFIER', :'household_f', :'membership_f', 'google', 'manage', now() - interval '11 minutes', now() - interval '1 minute');
+select pg_temp.expect('only hashes are stored', not exists (select 1 from public.calendar_oauth_states where state_hash in ('state-one', 'state-two')));
+set local role service_role;
+select set_config('smoke.state_old', :'state_old', true);
+select pg_temp.expect('an expired state is consumed but reported expired', (
+  select expired and redirect_to = 'manage' from public.svc_consume_calendar_oauth_state(pg_temp.v_text('state_old'))));
+reset role;
+insert into public.calendar_oauth_states (state_hash, code_verifier, household_id, membership_id, provider, redirect_to, expires_at)
+values (repeat('b', 64), :'VERIFIER', :'household_f', :'membership_f', 'google', 'manage', now() - interval '1 minute');
+select private.purge_deleted_households();
+select pg_temp.expect('the daily purge removes expired states and keeps live ones',
+  not exists (select 1 from public.calendar_oauth_states where state_hash = repeat('b', 64))
+  and exists (select 1 from public.calendar_oauth_states where id = :'oauth_two'));
+insert into public.calendar_oauth_states (state_hash, code_verifier, household_id, membership_id, provider, redirect_to, expires_at)
+values (repeat('c', 64), :'VERIFIER', :'household_f', :'membership_f', 'google', 'manage', now() - interval '1 minute');
+set local role service_role;
+select public.svc_create_calendar_oauth_state(repeat('d', 64), :'VERIFIER', :'household_f', :'membership_f', 'google', 'settings');
+reset role;
+select pg_temp.expect('creating a state also removes expired ones', not exists (select 1 from public.calendar_oauth_states where state_hash = repeat('c', 64)));
+select pg_temp.expect('states are deleted with their household and their membership', (
+  select confdeltype = 'c' from pg_constraint where conrelid = 'public.calendar_oauth_states'::regclass and contype = 'f' and array_length(conkey, 1) = 1)
+  and (select confdeltype = 'c' from pg_constraint where conrelid = 'public.calendar_oauth_states'::regclass and contype = 'f' and array_length(conkey, 1) = 2));
 \o
 \echo 'ALL RLS SMOKE CHECKS PASSED'
 rollback;

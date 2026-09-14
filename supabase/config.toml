@@ -404,6 +404,16 @@ verify_jwt = true
 [functions.calendar-events]
 verify_jwt = true
 
+# Google / Microsoft calendar consent start (spec §5.5, §6.3). Callers must send a valid JWT; the function requires a
+# full sign-in adult.
+[functions.calendar-oauth-start]
+verify_jwt = true
+
+# Google / Microsoft calendar consent callback. The browser arrives from the provider without a Supabase JWT, so the
+# gateway's JWT check is off; the single-use, hashed OAuth state authenticates the attempt.
+[functions.calendar-oauth-callback]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 55327
