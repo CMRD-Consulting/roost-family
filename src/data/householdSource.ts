@@ -1,3 +1,4 @@
+import type { LogWriter } from './logWriter'
 import type { HouseholdSnapshot } from './snapshot'
 
 export type RealtimeStatus = 'connected' | 'disconnected'
@@ -28,4 +29,13 @@ export async function selectSource(): Promise<HouseholdSource> {
     import('./supabaseSource'),
   ])
   return createSupabaseSource(displayClient)
+}
+
+export async function selectWriter(): Promise<LogWriter> {
+  if (isDemo) return (await import('./demo/demoLogWriter')).createDemoLogWriter()
+  const [{ displayClient }, { createSupabaseLogWriter }] = await Promise.all([
+    import('./supabase'),
+    import('./supabaseLogWriter'),
+  ])
+  return createSupabaseLogWriter(displayClient)
 }

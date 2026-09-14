@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
+import { resetDemoForTests } from '@/data/demo/demoHousehold'
 import MainScreen from './MainScreen.vue'
 
 vi.mock('@/data/householdSource', async () => {
@@ -36,6 +37,9 @@ async function mountMain() {
 
 describe('MainScreen (demo source)', () => {
   beforeEach(() => {
+    // The demo household is a lazily-built singleton keyed off the URL at first access;
+    // reset it so each test's own ?manyKids/?conflict params (set after this hook runs) take effect.
+    resetDemoForTests()
     // Leave setImmediate real so flushPromises can resolve.
     vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
     vi.setSystemTime(new Date('2026-09-14T19:00:00Z'))
