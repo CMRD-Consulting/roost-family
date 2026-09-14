@@ -39,8 +39,8 @@ export type LogCommand =
       done: boolean
     }
   | {
-      /** Starts Sitter Mode for the household with an adult's PIN. `sessionId` is a client id for the optimistic
-       *  view only: the server creates the real id, and the snapshot has it after the next reload. */
+      /** Starts Sitter Mode for the household with an adult's PIN. `sessionId` is made on the device and stored as
+       *  the session's id, so the optimistic session and the server's are the same one. */
       kind: 'sitter.start'
       householdId: string
       sessionId: string

@@ -1550,6 +1550,7 @@ export type Database = {
           p_household_id: string
           p_membership_id: string
           p_pin: string
+          p_session_id: string
           p_sitter_name?: string
         }
         Returns: string

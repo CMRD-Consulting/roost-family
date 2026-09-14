@@ -485,13 +485,16 @@ end $$;
 -- Sitter Mode (spec §7.6) is household-wide and needs an adult's PIN to start and to end. The caller (adult or
 -- display) must be a member of the household, and the PIN must belong to one of its owners or adults.
 -- Name and display are optional; a blank name is stored as null (logs then show "Sitter").
+-- The session id comes from the device (like log entry ids), so the optimistic session and logs attributed to it
+-- already carry the real id. A retry with the same id in the same household returns that id instead of failing.
 create function public.start_sitter_session(
-  p_household_id uuid, p_membership_id uuid, p_pin text, p_sitter_name text default null, p_display_id uuid default null
+  p_session_id uuid, p_household_id uuid, p_membership_id uuid, p_pin text,
+  p_sitter_name text default null, p_display_id uuid default null
 ) returns uuid
 language plpgsql security definer set search_path = '' as $$
 declare
   v_name text := nullif(btrim(p_sitter_name), '');
-  v_session uuid;
+  v_existing_household uuid;
 begin
   if p_household_id is null or not private.is_household_member(p_household_id) then
     raise exception 'not a member of this household' using errcode = '42501';
@@ -503,6 +506,9 @@ begin
   ) or not private.pin_ok(p_membership_id, p_pin) then
     raise exception 'incorrect PIN' using errcode = '42501';
   end if;
+  if p_session_id is null then
+    raise exception 'a session id is required' using errcode = '22023';
+  end if;
   if char_length(v_name) > 40 then
     raise exception 'a sitter name must be at most 40 characters' using errcode = '22023';
   end if;
@@ -511,15 +517,24 @@ begin
   ) then
     raise exception 'display not found in this household' using errcode = '22023';
   end if;
+  select s.household_id into v_existing_household from public.sitter_sessions s where s.id = p_session_id;
+  if v_existing_household = p_household_id then
+    return p_session_id;
+  elsif v_existing_household is not null then
+    raise exception 'sitter session not found' using errcode = '42501';
+  end if;
   -- The partial unique index allows one open session per household, also under concurrent starts.
   begin
-    insert into public.sitter_sessions (household_id, display_id, sitter_name)
-    values (p_household_id, p_display_id, v_name)
-    returning id into v_session;
+    insert into public.sitter_sessions (id, household_id, display_id, sitter_name)
+    values (p_session_id, p_household_id, p_display_id, v_name);
   exception when unique_violation then
+    -- A concurrent retry of this same start may have inserted it first.
+    if exists (select 1 from public.sitter_sessions s where s.id = p_session_id and s.household_id = p_household_id) then
+      return p_session_id;
+    end if;
     raise exception 'a sitter session is already active' using errcode = '23505';
   end;
-  return v_session;
+  return p_session_id;
 end $$;
 
 create function public.end_sitter_session(p_session_id uuid, p_membership_id uuid, p_pin text) returns timestamptz
@@ -689,7 +704,7 @@ grant execute on function
   public.set_routine_step(uuid, uuid, date, int, boolean),
   public.set_my_pin(uuid, text), public.verify_pin(uuid, text),
   public.void_dose(uuid, uuid, text, text), public.acknowledge_dose_conflict(uuid, uuid, text),
-  public.start_sitter_session(uuid, uuid, text, text, uuid), public.end_sitter_session(uuid, uuid, text),
+  public.start_sitter_session(uuid, uuid, uuid, text, text, uuid), public.end_sitter_session(uuid, uuid, text),
   public.mark_sitter_summary_shown(uuid),
   public.register_display(uuid, text), public.claim_display(text), public.my_display(),
   public.display_heartbeat(), public.revoke_display(uuid)

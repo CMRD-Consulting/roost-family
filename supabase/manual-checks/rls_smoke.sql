@@ -519,33 +519,43 @@ select set_config('request.jwt.claims', :'F', true);
 select out_display_id as display_f from public.register_display(:'household_f', 'F kitchen') \gset
 select set_config('smoke.display_f', :'display_f', true);
 select pg_temp.expect_error('start with a wrong PIN',
-  $q$select public.start_sitter_session(pg_temp.v('household_f'), pg_temp.v('membership_f'), '0000', 'Jess', null)$q$, '42501');
+  $q$select public.start_sitter_session(gen_random_uuid(), pg_temp.v('household_f'), pg_temp.v('membership_f'), '0000', 'Jess', null)$q$, '42501');
 select pg_temp.expect_error('start with another household''s membership and PIN',
-  $q$select public.start_sitter_session(pg_temp.v('household_f'), pg_temp.v('membership_b'), '1111', 'Jess', null)$q$, '42501');
+  $q$select public.start_sitter_session(gen_random_uuid(), pg_temp.v('household_f'), pg_temp.v('membership_b'), '1111', 'Jess', null)$q$, '42501');
 select pg_temp.expect_error('start with a caregiver''s PIN',
-  $q$select public.start_sitter_session(pg_temp.v('household_f'), pg_temp.v('membership_g'), '3333', 'Jess', null)$q$, '42501');
+  $q$select public.start_sitter_session(gen_random_uuid(), pg_temp.v('household_f'), pg_temp.v('membership_g'), '3333', 'Jess', null)$q$, '42501');
 select pg_temp.expect_error('start on another household''s display',
-  $q$select public.start_sitter_session(pg_temp.v('household_f'), pg_temp.v('membership_f'), '2468', 'Jess', pg_temp.v('display_b'))$q$, '22023');
+  $q$select public.start_sitter_session(gen_random_uuid(), pg_temp.v('household_f'), pg_temp.v('membership_f'), '2468', 'Jess', pg_temp.v('display_b'))$q$, '22023');
 select pg_temp.expect_error('start with a 41-character sitter name',
-  $q$select public.start_sitter_session(pg_temp.v('household_f'), pg_temp.v('membership_f'), '2468', repeat('x', 41), null)$q$, '22023');
+  $q$select public.start_sitter_session(gen_random_uuid(), pg_temp.v('household_f'), pg_temp.v('membership_f'), '2468', repeat('x', 41), null)$q$, '22023');
+select pg_temp.expect_error('start without a session id',
+  $q$select public.start_sitter_session(null, pg_temp.v('household_f'), pg_temp.v('membership_f'), '2468', 'Jess', null)$q$, '22023');
+select pg_temp.expect_error('start reusing another household''s session id',
+  $q$select public.start_sitter_session(pg_temp.v('sitter_session_b'), pg_temp.v('household_f'), pg_temp.v('membership_f'), '2468', 'Jess', null)$q$, '42501');
 select set_config('request.jwt.claims', :'B', true);
 select pg_temp.expect_error('non-member starts a session',
-  $q$select public.start_sitter_session(pg_temp.v('household_f'), pg_temp.v('membership_b'), '1111', 'Jess', null)$q$, '42501');
+  $q$select public.start_sitter_session(gen_random_uuid(), pg_temp.v('household_f'), pg_temp.v('membership_b'), '1111', 'Jess', null)$q$, '42501');
 reset role;
 select pg_temp.expect('rejected starts left no session in F', not exists (
   select 1 from public.sitter_sessions where household_id = :'household_f'));
 set local role authenticated;
 
-\echo '[35] start_sitter_session with the right PIN starts one session; a second is rejected while it is open'
+\echo '[35] start_sitter_session with the right PIN starts one session with the client id; retries are idempotent; a second is rejected while it is open'
 select set_config('request.jwt.claims', :'F', true);
-select public.start_sitter_session(:'household_f', :'membership_f', '2468', '  Jess  ', :'display_f') as sitter_f \gset
+select gen_random_uuid() as sitter_f \gset
 select set_config('smoke.sitter_f', :'sitter_f', true);
+select pg_temp.expect('start returns the client session id',
+  public.start_sitter_session(:'sitter_f', :'household_f', :'membership_f', '2468', '  Jess  ', :'display_f') = :'sitter_f'::uuid);
 select pg_temp.expect('session stored with a trimmed name and the display', (
   select household_id = pg_temp.v('household_f') and sitter_name = 'Jess' and display_id = pg_temp.v('display_f')
      and ended_at is null and summary_shown_at is null
   from public.sitter_sessions where id = pg_temp.v('sitter_f')));
+select pg_temp.expect('repeating a start with the same session id returns it (idempotent retry)',
+  public.start_sitter_session(:'sitter_f', :'household_f', :'membership_f', '2468', 'Jess', :'display_f') = :'sitter_f'::uuid);
 select pg_temp.expect_error('second start while one is open',
-  $q$select public.start_sitter_session(pg_temp.v('household_f'), pg_temp.v('membership_f'), '2468', 'Robin', null)$q$, '23505');
+  $q$select public.start_sitter_session(gen_random_uuid(), pg_temp.v('household_f'), pg_temp.v('membership_f'), '2468', 'Robin', null)$q$, '23505');
+select pg_temp.expect_error('repeat start still checks the PIN',
+  $q$select public.start_sitter_session(pg_temp.v('sitter_f'), pg_temp.v('household_f'), pg_temp.v('membership_f'), '0000', 'Jess', null)$q$, '42501');
 select pg_temp.expect('members can still read sitter sessions', (
   select count(*) from public.sitter_sessions where household_id = pg_temp.v('household_f')) = 1);
 
@@ -583,7 +593,7 @@ select pg_temp.expect('end returns the stored ended_at', (
   select ended_at = :'ended_f'::timestamptz from public.sitter_sessions where id = pg_temp.v('sitter_f')));
 select pg_temp.expect_error('end a session that already ended',
   $q$select public.end_sitter_session(pg_temp.v('sitter_f'), pg_temp.v('membership_f'), '2468')$q$, '22023');
-select public.start_sitter_session(:'household_f', :'membership_f', '2468', '   ', null) as sitter_f2 \gset
+select public.start_sitter_session(gen_random_uuid(), :'household_f', :'membership_f', '2468', '   ', null) as sitter_f2 \gset
 select set_config('smoke.sitter_f2', :'sitter_f2', true);
 select pg_temp.expect('a blank sitter name is stored as null', (
   select sitter_name is null from public.sitter_sessions where id = pg_temp.v('sitter_f2')));
@@ -596,7 +606,7 @@ select public.end_sitter_session(:'sitter_f2', :'membership_f', '2468');
 -- A display (not only a signed-in adult) can end and start sessions with an adult's PIN.
 select set_config('request.jwt.claims', :'E', true);
 select public.end_sitter_session(:'sitter_session_b', :'membership_b', '1111');
-select public.start_sitter_session(:'household_b', :'membership_b', '1111', null, :'display_b') as sitter_b2 \gset
+select public.start_sitter_session(gen_random_uuid(), :'household_b', :'membership_b', '1111', null, :'display_b') as sitter_b2 \gset
 select set_config('smoke.sitter_b2', :'sitter_b2', true);
 select pg_temp.expect('display started a session in B', (
   select ended_at is null and display_id = pg_temp.v('display_b') from public.sitter_sessions where id = pg_temp.v('sitter_b2')));
@@ -620,13 +630,13 @@ select pg_temp.expect('marking again keeps the first time', (
 \echo '[40] Sitter RPC and table privileges'
 reset role;
 select pg_temp.expect('anon cannot execute start_sitter_session',
-  not has_function_privilege('anon', 'public.start_sitter_session(uuid, uuid, text, text, uuid)', 'execute'));
+  not has_function_privilege('anon', 'public.start_sitter_session(uuid, uuid, uuid, text, text, uuid)', 'execute'));
 select pg_temp.expect('anon cannot execute end_sitter_session',
   not has_function_privilege('anon', 'public.end_sitter_session(uuid, uuid, text)', 'execute'));
 select pg_temp.expect('anon cannot execute mark_sitter_summary_shown',
   not has_function_privilege('anon', 'public.mark_sitter_summary_shown(uuid)', 'execute'));
 select pg_temp.expect('authenticated can execute the sitter RPCs',
-  has_function_privilege('authenticated', 'public.start_sitter_session(uuid, uuid, text, text, uuid)', 'execute')
+  has_function_privilege('authenticated', 'public.start_sitter_session(uuid, uuid, uuid, text, text, uuid)', 'execute')
   and has_function_privilege('authenticated', 'public.end_sitter_session(uuid, uuid, text)', 'execute')
   and has_function_privilege('authenticated', 'public.mark_sitter_summary_shown(uuid)', 'execute'));
 select pg_temp.expect('authenticated has no insert/update/delete on sitter_sessions',

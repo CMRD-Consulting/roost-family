@@ -62,7 +62,7 @@ async function onVerified({ membershipId, pin }: { membershipId: string; pin: st
     return
   }
 
-  // Read now, not when the dialog opened: after a start, the reload replaces the optimistic id with the server's.
+  // Read now, not when the dialog opened: another display may have ended or restarted Sitter Mode meanwhile.
   const session = view.activeSitterSession ?? null
   if (session === null) {
     // Already ended (e.g. on another display).

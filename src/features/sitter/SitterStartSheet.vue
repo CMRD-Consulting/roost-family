@@ -1,8 +1,8 @@
 <script setup lang="ts">
 /**
  * Starts Sitter Mode (spec §7.3, §7.6): an adult's PIN, then an optional sitter name. The PIN is checked on the
- * server, so this needs a connection. After it starts, the household is reloaded so the server's session id
- * replaces the optimistic one before anyone can end it.
+ * server, so this needs a connection. The session id is made here and stored by the server, so logs attributed to
+ * the optimistic session already point at the real one; the reload after it starts only freshens the view.
  */
 import { computed, ref, watch } from 'vue'
 import { newId } from '@/data/logCommands'
