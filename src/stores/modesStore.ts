@@ -12,6 +12,9 @@ export interface NapState {
 }
 
 const PEEK_MS = 60_000
+/** The store clock's tick: every second during a peek (live countdown, Night Mode back on time), else 15 s. */
+const PEEK_TICK_MS = 1_000
+const IDLE_TICK_MS = 15_000
 const NAP_MAX_MS = 3 * 60 * 60_000
 const NAP_STORAGE_KEY = 'roost-nap'
 
@@ -61,11 +64,12 @@ function saveNap(nap: NapState | null): void {
   }
 }
 
-/** Nap/Night mode state. Ticks its own clock so `nightActive` and the mute watcher track the household's
- *  night window even when nothing else changes. */
+/** Nap/Night mode state. Ticks its own clock (`now`) so `nightActive` and the mute watcher track the household's
+ *  night window even when nothing else changes; the clock runs every second during a peek. */
 export const useModesStore = defineStore('modes', () => {
   const householdStore = useHouseholdStore()
-  const now = useNow()
+  const tickMs = ref(IDLE_TICK_MS)
+  const now = useNow(tickMs)
 
   /** Epoch ms until which a tap during Night Mode shows the dimmed main screen instead of the night screen. */
   const nightPeekUntil = ref<number | null>(null)
@@ -89,6 +93,8 @@ export const useModesStore = defineStore('modes', () => {
 
   /** True while the (dimmed) household screen shows during the night window: a peek, or a hold. */
   const peeking = computed<boolean>(() => nightWindow.value && !nightActive.value)
+
+  watch(peeking, (p) => (tickMs.value = p ? PEEK_TICK_MS : IDLE_TICK_MS), { immediate: true, flush: 'sync' })
 
   const napActive = computed<boolean>(() => nap.value !== null)
 
@@ -130,5 +136,5 @@ export const useModesStore = defineStore('modes', () => {
   // microtask — a chime triggered right after toggling nap must never slip through unmuted.
   watch(() => napActive.value || nightWindow.value, (muted) => setMuted(muted), { immediate: true, flush: 'sync' })
 
-  return { nightPeekUntil, nightActive, peeking, nap, napActive, peek, extendPeek, holdNight, releaseNight, toggleNap, endNap }
+  return { now, nightPeekUntil, nightActive, peeking, nap, napActive, peek, extendPeek, holdNight, releaseNight, toggleNap, endNap }
 })

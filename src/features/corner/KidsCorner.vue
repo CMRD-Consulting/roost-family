@@ -231,7 +231,7 @@ useNightPeekTaps()
       <RLogo :size="64" />
     </div>
 
-    <NightPeek v-if="view && modes.peeking" :until="modes.nightPeekUntil" :now="tick" />
+    <NightPeek v-if="view && modes.peeking" :until="modes.nightPeekUntil" :now="modes.now" />
     <NapOverlay v-if="view && modes.napActive" />
 
     <RSheet title="Exit Kids' Corner" :open="exiting" @close="exiting = false">

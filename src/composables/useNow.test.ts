@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { effectScope } from 'vue'
+import { effectScope, ref } from 'vue'
 import { useNow } from './useNow'
 
 function setVisibility(state: DocumentVisibilityState): void {
@@ -29,6 +29,32 @@ describe('useNow', () => {
       expect(now.value.getTime()).toBe(initial + 3_000)
     })
     scope.stop()
+  })
+
+  it('follows a changing interval, ticking at once when it changes', () => {
+    const scope = effectScope()
+    scope.run(() => {
+      const interval = ref(15_000)
+      const now = useNow(interval)
+      const initial = now.value.getTime()
+
+      vi.advanceTimersByTime(7_000)
+      expect(now.value.getTime()).toBe(initial)
+
+      interval.value = 1_000
+      expect(now.value.getTime()).toBe(initial + 7_000)
+      vi.advanceTimersByTime(1_000)
+      expect(now.value.getTime()).toBe(initial + 8_000)
+
+      interval.value = 15_000
+      vi.advanceTimersByTime(14_000)
+      expect(now.value.getTime()).toBe(initial + 8_000)
+      vi.advanceTimersByTime(1_000)
+      expect(now.value.getTime()).toBe(initial + 23_000)
+      expect(vi.getTimerCount()).toBe(1)
+    })
+    scope.stop()
+    expect(vi.getTimerCount()).toBe(0)
   })
 
   it('stops ticking while hidden and updates immediately + restarts when visible again', () => {

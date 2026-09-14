@@ -304,7 +304,7 @@ const MODE_BUTTONS = [
     </div>
 
     <!-- Dimmed peek (spec §7.7): the main screen shows through a dark, click-through overlay for 60 s. -->
-    <NightPeek v-if="model && modes.peeking" :until="modes.nightPeekUntil" :now="now" />
+    <NightPeek v-if="model && modes.peeking" :until="modes.nightPeekUntil" :now="modes.now" />
 
     <NapOverlay v-if="model && modes.napActive" />
 

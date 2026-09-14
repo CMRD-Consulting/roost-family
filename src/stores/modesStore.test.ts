@@ -170,6 +170,45 @@ describe('useModesStore', () => {
     })
   })
 
+  describe('peek clock', () => {
+    it('ticks every second during a peek, so the countdown is live and Night Mode returns on time', () => {
+      withHousehold(new Date('2026-09-15T03:00:00Z'), { timeZone: TZ, nightMode: NIGHT_MODE })
+      const modes = useModesStore()
+      vi.advanceTimersByTime(7_000) // between two 15 s ticks
+      modes.peek()
+      const until = modes.nightPeekUntil!
+
+      vi.advanceTimersByTime(1_000)
+      expect(modes.now.getTime()).toBe(until - 59_000)
+
+      vi.advanceTimersByTime(58_000)
+      expect(modes.nightActive).toBe(false)
+      vi.advanceTimersByTime(1_000)
+      expect(modes.nightActive).toBe(true)
+    })
+
+    it('goes back to a 15 second tick once the peek is over', () => {
+      withHousehold(new Date('2026-09-15T03:00:00Z'), { timeZone: TZ, nightMode: NIGHT_MODE })
+      const modes = useModesStore()
+      modes.peek()
+      vi.advanceTimersByTime(60_000)
+      expect(modes.nightActive).toBe(true)
+      const at = modes.now.getTime()
+      vi.advanceTimersByTime(14_000)
+      expect(modes.now.getTime()).toBe(at)
+      vi.advanceTimersByTime(1_000)
+      expect(modes.now.getTime()).toBe(at + 15_000)
+    })
+
+    it('ticks every 15 seconds outside a peek', () => {
+      withHousehold(new Date('2026-09-14T18:00:00Z'), { timeZone: TZ, nightMode: NIGHT_MODE })
+      const modes = useModesStore()
+      const at = modes.now.getTime()
+      vi.advanceTimersByTime(14_000)
+      expect(modes.now.getTime()).toBe(at)
+    })
+  })
+
   describe('night holds (an open sheet keeps Night Mode away)', () => {
     it('a hold taken before the night boundary keeps Night Mode off until it is released', () => {
       withHousehold(new Date('2026-09-14T23:59:45Z'), { timeZone: TZ, nightMode: NIGHT_MODE })
@@ -218,9 +257,9 @@ describe('useModesStore', () => {
       modes.extendPeek()
       expect(modes.nightPeekUntil).toBe(Date.now() + 60_000)
 
-      vi.advanceTimersByTime(50_000)
+      vi.advanceTimersByTime(59_000)
       expect(modes.nightActive).toBe(false)
-      vi.advanceTimersByTime(20_000)
+      vi.advanceTimersByTime(1_000)
       expect(modes.nightActive).toBe(true)
     })
 
