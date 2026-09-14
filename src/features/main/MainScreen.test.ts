@@ -496,6 +496,38 @@ describe('MainScreen (demo source)', () => {
       wrapper.unmount()
     })
 
+    it('focuses the sitter name after the PIN, and Enter (submitting the form) starts Sitter Mode', async () => {
+      const wrapper = await mountMain()
+      await hold(wrapper.get('button[aria-label="Sitter Mode"]').element)
+      await enterPin(wrapper, 'Sam', '1234')
+      await flushPromises()
+
+      const input = wrapper.get('[role="dialog"] form input')
+      expect(document.activeElement).toBe(input.element)
+      await input.setValue('Jess')
+      await wrapper.get('[role="dialog"] form').trigger('submit')
+      await settle()
+      await settle()
+
+      expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+      expect(wrapper.get('[data-testid="sitter-pill"]').text()).toBe('Sitter Mode · Jess')
+      wrapper.unmount()
+    })
+
+    it('after a failed end, the PIN pad comes back with focus on its first control', async () => {
+      window.history.replaceState({}, '', '/home?sitter')
+      const wrapper = await mountMain()
+      await hold(buttonIn(wrapper, 'End Sitter Mode').element)
+      vi.spyOn(useLogStore(pinia), 'submit').mockRejectedValueOnce(new LogWriteError('boom', false, null))
+      await enterPin(wrapper, 'Alex', '5678')
+      await settle()
+
+      const dialog = wrapper.get('[role="dialog"]')
+      expect(dialog.text()).toContain("Couldn't end Sitter Mode. Try again.")
+      expect(document.activeElement).toBe(dialog.get('button[aria-label="Sam"]').element)
+      wrapper.unmount()
+    })
+
     it('says "Sitter Mode" without a name', async () => {
       mutateDemo((s) => ({
         ...s,

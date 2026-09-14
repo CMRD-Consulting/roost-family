@@ -6,7 +6,7 @@
  * another display shows the summary of a session that has already ended. Both need a connection (the PIN is
  * checked on the server).
  */
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, useTemplateRef, watch } from 'vue'
 import { LogWriteError } from '@/data/logWriter'
 import { pendingSummary } from './sitterModel'
 import SheetError from '@/features/logs/SheetError.vue'
@@ -65,6 +65,13 @@ function closeEndedElsewhere(): void {
   else emit('close')
 }
 
+const padWrap = useTemplateRef<HTMLElement>('padWrap')
+/** After the pad remounts (e.g. on an error), focus its first control so the adult can try again from the keyboard. */
+async function focusPad(): Promise<void> {
+  await nextTick()
+  padWrap.value?.querySelector<HTMLElement>('button')?.focus()
+}
+
 function verify(membershipId: string, pin: string): Promise<boolean> {
   return logStore.verifyPin(membershipId, pin)
 }
@@ -104,6 +111,7 @@ async function onVerified({ membershipId, pin }: { membershipId: string; pin: st
     }
     error.value = e instanceof LogWriteError && e.network ? copy.value.offline : copy.value.failed
     padKey.value++
+    void focusPad()
     return
   } finally {
     pending.value = false
@@ -119,7 +127,7 @@ async function onVerified({ membershipId, pin }: { membershipId: string; pin: st
         <p role="status" class="text-[22px] text-ink">{{ copy.offline }}</p>
         <RButton variant="secondary" tier="moment" class="w-full" @click="emit('close')">Close</RButton>
       </template>
-      <template v-else>
+      <div v-else ref="padWrap" class="flex w-full flex-col items-center gap-6">
         <SheetError :message="error" />
         <RPinPad
           :key="padKey"
@@ -129,7 +137,7 @@ async function onVerified({ membershipId, pin }: { membershipId: string; pin: st
           @verified="onVerified"
           @cancel="emit('close')"
         />
-      </template>
+      </div>
     </div>
   </RSheet>
 </template>

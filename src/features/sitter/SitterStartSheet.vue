@@ -4,7 +4,7 @@
  * server, so this needs a connection. The session id is made here and stored by the server, so logs attributed to
  * the optimistic session already point at the real one; the reload after it starts only freshens the view.
  */
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, useTemplateRef, watch } from 'vue'
 import { newId } from '@/data/logCommands'
 import { LogWriteError } from '@/data/logWriter'
 import SheetError from '@/features/logs/SheetError.vue'
@@ -52,6 +52,14 @@ watch(
   { immediate: true },
 )
 
+const nameStep = useTemplateRef<HTMLElement>('nameStep')
+// The name step replaces the PIN pad: put the cursor in the name field.
+watch(verified, async (value) => {
+  if (value === null) return
+  await nextTick()
+  nameStep.value?.querySelector('input')?.focus()
+})
+
 function verify(membershipId: string, pin: string): Promise<boolean> {
   return logStore.verifyPin(membershipId, pin)
 }
@@ -97,14 +105,15 @@ async function start(): Promise<void> {
         <RButton variant="secondary" tier="moment" class="w-full" @click="emit('close')">Close</RButton>
       </template>
 
-      <template v-else-if="verified">
+      <!-- A form, so Enter in the name field starts Sitter Mode (the footer button submits it too). -->
+      <form v-else-if="verified" id="sitter-start-form" ref="nameStep" class="flex flex-col gap-6" @submit.prevent="start">
         <div class="flex flex-col gap-2">
           <h3 class="text-[28px] font-semibold text-ink">Who's watching the kids?</h3>
           <p class="text-[18px] text-ink-3">Optional. Their entries will show as "{{ entriesLabel }}".</p>
         </div>
         <RInput v-model="name" label="Sitter's name (optional)" placeholder="Grandma, Jess…" :maxlength="40" autocomplete="off" />
         <SheetError :message="error" />
-      </template>
+      </form>
 
       <div v-else class="flex flex-col items-center gap-6">
         <SheetError :message="error" />
@@ -120,7 +129,7 @@ async function start(): Promise<void> {
     </div>
 
     <template v-if="verified && !offline" #footer>
-      <RButton tier="moment" class="w-full" :disabled="pending" @click="start">Start Sitter Mode</RButton>
+      <RButton type="submit" form="sitter-start-form" tier="moment" class="w-full" :disabled="pending">Start Sitter Mode</RButton>
     </template>
   </RSheet>
 </template>
