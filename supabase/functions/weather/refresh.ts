@@ -4,6 +4,10 @@
  * The cached row is returned while it is younger than 30 minutes. Otherwise the provider is asked for a fresh
  * summary (reusing the cached /points lookup when there is one), and the row is saved. A failed refresh records
  * `error` and keeps the last good values, so displays keep showing them (they hide weather that is too old).
+ *
+ * NWS is asked at most once per household every 5 minutes, whether the last attempt succeeded or failed: within that
+ * window the cached values are returned (an outage or a display retrying doesn't turn into a request loop). The
+ * attempt is claimed atomically in the database first, so displays refreshing at the same moment make one request.
  */
 import {
   parsePoints,
@@ -16,6 +20,8 @@ import {
 } from '../_shared/nws.ts'
 
 export const WEATHER_CACHE_MS = 30 * 60_000
+/** At most one NWS attempt per household in this long (spec §5.6; matches `svc_claim_weather_attempt`). */
+export const WEATHER_ATTEMPT_MS = 5 * 60_000
 const SUMMARY_MAX = 200
 const ERROR_MAX = 500
 
@@ -74,12 +80,16 @@ export interface WeatherRow {
   error: string | null
   points_forecast_url: string | null
   points_hourly_url: string | null
+  /** When NWS was last asked (successfully or not); null before the first attempt. */
+  attempted_at: string | null
 }
 
 export interface WeatherStore {
   /** The live household's time zone and location, or null when it doesn't exist (or was deleted). */
   household(householdId: string): Promise<{ timeZone: string; lat: number | null; lon: number | null } | null>
   cached(householdId: string): Promise<WeatherRow | null>
+  /** Records an NWS attempt starting now, unless one started in the last 5 minutes; true when this call got it. */
+  claimAttempt(householdId: string): Promise<boolean>
   /** Upserts by household_id. */
   save(row: WeatherRow): Promise<void>
 }
@@ -127,6 +137,7 @@ function emptyRow(householdId: string): WeatherRow {
     error: null,
     points_forecast_url: null,
     points_hourly_url: null,
+    attempted_at: null,
   }
 }
 
@@ -145,7 +156,12 @@ export async function refreshWeather(
   if (cached?.fetched_at && now.getTime() - Date.parse(cached.fetched_at) < WEATHER_CACHE_MS) {
     return { status: 'cached', stale: false, weather: toPublic(cached) }
   }
+  const recentlyAttempted = cached?.attempted_at && now.getTime() - Date.parse(cached.attempted_at) < WEATHER_ATTEMPT_MS
+  if (recentlyAttempted || !(await store.claimAttempt(householdId))) {
+    return { status: 'cached', stale: true, weather: toPublic(cached ?? emptyRow(householdId)) }
+  }
 
+  const attemptedAt = now.toISOString()
   try {
     const cachedEndpoints =
       cached?.points_forecast_url && cached.points_hourly_url
@@ -174,12 +190,13 @@ export async function refreshWeather(
       error: null,
       points_forecast_url: endpoints.forecastUrl,
       points_hourly_url: endpoints.forecastHourlyUrl,
+      attempted_at: attemptedAt,
     }
     await store.save(row)
     return { status: 'refreshed', stale: false, weather: toPublic(row) }
   } catch (e) {
     const message = (e instanceof Error ? e.message : String(e)).slice(0, ERROR_MAX)
-    const row: WeatherRow = { ...(cached ?? emptyRow(householdId)), error: message }
+    const row: WeatherRow = { ...(cached ?? emptyRow(householdId)), error: message, attempted_at: attemptedAt }
     await store.save(row)
     return { status: 'failed', stale: true, weather: toPublic(row) }
   }

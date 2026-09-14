@@ -7,11 +7,12 @@
  */
 import { createClient } from 'npm:@supabase/supabase-js@2'
 import { createWeatherHandler } from './handler.ts'
+import { nwsUserAgent } from '../_shared/nws.ts'
 import { WeatherHttpError, createNwsProvider, refreshWeather, type WeatherRow, type WeatherStore } from './refresh.ts'
 
 const NWS_TIMEOUT_MS = 10_000
-// NWS requires an identifying User-Agent.
-const NWS_HEADERS = { 'User-Agent': 'RoostFamily (roost.cmrd.dev)', Accept: 'application/geo+json' }
+// NWS requires an identifying User-Agent with a contact (README: NWS_CONTACT).
+const NWS_HEADERS = { 'User-Agent': nwsUserAgent(Deno.env.get('NWS_CONTACT')), Accept: 'application/geo+json' }
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY')!
@@ -45,12 +46,17 @@ const store: WeatherStore = {
     const { data, error } = await admin
       .from('household_weather')
       .select(
-        'household_id, fetched_at, current_temp_f, high_f, low_f, precip_chance, summary, icon, error, points_forecast_url, points_hourly_url',
+        'household_id, fetched_at, current_temp_f, high_f, low_f, precip_chance, summary, icon, error, points_forecast_url, points_hourly_url, attempted_at',
       )
       .eq('household_id', householdId)
       .maybeSingle()
     if (error) throw new Error(error.message)
     return data as WeatherRow | null
+  },
+  async claimAttempt(householdId) {
+    const { data, error } = await admin.rpc('svc_claim_weather_attempt', { p_household_id: householdId })
+    if (error) throw new Error(error.message)
+    return data === true
   },
   async save(row) {
     const { error } = await admin

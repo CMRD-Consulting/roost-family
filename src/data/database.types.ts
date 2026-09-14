@@ -877,6 +877,7 @@ export type Database = {
       }
       household_weather: {
         Row: {
+          attempted_at: string | null
           current_temp_f: number | null
           error: string | null
           fetched_at: string | null
@@ -891,6 +892,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          attempted_at?: string | null
           current_temp_f?: number | null
           error?: string | null
           fetched_at?: string | null
@@ -905,6 +907,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          attempted_at?: string | null
           current_temp_f?: number | null
           error?: string | null
           fetched_at?: string | null
@@ -2050,6 +2053,10 @@ export type Database = {
           requester_email: string
           time_zone: string
         }[]
+      }
+      svc_claim_weather_attempt: {
+        Args: { p_household_id: string }
+        Returns: boolean
       }
       svc_consume_calendar_oauth_state: {
         Args: { p_state_hash: string }

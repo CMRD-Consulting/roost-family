@@ -7,7 +7,8 @@
  *  - files with no `photos` row that are older than `minAgeMinutes` (deleted photos, and uploads whose `add_photo`
  *    never happened; the age gives an upload in progress time to be recorded), and
  *  - every file in the folder of a household that no longer exists.
- * Names that aren't `<household uuid>/<photo uuid>.jpg` are left alone.
+ * A photo's Settings thumbnail, `<household uuid>/<photo uuid>.thumb.jpg`, is kept exactly while its photo is recorded
+ * and erased with it. Names that aren't a photo or thumbnail are left alone.
  *
  * Export ZIPs in the private `exports` bucket (`<household>/<export>.zip`, spec §11.3) are swept too: a file is erased
  * once its `household_exports` row is failed, past its 24-hour expiry, or gone (purged after 7 days, or deleted with
@@ -69,12 +70,15 @@ const REMOVE_BATCH = 100
 
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
 const UUID_RE = new RegExp(`^${UUID}$`)
-const PHOTO_PATH_RE = new RegExp(`^(${UUID})/(${UUID})\\.jpg$`)
+const PHOTO_PATH_RE = new RegExp(`^(${UUID})/(${UUID})(\\.thumb)?\\.jpg$`)
 
-/** The household and photo of an object named exactly `<uuid>/<uuid>.jpg` (lowercase, as the app names them), or null. */
-export function parsePhotoPath(name: string): { householdId: string; photoId: string } | null {
+/**
+ * The household, photo and photo path (`photos.storage_path`) of an object named exactly `<uuid>/<uuid>.jpg` or its
+ * thumbnail `<uuid>/<uuid>.thumb.jpg` (lowercase, as the app names them), or null.
+ */
+export function parsePhotoPath(name: string): { householdId: string; photoId: string; photoPath: string } | null {
   const match = PHOTO_PATH_RE.exec(name)
-  return match ? { householdId: match[1]!, photoId: match[2]! } : null
+  return match ? { householdId: match[1]!, photoId: match[2]!, photoPath: `${match[1]}/${match[2]}.jpg` } : null
 }
 
 export function selectForSweep(
@@ -90,7 +94,7 @@ export function selectForSweep(
     } else if (!context.existingHouseholds.has(parsed.householdId)) {
       selection.remove.push(object.name)
       selection.goneHousehold++
-    } else if (context.recordedPaths.has(object.name)) {
+    } else if (context.recordedPaths.has(parsed.photoPath)) {
       selection.kept++
     } else {
       const created = object.createdAt === null ? Number.NaN : Date.parse(object.createdAt)

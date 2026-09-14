@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   mapShortForecastToIcon,
+  nwsUserAgent,
   parsePoints,
   summarize,
   type NwsForecastResponse,
@@ -25,6 +26,40 @@ describe('parsePoints', () => {
 
   it('throws when the response is missing the forecast URLs', () => {
     expect(() => parsePoints({ properties: {} } as unknown as NwsPointsResponse)).toThrow()
+  })
+
+  it('rejects forecast URLs that are not https on api.weather.gov (the function fetches them)', () => {
+    const good = 'https://api.weather.gov/gridpoints/RAH/64,68/forecast'
+    const bad = [
+      'http://api.weather.gov/gridpoints/RAH/64,68/forecast',
+      'https://api.weather.gov.evil.example/gridpoints/RAH/64,68/forecast',
+      'https://evil.example/https://api.weather.gov/x',
+      'https://user@evil.example/forecast',
+      'https://api.weather.gov:8443/gridpoints/RAH/64,68/forecast',
+      'https://169.254.169.254/latest/meta-data',
+      'file:///etc/passwd',
+      '/gridpoints/RAH/64,68/forecast',
+      'not a url',
+    ]
+    for (const url of bad) {
+      expect(() => parsePoints({ properties: { forecast: url, forecastHourly: good } }), url).toThrow(/NWS points response/)
+      expect(() => parsePoints({ properties: { forecast: good, forecastHourly: url } }), url).toThrow(/NWS points response/)
+    }
+    expect(() => parsePoints({ properties: { forecast: 42, forecastHourly: good } } as unknown as NwsPointsResponse)).toThrow()
+  })
+})
+
+describe('nwsUserAgent', () => {
+  it('identifies the app and site, as NWS asks', () => {
+    expect(nwsUserAgent(undefined)).toBe('RoostFamily/1.0 (roost.cmrd.dev)')
+    expect(nwsUserAgent('')).toBe('RoostFamily/1.0 (roost.cmrd.dev)')
+    expect(nwsUserAgent('roost.cmrd.dev')).toBe('RoostFamily/1.0 (roost.cmrd.dev)')
+  })
+
+  it('adds the operator contact from NWS_CONTACT, stripping characters that would break the header', () => {
+    expect(nwsUserAgent('ops@roost.example')).toBe('RoostFamily/1.0 (roost.cmrd.dev; ops@roost.example)')
+    expect(nwsUserAgent(' ops@roost.example ')).toBe('RoostFamily/1.0 (roost.cmrd.dev; ops@roost.example)')
+    expect(nwsUserAgent('a(b);c\r\nX-Evil: 1')).toBe('RoostFamily/1.0 (roost.cmrd.dev; abcX-Evil: 1)')
   })
 })
 

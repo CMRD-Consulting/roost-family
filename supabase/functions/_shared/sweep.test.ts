@@ -18,11 +18,18 @@ const obj = (name: string, minutesAgo: number | null): StoredObject => ({
 
 describe('parsePhotoPath', () => {
   it('reads <household>/<photo>.jpg', () => {
-    expect(parsePhotoPath(`${H1}/${P1}.jpg`)).toEqual({ householdId: H1, photoId: P1 })
+    expect(parsePhotoPath(`${H1}/${P1}.jpg`)).toEqual({ householdId: H1, photoId: P1, photoPath: `${H1}/${P1}.jpg` })
+  })
+
+  it('reads a thumbnail, <household>/<photo>.thumb.jpg, as belonging to its photo', () => {
+    expect(parsePhotoPath(`${H1}/${P1}.thumb.jpg`)).toEqual({ householdId: H1, photoId: P1, photoPath: `${H1}/${P1}.jpg` })
   })
 
   it('rejects anything else', () => {
-    for (const name of [`${H1}/avatar.png`, `${H1}/x/${P1}.jpg`, `${P1}.jpg`, `${H1}/${P1}.JPG`, `../${H1}/${P1}.jpg`, '']) {
+    for (const name of [
+      `${H1}/avatar.png`, `${H1}/x/${P1}.jpg`, `${P1}.jpg`, `${H1}/${P1}.JPG`, `../${H1}/${P1}.jpg`, '',
+      `${H1}/${P1}.thumbs.jpg`, `${H1}/${P1}.thumb.thumb.jpg`, `${H1}/${P1}.thumb.png`,
+    ]) {
       expect(parsePhotoPath(name)).toBeNull()
     }
   })
@@ -41,6 +48,21 @@ describe('selectForSweep', () => {
     const result = selectForSweep([obj(`${H_GONE}/${P1}.jpg`, 1), obj(`${H_GONE}/${P2}.jpg`, 9000)], base)
     expect(result.remove).toEqual([`${H_GONE}/${P1}.jpg`, `${H_GONE}/${P2}.jpg`])
     expect(result).toMatchObject({ orphans: 0, goneHousehold: 2, kept: 0 })
+  })
+
+  it('keeps a recorded photo\'s thumbnail and erases a thumbnail with its deleted or never-recorded photo', () => {
+    const result = selectForSweep(
+      [
+        obj(`${H1}/${P1}.thumb.jpg`, 600),
+        obj(`${H1}/${P2}.jpg`, 120),
+        obj(`${H1}/${P2}.thumb.jpg`, 120),
+        obj(`${H1}/${P3}.thumb.jpg`, 5),
+        obj(`${H_GONE}/${P1}.thumb.jpg`, 1),
+      ],
+      base,
+    )
+    expect(result.remove).toEqual([`${H1}/${P2}.jpg`, `${H1}/${P2}.thumb.jpg`, `${H_GONE}/${P1}.thumb.jpg`])
+    expect(result).toMatchObject({ orphans: 2, goneHousehold: 1, kept: 2, skipped: 0 })
   })
 
   it('an age threshold of 0 removes an unrecorded file uploaded just now', () => {

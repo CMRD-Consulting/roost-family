@@ -55,13 +55,45 @@ export interface WeatherSummary {
   icon: WeatherIcon
 }
 
-/** Extracts the per-location forecast URLs from a `/points/{lat},{lon}` response. */
+const NWS_HOST = 'api.weather.gov'
+
+/** True for an absolute `https://api.weather.gov/…` URL on the default port with no credentials. */
+function isNwsUrl(value: unknown): value is string {
+  if (typeof value !== 'string') return false
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    return false
+  }
+  return url.protocol === 'https:' && url.hostname === NWS_HOST && url.port === '' && !url.username && !url.password
+}
+
+/**
+ * Extracts the per-location forecast URLs from a `/points/{lat},{lon}` response. The function later fetches them
+ * (and caches them with the row), so anything other than `https://api.weather.gov/…` is a parse error.
+ */
 export function parsePoints(json: NwsPointsResponse): NwsForecastUrls {
   const { forecast, forecastHourly } = json.properties ?? {}
   if (!forecast || !forecastHourly) {
     throw new Error('NWS points response is missing properties.forecast or properties.forecastHourly')
   }
+  if (!isNwsUrl(forecast) || !isNwsUrl(forecastHourly)) {
+    throw new Error('NWS points response has a forecast URL outside https://api.weather.gov')
+  }
   return { forecastUrl: forecast, forecastHourlyUrl: forecastHourly }
+}
+
+const NWS_SITE = 'roost.cmrd.dev'
+
+/**
+ * The User-Agent NWS asks every client to send: the app, its site and a contact (api.weather.gov "Authentication").
+ * `contact` is the operator's `NWS_CONTACT` (an email address or URL); without one, the site is the contact.
+ */
+export function nwsUserAgent(contact: string | undefined): string {
+  // Parentheses, semicolons and control characters would break the comment in the header.
+  const clean = (contact ?? '').replace(/[()\\;\u0000-\u001f\u007f]/g, '').trim()
+  return clean && clean !== NWS_SITE ? `RoostFamily/1.0 (${NWS_SITE}; ${clean})` : `RoostFamily/1.0 (${NWS_SITE})`
 }
 
 /** `now`'s calendar date in `timeZone`, as `YYYY-MM-DD` (no dependency on a date library). */

@@ -1973,14 +1973,14 @@ select pg_temp.expect('anon and authenticated cannot execute any private calenda
     'set_calendar_status', 'set_calendar_selection_gone', 'require_calendar_assignee', 'hide_unassigned_calendar_selection',
     'delete_calendar_vault_secret', 'end_membership')
     and (has_function_privilege('authenticated', p.oid, 'execute') or has_function_privilege('anon', p.oid, 'execute'))));
-select pg_temp.expect('only service_role can execute the 17 svc_ wrappers (6 here, 2 OAuth state wrappers in migration 9, 3 export wrappers in migration 10, 5 calendar wrappers in migration 11, 1 export wrapper in migration 12)', (
+select pg_temp.expect('only service_role can execute the 18 svc_ wrappers (6 here, 2 OAuth state wrappers in migration 9, 3 export wrappers in migration 10, 5 calendar wrappers in migration 11, 1 export wrapper in migration 12, 1 weather wrapper in migration 13)', (
   select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
   where n.nspname = 'public' and p.proname like 'svc\_%'
     and has_function_privilege('service_role', p.oid, 'execute')
     and not has_function_privilege('authenticated', p.oid, 'execute')
-    and not has_function_privilege('anon', p.oid, 'execute')) = 17
+    and not has_function_privilege('anon', p.oid, 'execute')) = 18
   and (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-       where n.nspname = 'public' and p.proname like 'svc\_%') = 17);
+       where n.nspname = 'public' and p.proname like 'svc\_%') = 18);
 select pg_temp.expect('anon cannot execute svc_calendar_secret',
   not has_function_privilege('anon', 'public.svc_calendar_secret(uuid)', 'execute'));
 select pg_temp.expect('PUBLIC cannot execute any calendar function', not exists (
@@ -2934,6 +2934,137 @@ select pg_temp.expect('the purge keeps an export claimed 5 minutes ago (requeste
   select status = 'pending' from public.household_exports where id = :'export_building'));
 select pg_temp.expect('the purge fails an export claimed 16 minutes ago (timeout)', (
   select status = 'failed' and error = 'timeout' from public.household_exports where id = :'export_stuck'));
+
+-- ─── Phase 4a hardening (migration 13) ───────────────────────────────────
+-- Fixtures: household T's owner Tam gets PIN 1357; U's owner Uma uploads into U; A (household A) is a non-member of T.
+\set U_OWNER '{"sub":"00000000-0000-0000-0000-000000000028","role":"authenticated","is_anonymous":false}'
+reset role;
+insert into public.member_pins (membership_id, pin_hash) values (:'membership_t', extensions.crypt('1357', extensions.gen_salt('bf', 8)));
+select gen_random_uuid() as photo_t1, gen_random_uuid() as photo_t2, gen_random_uuid() as photo_t3 \gset
+select set_config('smoke.photo_t1', :'photo_t1', true), set_config('smoke.photo_t2', :'photo_t2', true),
+       set_config('smoke.photo_t3', :'photo_t3', true), set_config('smoke.membership_t', :'membership_t', true);
+
+\echo '[115] Weather: one NWS attempt per household every 5 minutes (svc_claim_weather_attempt), service role only'
+select pg_temp.expect('household_weather has attempted_at', exists (
+  select 1 from information_schema.columns where table_schema = 'public' and table_name = 'household_weather' and column_name = 'attempted_at'));
+select pg_temp.expect('svc_claim_weather_attempt: service role only', (
+  has_function_privilege('service_role', 'public.svc_claim_weather_attempt(uuid)', 'execute')
+  and not has_function_privilege('authenticated', 'public.svc_claim_weather_attempt(uuid)', 'execute')
+  and not has_function_privilege('anon', 'public.svc_claim_weather_attempt(uuid)', 'execute')));
+set local role service_role;
+select pg_temp.expect('the first attempt is claimed (and creates the row)', public.svc_claim_weather_attempt(:'household_t'));
+select pg_temp.expect('a second attempt within 5 minutes is not', not public.svc_claim_weather_attempt(:'household_t'));
+reset role;
+select pg_temp.expect('the claim recorded attempted_at', (
+  select attempted_at is not null and fetched_at is null from public.household_weather where household_id = :'household_t'));
+update public.household_weather set attempted_at = now() - interval '4 minutes', error = 'NWS request failed (503)',
+  fetched_at = now() - interval '2 hours', current_temp_f = 70 where household_id = :'household_t';
+set local role service_role;
+select pg_temp.expect('a failed attempt 4 minutes ago still blocks a new one', not public.svc_claim_weather_attempt(:'household_t'));
+reset role;
+update public.household_weather set attempted_at = now() - interval '5 minutes 1 second' where household_id = :'household_t';
+set local role service_role;
+select pg_temp.expect('an attempt over 5 minutes ago allows a new one', public.svc_claim_weather_attempt(:'household_t'));
+reset role;
+select pg_temp.expect('a claim keeps the last good values and error', (
+  select current_temp_f = 70 and error is not null and attempted_at > now() - interval '1 minute'
+  from public.household_weather where household_id = :'household_t'));
+
+\echo '[116] Photo thumbnails: <household>/<photo>.thumb.jpg uploads like its photo and is readable exactly when the photo is recorded'
+set local role authenticated;
+select set_config('request.jwt.claims', :'T', true);
+insert into storage.objects (bucket_id, name) values
+  ('household-photos', :'household_t' || '/' || :'photo_t1' || '.jpg'),
+  ('household-photos', :'household_t' || '/' || :'photo_t1' || '.thumb.jpg'),
+  ('household-photos', :'household_t' || '/' || :'photo_t2' || '.thumb.jpg');
+select pg_temp.expect_error('no other thumbnail name: .thumbs.jpg',
+  $q$insert into storage.objects (bucket_id, name) values ('household-photos', pg_temp.v('household_t')::text || '/' || gen_random_uuid()::text || '.thumbs.jpg')$q$, '42501');
+select pg_temp.expect_error('no other thumbnail name: .thumb.png',
+  $q$insert into storage.objects (bucket_id, name) values ('household-photos', pg_temp.v('household_t')::text || '/' || gen_random_uuid()::text || '.thumb.png')$q$, '42501');
+select pg_temp.expect_error('no other thumbnail name: .thumb.thumb.jpg',
+  $q$insert into storage.objects (bucket_id, name) values ('household-photos', pg_temp.v('household_t')::text || '/' || gen_random_uuid()::text || '.thumb.thumb.jpg')$q$, '42501');
+select pg_temp.expect_error('no thumbnail in another household''s folder',
+  $q$insert into storage.objects (bucket_id, name) values ('household-photos', pg_temp.v('household_u')::text || '/' || gen_random_uuid()::text || '.thumb.jpg')$q$, '42501');
+select pg_temp.expect('neither the photo nor its thumbnail is readable before add_photo', not exists (
+  select 1 from storage.objects where bucket_id = 'household-photos'));
+select public.add_photo(:'membership_t', '1357', :'photo_t1', 'slideshow');
+select pg_temp.expect('the photo and its thumbnail are readable once recorded; a thumbnail with no recorded photo is not', (
+  select array_agg(name order by name) from storage.objects where bucket_id = 'household-photos')
+  = array[pg_temp.v('household_t')::text || '/' || pg_temp.v('photo_t1')::text || '.jpg',
+          pg_temp.v('household_t')::text || '/' || pg_temp.v('photo_t1')::text || '.thumb.jpg']);
+select pg_temp.expect_error('add_photo never records a thumbnail as a photo (no <id>.jpg for photo t2)',
+  $q$select public.add_photo(pg_temp.v('membership_t'), '1357', pg_temp.v('photo_t2'), 'slideshow')$q$, '22023');
+select pg_temp.expect('photos rows stay <household>/<id>.jpg', not exists (select 1 from public.photos where storage_path like '%.thumb.jpg'));
+select set_config('request.jwt.claims', :'A', true);
+select pg_temp.expect('another household reads neither', not exists (select 1 from storage.objects where bucket_id = 'household-photos'));
+reset role;
+select pg_temp.expect('storage helpers: authenticated only (they run inside the storage policies)', (
+  select bool_and(has_function_privilege('authenticated', f, 'execute') and not has_function_privilege('anon', f, 'execute'))
+  from unnest(array['private.photo_object_household(text)', 'private.photo_object_readable(text)',
+                    'private.photo_original_path(text)', 'private.photo_upload_allowed(text)']) as f));
+
+\echo '[117] Upload quota: at most 40 unrecorded objects created in the last hour per household folder'
+-- Photo t2's thumbnail (unrecorded, just now) counts; add 39 more unrecorded objects as the storage owner.
+insert into storage.objects (bucket_id, name)
+select 'household-photos', :'household_t' || '/' || gen_random_uuid()::text || '.jpg' from generate_series(1, 39);
+set local role authenticated;
+select set_config('request.jwt.claims', :'T', true);
+select pg_temp.expect_error('the 41st unrecorded object in an hour is refused',
+  $q$insert into storage.objects (bucket_id, name) values ('household-photos', pg_temp.v('household_t')::text || '/' || gen_random_uuid()::text || '.jpg')$q$, '42501');
+select pg_temp.expect_error('a thumbnail counts the same',
+  $q$insert into storage.objects (bucket_id, name) values ('household-photos', pg_temp.v('household_t')::text || '/' || gen_random_uuid()::text || '.thumb.jpg')$q$, '42501');
+select set_config('request.jwt.claims', :'U_OWNER', true);
+insert into storage.objects (bucket_id, name) values ('household-photos', :'household_u' || '/' || gen_random_uuid()::text || '.jpg');
+reset role;
+select pg_temp.expect('the quota is per household: household U''s owner still uploads into U''s folder', (
+  select count(*) from storage.objects where bucket_id = 'household-photos' and name like :'household_u' || '/%') = 1);
+select pg_temp.expect('recorded photo t1 and its thumbnail were not counted (40 unrecorded, 42 objects)', (
+  select count(*) from storage.objects where bucket_id = 'household-photos' and name like :'household_t' || '/%') = 42);
+update storage.objects set created_at = now() - interval '61 minutes'
+where bucket_id = 'household-photos' and name = :'household_t' || '/' || :'photo_t2' || '.thumb.jpg';
+set local role authenticated;
+select set_config('request.jwt.claims', :'T', true);
+insert into storage.objects (bucket_id, name) values ('household-photos', :'household_t' || '/' || :'photo_t3' || '.jpg');
+select pg_temp.expect_error('that upload took the freed slot',
+  $q$insert into storage.objects (bucket_id, name) values ('household-photos', pg_temp.v('household_t')::text || '/' || gen_random_uuid()::text || '.jpg')$q$, '42501');
+select public.add_photo(:'membership_t', '1357', :'photo_t3', 'avatar');
+-- Recording photo t3 frees its slot: this upload succeeds.
+insert into storage.objects (bucket_id, name) values ('household-photos', :'household_t' || '/' || gen_random_uuid()::text || '.thumb.jpg');
+select set_config('request.jwt.claims', :'A', true);
+select pg_temp.expect_error('a non-member still cannot upload into T''s folder',
+  $q$insert into storage.objects (bucket_id, name) values ('household-photos', pg_temp.v('household_t')::text || '/' || gen_random_uuid()::text || '.jpg')$q$, '42501');
+reset role;
+
+\echo '[118] add_photo: at most 300 photos of all kinds per household'
+insert into public.photos (id, household_id, storage_path, kind)
+select g.id, :'household_t', :'household_t' || '/' || g.id::text || '.jpg', 'step'
+from (select gen_random_uuid() as id from generate_series(1, 297)) g;
+select gen_random_uuid() as photo_t4, gen_random_uuid() as photo_t5 \gset
+select set_config('smoke.photo_t5', :'photo_t5', true);
+insert into storage.objects (bucket_id, name) values
+  ('household-photos', :'household_t' || '/' || :'photo_t4' || '.jpg'),
+  ('household-photos', :'household_t' || '/' || :'photo_t5' || '.jpg');
+set local role authenticated;
+select set_config('request.jwt.claims', :'T', true);
+select public.add_photo(:'membership_t', '1357', :'photo_t4', 'step');
+select pg_temp.expect('300 photos allowed', (select count(*) from public.photos where household_id = pg_temp.v('household_t')) = 300);
+select pg_temp.expect_error('the 301st photo is rejected, whatever its kind',
+  $q$select public.add_photo(pg_temp.v('membership_t'), '1357', pg_temp.v('photo_t5'), 'avatar')$q$, '22023');
+reset role;
+
+\echo '[119] Purge: Take list links that ended (expired or revoked) more than 7 days ago are deleted'
+delete from public.take_list_links where household_id in (:'household_t', :'household_u');
+insert into public.take_list_links (household_id, token_hash, expires_at, revoked_at, created_at) values
+  (:'household_t', 'smoke-expired-8d', now() - interval '8 days', null, now() - interval '9 days'),
+  (:'household_t', 'smoke-revoked-8d', now() - interval '7 days', now() - interval '8 days', now() - interval '8 days 1 hour'),
+  (:'household_t', 'smoke-expired-9d-revoked-1d', now() - interval '9 days', now() - interval '1 day', now() - interval '10 days'),
+  (:'household_t', 'smoke-revoked-6d', now() + interval '1 hour', now() - interval '6 days', now() - interval '6 days 1 hour'),
+  (:'household_t', 'smoke-expired-6d', now() - interval '6 days', now() - interval '5 days', now() - interval '7 days'),
+  (:'household_u', 'smoke-active', now() + interval '20 hours', null, now() - interval '4 hours');
+select private.purge_deleted_households();
+select pg_temp.expect('links that ended 8 and 9 days ago are gone; those that ended 6 days ago and the active one stay', (
+  select array_agg(token_hash order by token_hash) from public.take_list_links where household_id in (:'household_t', :'household_u'))
+  = array['smoke-active', 'smoke-expired-6d', 'smoke-revoked-6d']);
 \o
 \echo 'ALL RLS SMOKE CHECKS PASSED'
 rollback;

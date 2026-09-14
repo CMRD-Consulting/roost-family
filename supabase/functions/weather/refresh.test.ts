@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { NwsForecastPeriod, NwsForecastResponse } from '../_shared/nws.ts'
 import {
+  WEATHER_ATTEMPT_MS,
   WEATHER_CACHE_MS,
   WeatherHttpError,
   createNwsProvider,
@@ -61,15 +62,21 @@ function row(overrides: Partial<WeatherRow> = {}): WeatherRow {
     error: null,
     points_forecast_url: FORECAST_URL,
     points_hourly_url: HOURLY_URL,
+    attempted_at: new Date(NOW.getTime() - 10 * 60_000).toISOString(),
     ...overrides,
   }
 }
 
-function fakeStore(cached: WeatherRow | null, household: Awaited<ReturnType<WeatherStore['household']>> = { timeZone: TZ, lat: 35.23, lon: -80.84 }) {
+function fakeStore(
+  cached: WeatherRow | null,
+  household: Awaited<ReturnType<WeatherStore['household']>> = { timeZone: TZ, lat: 35.23, lon: -80.84 },
+  claim = true,
+) {
   const saved: WeatherRow[] = []
   const store: WeatherStore = {
     household: vi.fn(async () => household),
     cached: vi.fn(async () => cached),
+    claimAttempt: vi.fn(async () => claim),
     save: vi.fn(async (r: WeatherRow) => {
       saved.push(r)
     }),
@@ -162,9 +169,63 @@ describe('refreshWeather', () => {
         error: null,
         points_forecast_url: FORECAST_URL,
         points_hourly_url: HOURLY_URL,
+        attempted_at: NOW.toISOString(),
       },
     ])
     expect(result).toMatchObject({ status: 'refreshed', stale: false, weather: { currentTempF: 74, fetchedAt: NOW.toISOString() } })
+  })
+
+  it('makes no NWS request within 5 minutes of the last attempt that succeeded, returning the cached values', async () => {
+    const fetchJson = fakeFetch({})
+    const attempted = row({
+      fetched_at: new Date(NOW.getTime() - WEATHER_CACHE_MS - 60_000).toISOString(),
+      attempted_at: new Date(NOW.getTime() - WEATHER_ATTEMPT_MS + 1000).toISOString(),
+    })
+    const { store, saved } = fakeStore(attempted)
+    const result = await refreshWeather(store, createNwsProvider(fetchJson), HOUSEHOLD, NOW)
+    expect(fetchJson).not.toHaveBeenCalled()
+    expect(store.claimAttempt).not.toHaveBeenCalled()
+    expect(saved).toEqual([])
+    expect(result).toMatchObject({ status: 'cached', stale: true, weather: { currentTempF: 70, fetchedAt: attempted.fetched_at } })
+  })
+
+  it('makes no NWS request within 5 minutes of the last attempt that failed, returning the last good values and error', async () => {
+    const fetchJson = fakeFetch({})
+    const failed = row({
+      fetched_at: new Date(NOW.getTime() - 3 * WEATHER_CACHE_MS).toISOString(),
+      attempted_at: new Date(NOW.getTime() - 60_000).toISOString(),
+      error: 'NWS request failed (503)',
+    })
+    const { store } = fakeStore(failed)
+    const result = await refreshWeather(store, createNwsProvider(fetchJson), HOUSEHOLD, NOW)
+    expect(fetchJson).not.toHaveBeenCalled()
+    expect(result).toMatchObject({ status: 'cached', stale: true, weather: { currentTempF: 70, error: 'NWS request failed (503)' } })
+  })
+
+  it('tries again once 5 minutes have passed since the last attempt', async () => {
+    const fetchJson = fakeFetch({ [FORECAST_URL]: DAILY, [HOURLY_URL]: HOURLY })
+    const { store } = fakeStore(
+      row({ fetched_at: null, attempted_at: new Date(NOW.getTime() - WEATHER_ATTEMPT_MS).toISOString(), error: 'timeout' }),
+    )
+    expect((await refreshWeather(store, createNwsProvider(fetchJson), HOUSEHOLD, NOW)).status).toBe('refreshed')
+    expect(store.claimAttempt).toHaveBeenCalledWith(HOUSEHOLD)
+  })
+
+  it('makes no NWS request when another request claimed the attempt first (concurrent displays)', async () => {
+    const fetchJson = fakeFetch({})
+    const stale = row({ fetched_at: new Date(NOW.getTime() - 2 * WEATHER_CACHE_MS).toISOString(), attempted_at: null })
+    const { store, saved } = fakeStore(stale, undefined, false)
+    const result = await refreshWeather(store, createNwsProvider(fetchJson), HOUSEHOLD, NOW)
+    expect(fetchJson).not.toHaveBeenCalled()
+    expect(saved).toEqual([])
+    expect(result).toMatchObject({ status: 'cached', stale: true, weather: { currentTempF: 70 } })
+
+    const { store: empty } = fakeStore(null, undefined, false)
+    expect(await refreshWeather(empty, createNwsProvider(fetchJson), HOUSEHOLD, NOW)).toMatchObject({
+      status: 'cached',
+      stale: true,
+      weather: { currentTempF: null, fetchedAt: null },
+    })
   })
 
   it('reuses cached points URLs for a stale row (two requests, not three)', async () => {
@@ -179,7 +240,7 @@ describe('refreshWeather', () => {
 
   it('refreshes a row that has never succeeded', async () => {
     const fetchJson = fakeFetch({ [FORECAST_URL]: DAILY, [HOURLY_URL]: HOURLY })
-    const { store } = fakeStore(row({ fetched_at: null, current_temp_f: null, error: 'timeout' }))
+    const { store } = fakeStore(row({ fetched_at: null, current_temp_f: null, error: 'timeout', attempted_at: null }))
     expect((await refreshWeather(store, createNwsProvider(fetchJson), HOUSEHOLD, NOW)).status).toBe('refreshed')
   })
 
@@ -193,7 +254,7 @@ describe('refreshWeather', () => {
       [NEW_FORECAST]: DAILY,
       [NEW_HOURLY]: HOURLY,
     })
-    const { store, saved } = fakeStore(row({ fetched_at: null }))
+    const { store, saved } = fakeStore(row({ fetched_at: null, attempted_at: null }))
     const result = await refreshWeather(store, createNwsProvider(fetchJson), HOUSEHOLD, NOW)
     expect(result.status).toBe('refreshed')
     expect(saved[0]).toMatchObject({ points_forecast_url: NEW_FORECAST, points_hourly_url: NEW_HOURLY, error: null })
@@ -204,7 +265,7 @@ describe('refreshWeather', () => {
     const old = row({ fetched_at: new Date(NOW.getTime() - 2 * WEATHER_CACHE_MS).toISOString() })
     const { store, saved } = fakeStore(old)
     const result = await refreshWeather(store, createNwsProvider(fetchJson), HOUSEHOLD, NOW)
-    expect(saved).toEqual([{ ...old, error: `NWS request failed (503): ${FORECAST_URL}` }])
+    expect(saved).toEqual([{ ...old, error: `NWS request failed (503): ${FORECAST_URL}`, attempted_at: NOW.toISOString() }])
     expect(result).toMatchObject({
       status: 'failed',
       stale: true,
@@ -229,6 +290,7 @@ describe('refreshWeather', () => {
         error: 'The signal has been aborted',
         points_forecast_url: null,
         points_hourly_url: null,
+        attempted_at: NOW.toISOString(),
       },
     ])
     expect(result).toMatchObject({ status: 'failed', stale: true, weather: { currentTempF: null } })
