@@ -2,19 +2,21 @@
 /**
  * Settings > Photos (spec §7.7, §7.9, §11.1): the household's Night Mode slideshow photos, up to 200. Chosen files
  * are prepared on this tablet (resized to 1600 px, re-encoded so location and other metadata are dropped), uploaded
- * one at a time to the household's private storage and added with the settings session's PIN. Thumbnails come from
- * short-lived signed URLs.
+ * one at a time, with a 320 px thumbnail, to the household's private storage and added with the settings session's PIN.
+ * The grid shows the thumbnails (a photo added before thumbnails existed shows itself) through 15-minute signed URLs,
+ * re-signed 5 minutes before they expire.
  */
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useReloadHold } from '@/app/reloadHolds'
 import {
-  loadPhotoUrlApi, MAX_SLIDESHOW_PHOTOS, PHOTO_URL_SECONDS, PhotoDecodeError, prepareImage,
+  loadPhotoUrlApi, MAX_SLIDESHOW_PHOTOS, PHOTO_THUMB_EDGE, PHOTO_URL_SECONDS, PhotoDecodeError, prepareImage, thumbnailPath,
 } from '@/data/photosApi'
 import { SettingsError } from '@/data/settingsApi'
 import type { HouseholdPhoto } from '@/data/snapshot'
 import { useHouseholdStore } from '@/stores/householdStore'
 import { useSettingsSessionStore } from '@/stores/settingsSession'
 import RButton from '@/ui/RButton.vue'
+import { URL_REFRESH_MARGIN_MS } from '@/features/modes/slideshow'
 import { loadSettingsApi } from '../settingsApiLoader'
 import { settingsErrorMessage } from '../settingsErrors'
 import { useSettingsOffline, useSettingsSave } from '../useSettingsSave'
@@ -30,8 +32,40 @@ const photos = computed<HouseholdPhoto[]>(() =>
 const atLimit = computed(() => photos.value.length >= MAX_SLIDESHOW_PHOTOS)
 
 // ─── Thumbnails ────────────────────────────────────────────────────────────
-/** Storage path -> signed URL, fetched for paths not yet signed. */
+/** Storage path -> signed URL of its thumbnail, or of the photo itself when it has no thumbnail. */
 const thumbUrls = reactive(new Map<string, string>())
+let refreshTimer: ReturnType<typeof setTimeout> | undefined
+let disposed = false
+
+/** Signs thumbnails for `paths`, then the photos themselves for any thumbnail that couldn't be signed. */
+async function signTiles(paths: string[]): Promise<Map<string, string>> {
+  const api = await loadPhotoUrlApi()
+  const thumbs = await api.signedUrls(paths.map(thumbnailPath), PHOTO_URL_SECONDS)
+  const withoutThumb = paths.filter((path) => !thumbs.has(thumbnailPath(path)))
+  const originals = withoutThumb.length > 0 ? await api.signedUrls(withoutThumb, PHOTO_URL_SECONDS) : new Map<string, string>()
+  const urls = new Map<string, string>()
+  for (const path of paths) {
+    const url = thumbs.get(thumbnailPath(path)) ?? originals.get(path)
+    if (url !== undefined) urls.set(path, url)
+  }
+  return urls
+}
+
+/** Re-signs every tile 5 minutes before the URLs expire, so a lazy image scrolled into view later still loads. */
+function scheduleRefresh(): void {
+  clearTimeout(refreshTimer)
+  refreshTimer = setTimeout(async () => {
+    try {
+      const urls = await signTiles(photos.value.map((p) => p.storagePath))
+      if (disposed) return
+      thumbUrls.clear()
+      for (const [path, url] of urls) thumbUrls.set(path, url)
+    } catch {
+      // Offline: the tiles keep their URLs; the next round tries again.
+    }
+    if (!disposed) scheduleRefresh()
+  }, PHOTO_URL_SECONDS * 1000 - URL_REFRESH_MARGIN_MS)
+}
 
 watch(
   () => photos.value.map((p) => p.storagePath).join('|'),
@@ -39,14 +73,21 @@ watch(
     const missing = photos.value.map((p) => p.storagePath).filter((path) => !thumbUrls.has(path))
     if (missing.length === 0) return
     try {
-      const urls = await (await loadPhotoUrlApi()).signedUrls(missing, PHOTO_URL_SECONDS)
+      const urls = await signTiles(missing)
+      if (disposed) return
       for (const [path, url] of urls) thumbUrls.set(path, url)
+      if (refreshTimer === undefined) scheduleRefresh()
     } catch {
       // Offline or signing failed: the tiles stay blank; the next change retries.
     }
   },
   { immediate: true },
 )
+
+onBeforeUnmount(() => {
+  disposed = true
+  clearTimeout(refreshTimer)
+})
 
 // ─── Adding ────────────────────────────────────────────────────────────────
 type UploadState = 'waiting' | 'preparing' | 'uploading' | 'added' | 'skipped' | 'failed'
@@ -192,6 +233,9 @@ async function confirmDelete(photoId: string): Promise<void> {
               :src="thumbUrls.get(photo.storagePath)"
               alt=""
               loading="lazy"
+              decoding="async"
+              :width="PHOTO_THUMB_EDGE"
+              :height="PHOTO_THUMB_EDGE"
               class="h-full w-full object-cover"
             />
             <button

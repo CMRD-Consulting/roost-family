@@ -330,7 +330,7 @@ describe('createDemoSettingsApi', () => {
 
     it('uploads to a blob URL and adds it to the household as a slideshow photo', async () => {
       const api = createDemoSettingsApi()
-      const id = await api.uploadPhoto(household, new Blob(['jpeg'], { type: 'image/jpeg' }))
+      const id = await api.uploadPhoto(household, { image: new Blob(['jpeg'], { type: 'image/jpeg' }), thumbnail: new Blob(['thumb'], { type: 'image/jpeg' }) })
       expect(getDemoSnapshot(new Date()).photos ?? []).toEqual([])
       await api.addPhoto(auth, id, 'slideshow')
       expect(getDemoSnapshot(new Date()).photos).toEqual([
@@ -340,15 +340,15 @@ describe('createDemoSettingsApi', () => {
 
     it('add requires the PIN and an uploaded photo', async () => {
       const api = createDemoSettingsApi()
-      const id = await api.uploadPhoto(household, new Blob())
+      const id = await api.uploadPhoto(household, { image: new Blob(), thumbnail: new Blob() })
       await expect(api.addPhoto({ membershipId: SAM_ID, pin: '0000' }, id, 'slideshow')).rejects.toMatchObject({ code: 'auth' })
       await expect(api.addPhoto(auth, 'never-uploaded', 'slideshow')).rejects.toMatchObject({ code: 'invalid' })
     })
 
     it('keeps at most 200 slideshow photos', async () => {
       const api = createDemoSettingsApi()
-      for (let i = 0; i < 200; i++) await api.addPhoto(auth, await api.uploadPhoto(household, new Blob()), 'slideshow')
-      const extra = await api.uploadPhoto(household, new Blob())
+      for (let i = 0; i < 200; i++) await api.addPhoto(auth, await api.uploadPhoto(household, { image: new Blob(), thumbnail: new Blob() }), 'slideshow')
+      const extra = await api.uploadPhoto(household, { image: new Blob(), thumbnail: new Blob() })
       await expect(api.addPhoto(auth, extra, 'slideshow')).rejects.toMatchObject({
         code: 'invalid', message: 'a household can have at most 200 slideshow photos',
       })
@@ -357,7 +357,7 @@ describe('createDemoSettingsApi', () => {
 
     it('deletes a photo with the PIN', async () => {
       const api = createDemoSettingsApi()
-      const id = await api.uploadPhoto(household, new Blob())
+      const id = await api.uploadPhoto(household, { image: new Blob(), thumbnail: new Blob() })
       await api.addPhoto(auth, id, 'slideshow')
       await expect(api.deletePhoto({ membershipId: SAM_ID, pin: '0000' }, id)).rejects.toMatchObject({ code: 'auth' })
       await api.deletePhoto(auth, id)

@@ -271,6 +271,7 @@ const weatherRow = (over: Partial<Tables<'household_weather'>> = {}): Tables<'ho
   error: null,
   points_forecast_url: 'https://api.weather.gov/gridpoints/GSP/119,65/forecast',
   points_hourly_url: 'https://api.weather.gov/gridpoints/GSP/119,65/forecast/hourly',
+  attempted_at: '2026-09-14T17:30:00+00:00',
   updated_at: '2026-09-14T17:30:00+00:00',
   ...over,
 })

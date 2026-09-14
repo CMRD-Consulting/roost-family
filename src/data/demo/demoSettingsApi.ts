@@ -19,7 +19,7 @@ import {
   type StickerCategoryInput,
   type UpdateChildInput,
 } from '../settingsApi'
-import { MAX_SLIDESHOW_PHOTOS } from '../photosApi'
+import { MAX_SLIDESHOW_PHOTOS, type PreparedPhoto } from '../photosApi'
 import type { HouseholdSnapshot, PhotoKind, SitterInfo, StickerCategory } from '../snapshot'
 import { getDemoSnapshot, mutateDemo } from './demoHousehold'
 
@@ -349,9 +349,9 @@ export function createDemoSettingsApi(): SettingsApi {
   }
 
   // The demo keeps photos in this browser tab: an object URL stands in for the storage path.
-  async function uploadPhoto(_householdId: string, image: Blob): Promise<string> {
+  async function uploadPhoto(_householdId: string, photo: PreparedPhoto): Promise<string> {
     const id = crypto.randomUUID()
-    demoUploads.set(id, URL.createObjectURL(image))
+    demoUploads.set(id, URL.createObjectURL(photo.image))
     return id
   }
 

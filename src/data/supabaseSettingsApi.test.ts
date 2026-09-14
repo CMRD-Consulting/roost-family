@@ -529,18 +529,37 @@ describe('createSupabaseSettingsApi', () => {
       return { client, calls, upload, fromBucket }
     }
 
-    it('uploadPhoto uploads the JPEG to <household>/<new id>.jpg without overwriting and returns the id', async () => {
+    it('uploadPhoto uploads the photo and then its thumbnail under a new id, without overwriting, private for 5 minutes in caches', async () => {
       const { client, upload, fromBucket } = storageClient({ data: { path: 'x' }, error: null })
       const image = new Blob(['jpeg'], { type: 'image/jpeg' })
-      const id = await createSupabaseSettingsApi(client).uploadPhoto(household, image)
+      const thumbnail = new Blob(['thumb'], { type: 'image/jpeg' })
+      const id = await createSupabaseSettingsApi(client).uploadPhoto(household, { image, thumbnail })
       expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
       expect(fromBucket).toHaveBeenCalledWith('household-photos')
-      expect(upload).toHaveBeenCalledWith(`${household}/${id}.jpg`, image, { contentType: 'image/jpeg', upsert: false })
+      // A raw body, not a Blob: storage-js sends a Blob as a form with `cacheControl`, which Storage stores as
+      // `max-age=<value>`; the header on a raw body is stored as given.
+      const options = { contentType: 'image/jpeg', upsert: false, headers: { 'cache-control': 'private, max-age=300' } }
+      expect(upload.mock.calls).toEqual([
+        [`${household}/${id}.jpg`, expect.any(ArrayBuffer), options],
+        [`${household}/${id}.thumb.jpg`, expect.any(ArrayBuffer), options],
+      ])
+      const calls = upload.mock.calls as unknown as [string, ArrayBuffer][]
+      expect(new TextDecoder().decode(calls[0]![1])).toBe('jpeg')
+      expect(new TextDecoder().decode(calls[1]![1])).toBe('thumb')
+    })
+
+    it('uploadPhoto fails without uploading the thumbnail when the photo upload fails', async () => {
+      const { client, upload } = storageClient({ data: null, error: { message: 'new row violates row-level security policy', status: 403, statusCode: '403' } })
+      const err = await createSupabaseSettingsApi(client).uploadPhoto(household, { image: new Blob(['a']), thumbnail: new Blob(['b']) }).catch((e: unknown) => e)
+      // Storage refuses an upload only past the hourly quota of unrecorded files (or for a removed display): no PIN is
+      // involved, so it is worded as its own message, not as a PIN failure.
+      expect(err).toMatchObject({ code: 'invalid', message: 'this tablet can’t upload more photos right now; try again in an hour' })
+      expect(upload).toHaveBeenCalledTimes(1)
     })
 
     it('uploadPhoto maps storage failures', async () => {
       const cases: Array<[unknown, string]> = [
-        [{ message: 'new row violates row-level security policy', status: 403, statusCode: '403' }, 'auth'],
+        [{ message: 'new row violates row-level security policy', status: 403, statusCode: '403' }, 'invalid'],
         [{ message: 'The object exceeded the maximum allowed size', status: 413, statusCode: '413' }, 'invalid'],
         [{ message: 'Failed to fetch', status: undefined }, 'network'],
         [{ message: 'gateway', status: 502, statusCode: '502' }, 'network'],
@@ -548,7 +567,7 @@ describe('createSupabaseSettingsApi', () => {
       ]
       for (const [error, code] of cases) {
         const { client } = storageClient({ data: null, error })
-        const err = await createSupabaseSettingsApi(client).uploadPhoto(household, new Blob()).catch((e: unknown) => e)
+        const err = await createSupabaseSettingsApi(client).uploadPhoto(household, { image: new Blob(), thumbnail: new Blob() }).catch((e: unknown) => e)
         expect(err, JSON.stringify(error)).toBeInstanceOf(SettingsError)
         expect((err as SettingsError).code, JSON.stringify(error)).toBe(code)
       }
@@ -557,7 +576,7 @@ describe('createSupabaseSettingsApi', () => {
     it('uploadPhoto maps a thrown request to network', async () => {
       const { client, upload } = storageClient(null)
       upload.mockRejectedValueOnce(new TypeError('fetch failed'))
-      const err = await createSupabaseSettingsApi(client).uploadPhoto(household, new Blob()).catch((e: unknown) => e)
+      const err = await createSupabaseSettingsApi(client).uploadPhoto(household, { image: new Blob(), thumbnail: new Blob() }).catch((e: unknown) => e)
       expect((err as SettingsError).code).toBe('network')
     })
 

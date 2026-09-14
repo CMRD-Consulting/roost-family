@@ -1,5 +1,6 @@
 import type { Feature, RoutineStep, TimeWindow } from '@/domain/types'
 import type { EntryTable } from './logCommands'
+import type { PreparedPhoto } from './photosApi'
 import type { PhotoKind, SitterInfo } from './snapshot'
 import type { RoostClient } from './supabase'
 
@@ -214,11 +215,13 @@ export interface SettingsApi {
   voidDose(auth: SettingsAuth, doseId: string, reason: string): Promise<void>
 
   // ─── Photos (spec §7.9, §11.1) ────────────────────────────────────────────────────────────────────────
-  /** Uploads an already prepared JPEG (see `prepareImage` in photosApi) to the household's private folder under a
-   *  new id and returns the id. Not PIN-checked (storage lets members and displays upload into their own household's
-   *  folder); the photo appears in the household only after `addPhoto`. */
-  uploadPhoto(householdId: string, image: Blob): Promise<string>
-  /** Adds an uploaded photo to the household. A household keeps at most 200 slideshow photos ('invalid' past that). */
+  /** Uploads an already prepared photo and its thumbnail (see `prepareImage` in photosApi) to the household's private
+   *  folder under a new id and returns the id. Not PIN-checked (storage lets members and displays upload into their own
+   *  household's folder, up to an hourly quota of unrecorded files); the photo appears in the household only after
+   *  `addPhoto`. */
+  uploadPhoto(householdId: string, photo: PreparedPhoto): Promise<string>
+  /** Adds an uploaded photo to the household. A household keeps at most 200 slideshow photos and 300 photos in all
+   *  ('invalid' past that). */
   addPhoto(auth: SettingsAuth, photoId: string, kind: PhotoKind): Promise<void>
   /** Deletes the photo and its stored file, and clears any child or routine step that used it. */
   deletePhoto(auth: SettingsAuth, photoId: string): Promise<void>

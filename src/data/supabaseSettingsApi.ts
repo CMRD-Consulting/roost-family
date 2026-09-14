@@ -19,7 +19,7 @@ import {
   type StickerCategoryInput,
   type UpdateChildInput,
 } from './settingsApi'
-import { PHOTO_BUCKET, photoPath } from './photosApi'
+import { PHOTO_BUCKET, PHOTO_CACHE_CONTROL, photoPath, thumbnailPath, type PreparedPhoto } from './photosApi'
 import type { PhotoKind, SitterInfo } from './snapshot'
 import type { RoostClient } from './supabase'
 
@@ -301,17 +301,33 @@ export function createSupabaseSettingsApi(client: RoostClient): SettingsApi {
     )
   }
 
-  async function uploadPhoto(householdId: string, image: Blob): Promise<string> {
-    const photoId = crypto.randomUUID()
+  /** Uploads one file without overwriting. The body is raw bytes, not a Blob: storage-js sends a Blob as a form whose
+   *  `cacheControl` Storage stores as `max-age=<value>`, while a raw body's `cache-control` header is stored as given. */
+  async function uploadFile(path: string, file: Blob): Promise<void> {
     let result: { error: { message: string; status?: number; statusCode?: string } | null }
     try {
-      result = await client.storage
-        .from(PHOTO_BUCKET)
-        .upload(photoPath(householdId, photoId), image, { contentType: 'image/jpeg', upsert: false })
+      result = await client.storage.from(PHOTO_BUCKET).upload(path, await file.arrayBuffer(), {
+        contentType: 'image/jpeg',
+        upsert: false,
+        headers: { 'cache-control': PHOTO_CACHE_CONTROL },
+      })
     } catch (e) {
       throw new SettingsError(e instanceof Error ? e.message : String(e), 'network')
     }
-    if (result.error) throw storageError(result.error)
+    if (result.error) {
+      const error = storageError(result.error)
+      // Storage checks no PIN: a refusal means the household's hourly quota of never-added uploads is used up (or this
+      // display was removed), not a wrong PIN.
+      if (error.code === 'auth') throw new SettingsError('this tablet can’t upload more photos right now; try again in an hour', 'invalid')
+      throw error
+    }
+  }
+
+  async function uploadPhoto(householdId: string, photo: PreparedPhoto): Promise<string> {
+    const photoId = crypto.randomUUID()
+    const path = photoPath(householdId, photoId)
+    await uploadFile(path, photo.image)
+    await uploadFile(thumbnailPath(path), photo.thumbnail)
     return photoId
   }
 

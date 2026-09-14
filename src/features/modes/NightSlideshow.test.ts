@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import { PHOTO_URL_SECONDS } from '@/data/photosApi'
 import type { HouseholdPhoto } from '@/data/snapshot'
 import NightSlideshow from './NightSlideshow.vue'
-import { nightSeed, shuffledOrder, slotAt } from './slideshow'
+import { nightSeed, shuffledOrder, slotAt, URL_REFRESH_MARGIN_MS } from './slideshow'
 
 const urlApi = vi.hoisted(() => ({
   version: 1,
@@ -105,12 +106,12 @@ afterEach(() => {
 })
 
 describe('NightSlideshow', () => {
-  it('signs every photo once for an hour and shows this minute’s photo once it has loaded', async () => {
+  it('signs every photo once for 15 minutes and shows this minute’s photo once it has loaded', async () => {
     const w = mountSlideshow()
     expect(slides(w)).toEqual([])
     await settle()
     expect(urlApi.signedUrls).toHaveBeenCalledTimes(1)
-    expect(urlApi.signedUrls).toHaveBeenCalledWith(PHOTOS.map((p) => p.storagePath), 3600)
+    expect(urlApi.signedUrls).toHaveBeenCalledWith(PHOTOS.map((p) => p.storagePath), 900)
     const [first, second] = expectedOrder()
     expect(slides(w)).toEqual([expect.objectContaining({ id: first, src: signed(byId.get(first!)!), active: true })])
     // The next photo is preloaded ahead of its minute.
@@ -170,11 +171,12 @@ describe('NightSlideshow', () => {
     expect(activeId(w)).toBe(second)
   })
 
-  it('refreshes the signed URLs 5 minutes before they expire and loads photos from the new URLs', async () => {
+  it('refreshes the signed URLs 5 minutes before they expire (every 10 minutes) and loads photos from the new URLs', async () => {
+    expect(PHOTO_URL_SECONDS * 1000 - URL_REFRESH_MARGIN_MS).toBe(10 * 60_000)
     const w = mountSlideshow()
     await settle()
     urlApi.version = 2
-    await settle(55 * 60_000 - 20)
+    await settle(PHOTO_URL_SECONDS * 1000 - URL_REFRESH_MARGIN_MS - 20)
     expect(urlApi.signedUrls).toHaveBeenCalledTimes(2)
     await settle(60_000)
     const shown = slides(w).find((s) => s.active)!
@@ -187,7 +189,7 @@ describe('NightSlideshow', () => {
     const order = expectedOrder()
     await settle(60_000 - 20) // second photo shown; third preloaded
     urlApi.offline = true
-    await settle(54 * 60_000)
+    await settle(PHOTO_URL_SECONDS * 1000 - URL_REFRESH_MARGIN_MS - 60_000)
     const callsWhileOffline = urlApi.signedUrls.mock.calls.length
     await settle(60_000)
     expect(urlApi.signedUrls.mock.calls.length).toBe(callsWhileOffline + 1)
@@ -229,6 +231,6 @@ describe('NightSlideshow', () => {
     await settle()
     await w.setProps({ photos: PHOTOS })
     await settle()
-    expect(urlApi.signedUrls).toHaveBeenLastCalledWith(PHOTOS.map((p) => p.storagePath), 3600)
+    expect(urlApi.signedUrls).toHaveBeenLastCalledWith(PHOTOS.map((p) => p.storagePath), 900)
   })
 })

@@ -13,7 +13,7 @@ import { SETTINGS_SECTIONS } from './settingsNav'
 
 const api = vi.hoisted(() => ({ current: null as unknown }))
 const photos = vi.hoisted(() => ({
-  prepareImage: null as unknown as Mock<(file: Blob) => Promise<Blob>>,
+  prepareImage: null as unknown as Mock<(file: Blob) => Promise<{ image: Blob; thumbnail: Blob }>>,
   signedUrls: null as unknown as Mock<(paths: string[], seconds: number) => Promise<Map<string, string>>>,
 }))
 
@@ -30,6 +30,8 @@ vi.mock('@/data/photosApi', async (importOriginal) => ({
 const HOUSEHOLD = 'aaaaaaaa-0000-0000-0000-000000000001'
 const SAM = 'bbbbbbbb-0000-0000-0000-000000000001'
 const SAM_AUTH = { membershipId: SAM, pin: '1234' }
+
+const thumb = (p: HouseholdPhoto) => p.storagePath.replace(/\.jpg$/, '.thumb.jpg')
 
 const photo = (n: number, kind: HouseholdPhoto['kind'] = 'slideshow'): HouseholdPhoto => {
   const id = `dddddddd-0000-0000-0000-${String(n).padStart(12, '0')}`
@@ -98,7 +100,8 @@ beforeEach(() => {
       const { PhotoDecodeError } = await import('@/data/photosApi')
       throw new PhotoDecodeError()
     }
-    return new Blob([`prepared ${(file as File).name}`], { type: 'image/jpeg' })
+    const name = (file as File).name
+    return { image: new Blob([`prepared ${name}`], { type: 'image/jpeg' }), thumbnail: new Blob([`thumb ${name}`], { type: 'image/jpeg' }) }
   })
   photos.signedUrls = vi.fn(async (paths: string[]) => new Map(paths.map((p) => [p, `https://signed.test/${p}`])))
 })
@@ -118,15 +121,57 @@ describe('Settings > Photos', () => {
     expect(SETTINGS_SECTIONS.find((s) => s.id === 'photos')).toEqual({ id: 'photos', label: 'Photos', ownerSignIn: false })
   })
 
-  it('shows the slideshow photos newest first from signed URLs, the count and the privacy note', async () => {
+  it('shows the slideshow photos newest first as thumbnails from signed URLs, the count and the privacy note', async () => {
     const w = await mountSection([photo(1), photo(2), photo(3, 'avatar'), photo(4)])
     expect(w.find('h2').text()).toBe('Photos')
     expect(w.text()).toContain('3 of 200')
-    expect(photos.signedUrls).toHaveBeenCalledWith([photo(4), photo(2), photo(1)].map((p) => p.storagePath), 3600)
+    expect(photos.signedUrls).toHaveBeenCalledTimes(1)
+    expect(photos.signedUrls).toHaveBeenCalledWith([photo(4), photo(2), photo(1)].map(thumb), 900)
     const thumbs = w.findAll('[data-testid="photo-thumb"] img')
-    expect(thumbs.map((t) => t.attributes('src'))).toEqual([4, 2, 1].map((n) => `https://signed.test/${photo(n).storagePath}`))
+    expect(thumbs.map((t) => t.attributes('src'))).toEqual([4, 2, 1].map((n) => `https://signed.test/${thumb(photo(n))}`))
+    for (const t of thumbs) {
+      expect(t.attributes('decoding')).toBe('async')
+      expect(t.attributes('loading')).toBe('lazy')
+      expect(t.attributes('width')).toBe('320')
+      expect(t.attributes('height')).toBe('320')
+    }
     expect(w.text()).toContain('Photos are resized and location data is removed before upload.')
     w.unmount()
+  })
+
+  it('falls back to the photo itself for a photo added before thumbnails existed', async () => {
+    photos.signedUrls = vi.fn(async (paths: string[]) =>
+      new Map(paths.filter((p) => p !== thumb(photo(1))).map((p) => [p, `https://signed.test/${p}`])),
+    )
+    const w = await mountSection([photo(1), photo(2)])
+    expect(photos.signedUrls.mock.calls).toEqual([
+      [[thumb(photo(2)), thumb(photo(1))], 900],
+      [[photo(1).storagePath], 900],
+    ])
+    const thumbs = w.findAll('[data-testid="photo-thumb"] img')
+    expect(thumbs.map((t) => t.attributes('src'))).toEqual([
+      `https://signed.test/${thumb(photo(2))}`,
+      `https://signed.test/${photo(1).storagePath}`,
+    ])
+    w.unmount()
+  })
+
+  it('re-signs the thumbnails 5 minutes before their 15-minute URLs expire, and stops when closed', async () => {
+    let version = 1
+    photos.signedUrls = vi.fn(async (paths: string[]) => new Map(paths.map((p) => [p, `https://signed.test/v${version}/${p}`])))
+    const w = await mountSection([photo(1)])
+    expect(photos.signedUrls).toHaveBeenCalledTimes(1)
+    version = 2
+    await vi.advanceTimersByTimeAsync(10 * 60_000 - 100)
+    expect(photos.signedUrls).toHaveBeenCalledTimes(1)
+    await settle()
+    await vi.advanceTimersByTimeAsync(100)
+    await settle()
+    expect(photos.signedUrls).toHaveBeenCalledTimes(2)
+    expect(w.get('[data-testid="photo-thumb"] img').attributes('src')).toBe(`https://signed.test/v2/${thumb(photo(1))}`)
+    w.unmount()
+    await vi.advanceTimersByTimeAsync(20 * 60_000)
+    expect(photos.signedUrls).toHaveBeenCalledTimes(2)
   })
 
   it('shows an empty state with no photos', async () => {
@@ -147,8 +192,10 @@ describe('Settings > Photos', () => {
 
     expect(photos.prepareImage).toHaveBeenCalledTimes(3)
     expect(settingsApi.uploadPhoto).toHaveBeenCalledTimes(2)
-    expect(settingsApi.uploadPhoto).toHaveBeenNthCalledWith(1, HOUSEHOLD, expect.any(Blob))
-    expect(await (settingsApi.uploadPhoto.mock.calls[0]![1] as Blob).text()).toBe('prepared beach.jpg')
+    expect(settingsApi.uploadPhoto).toHaveBeenNthCalledWith(1, HOUSEHOLD, { image: expect.any(Blob), thumbnail: expect.any(Blob) })
+    const prepared = settingsApi.uploadPhoto.mock.calls[0]![1] as { image: Blob; thumbnail: Blob }
+    expect(await prepared.image.text()).toBe('prepared beach.jpg')
+    expect(await prepared.thumbnail.text()).toBe('thumb beach.jpg')
     expect(settingsApi.addPhoto.mock.calls).toEqual([
       [SAM_AUTH, 'eeeeeeee-0000-0000-0000-000000000001', 'slideshow'],
       [SAM_AUTH, 'eeeeeeee-0000-0000-0000-000000000002', 'slideshow'],
