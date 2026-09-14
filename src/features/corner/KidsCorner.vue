@@ -2,11 +2,12 @@
 /**
  * Kids' Corner (spec §7.5): child picker → the child's picture schedule, visual timer and sticker chart, in a
  * full-screen, picture-first layout. Leaving needs a 2 s hold in the corner and then an adult PIN (§7.3); when
- * the PIN can't be checked (no connection) a second 2 s hold on an adults-only confirm lets the tablet out.
+ * the PIN can't be checked (no connection) an adult taps numbered dots 1-4 in order instead. Every other way
+ * out (history back, a stray navigation) is cancelled, except the display being removed or unregistered.
  * Night and Nap Mode apply here as on the main screen (§7.7).
  */
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { useAppUpdatesStore } from '@/app/appUpdates'
 import { useNow } from '@/composables/useNow'
 import { LogWriteError } from '@/data/logWriter'
@@ -17,6 +18,7 @@ import NapOverlay from '@/features/modes/NapOverlay.vue'
 import NightPeek from '@/features/modes/NightPeek.vue'
 import NightScreen from '@/features/modes/NightScreen.vue'
 import { useNightPeekTaps } from '@/features/modes/useNightPeekTaps'
+import { useDisplayStore } from '@/session/displayStore'
 import { useHouseholdStore } from '@/stores/householdStore'
 import { useLogStore } from '@/stores/logStore'
 import { useModesStore } from '@/stores/modesStore'
@@ -26,9 +28,11 @@ import RLongPress from '@/ui/RLongPress.vue'
 import RPinPad from '@/ui/RPinPad.vue'
 import RSheet from '@/ui/RSheet.vue'
 import CornerChildPicker from './CornerChildPicker.vue'
+import { cornerLeaveAllowed } from './cornerExit'
 import { completeCurrent, cornerChildren, scheduleModel, stickerGridModel } from './cornerModel'
 import PictureSchedule from './PictureSchedule.vue'
 import StickerChart from './StickerChart.vue'
+import ExitPattern from './ExitPattern.vue'
 import { useVisualTimer } from './useVisualTimer'
 import VisualTimer from './VisualTimer.vue'
 
@@ -93,12 +97,12 @@ const TABS: { id: Tab; label: string; paths: string[] }[] = [
 const nightClock = computed(() => (view.value ? formatClock(now.value, view.value.household.timeZone) : ''))
 const nightDate = computed(() => (view.value ? formatDateLabel(now.value, view.value.household.timeZone) : ''))
 
-// Exit (spec §7.3): hold 2 s, then an adult PIN — or, when PINs can't be checked, a second 2 s hold.
+// Exit (spec §7.3): hold 2 s, then an adult PIN — or, when PINs can't be checked, the numbered-dot pattern.
 const exiting = ref(false)
-/** Set when a PIN check failed for lack of a connection, so the sheet offers the second hold instead. */
+/** Set when a PIN check failed for lack of a connection, so the sheet offers the pattern instead. */
 const pinUnavailable = ref(false)
 const offline = computed(() => !store.online || (typeof navigator !== 'undefined' && navigator.onLine === false))
-const holdToExit = computed(() => offline.value || pinUnavailable.value)
+const patternExit = computed(() => offline.value || pinUnavailable.value)
 const adults = computed(() => view.value?.members ?? [])
 
 function openExit(): void {
@@ -115,9 +119,20 @@ async function verify(membershipId: string, pin: string): Promise<boolean> {
   }
 }
 
+const displayStore = useDisplayStore()
+/** Set only by the PIN or the pattern: the one thing that lets the router leave the Corner for /home. */
+let authorizedExit = false
+
+onBeforeRouteLeave((to) =>
+  cornerLeaveAllowed(to, { authorizedExit, displayKind: displayStore.state?.kind ?? null }),
+)
+
 function leave(): void {
   exiting.value = false
-  void router.push('/home')
+  authorizedExit = true
+  void router.push('/home').then((failure) => {
+    if (failure) authorizedExit = false
+  })
 }
 
 // Night Mode never interrupts an adult leaving the Corner: the exit sheet holds it off while open (spec §7.7).
@@ -220,21 +235,9 @@ useNightPeekTaps()
     <NapOverlay v-if="view && modes.napActive" />
 
     <RSheet title="Exit Kids' Corner" :open="exiting" @close="exiting = false">
-      <div v-if="holdToExit" class="flex flex-col items-center gap-6 pb-2">
-        <p class="text-center text-[22px] text-ink">No connection, so PINs can't be checked right now.</p>
-        <RLongPress
-          :duration="EXIT_HOLD_MS"
-          aria-label="Adults: hold again to exit"
-          class="flex min-h-[88px] w-full items-center justify-center gap-3 rounded-[var(--radius-control)] bg-ink px-6 text-[22px] font-semibold text-surface"
-          @complete="leave"
-        >
-          <span class="r-longpress-ring absolute right-4 size-[48px]" aria-hidden="true" />
-          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <rect x="5" y="11" width="14" height="10" rx="2" />
-            <path d="M8 11V7a4 4 0 0 1 8 0v4" />
-          </svg>
-          Adults: hold again to exit
-        </RLongPress>
+      <div v-if="patternExit" class="flex flex-col gap-5 pb-2">
+        <p class="text-center text-[19px] text-ink-2">No connection, so PINs can't be checked right now.</p>
+        <ExitPattern @complete="leave" />
         <button
           type="button"
           class="min-h-[60px] w-full rounded-[var(--radius-control)] bg-surface-2 text-[19px] font-medium text-ink"

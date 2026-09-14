@@ -7,9 +7,11 @@ import { createMemoryHistory, createRouter, RouterView, type Router } from 'vue-
 import { getDemoSnapshot, mutateDemo, resetDemoForTests } from '@/data/demo/demoHousehold'
 import { LogWriteError } from '@/data/logWriter'
 import MainScreen from '@/features/main/MainScreen.vue'
+import { useDisplayStore } from '@/session/displayStore'
 import { useHouseholdStore } from '@/stores/householdStore'
 import { useLogStore } from '@/stores/logStore'
 import * as sound from '@/ui/sound'
+import { EXIT_PATTERN_RNG, seededRng } from './cornerExit'
 import KidsCorner from './KidsCorner.vue'
 
 vi.mock('@/data/householdSource', async () => {
@@ -77,9 +79,22 @@ async function mountAt(path: string): Promise<VueWrapper> {
   })
   await router.push(path)
   await router.isReady()
-  const wrapper = mount(Shell, { global: { plugins: [pinia, router] }, attachTo: document.body })
+  const wrapper = mount(Shell, {
+    global: { plugins: [pinia, router], provide: { [EXIT_PATTERN_RNG as symbol]: seededRng(7) } },
+    attachTo: document.body,
+  })
   for (let i = 0; i < 10; i++) await flushPromises()
   return wrapper
+}
+
+/** Taps the exit pattern's numbered dots in the given order. */
+async function tapDots(w: VueWrapper, order: number[]) {
+  for (const n of order) {
+    const dot = w.findAll('[role="dialog"] [data-testid="pattern-dot"]').find((d) => d.text() === String(n))
+    if (!dot) throw new Error(`No pattern dot ${n}`)
+    await dot.trigger('click')
+  }
+  await flushPromises()
 }
 
 const tab = (w: VueWrapper, name: string) => w.get(`[role="tab"][aria-label="${name}"]`)
@@ -317,30 +332,82 @@ describe("Kids' Corner (demo source)", () => {
       wrapper.unmount()
     })
 
-    it('offline, a second 2 second hold replaces the PIN so the tablet is never trapped', async () => {
+    it('offline, a numbered-dot pattern replaces the PIN so the tablet is never trapped', async () => {
       const wrapper = await mountAt('/corner')
       setOnline(false)
       await flushPromises()
 
       await hold(wrapper.get('button[aria-label^="Exit Kids"]').element, 2_000)
-      const confirm = wrapper.get('[role="dialog"] button[aria-label="Adults: hold again to exit"]')
-      expect(wrapper.find('[role="dialog"] [data-keypad]').exists()).toBe(false)
+      const dialog = wrapper.get('[role="dialog"]')
+      expect(dialog.find('[data-keypad]').exists()).toBe(false)
+      const instruction = dialog.get('[data-testid="pattern-instruction"]')
+      expect(instruction.text()).toBe('Adults: tap 1, 2, 3, 4 in order')
+      expect(instruction.classes()).toContain('text-[22px]')
+      // Seeded positions (see mountAt): the numbers are visible text on dots scattered around the area.
+      const dots = dialog.findAll('[data-testid="pattern-dot"]')
+      expect(dots.map((d) => d.text()).sort()).toEqual(['1', '2', '3', '4'])
+      const positions = dots.map((d) => d.attributes('style'))
+      expect(new Set(positions).size).toBe(4)
 
-      await tapHold(confirm.element, 1_000)
-      expect(router.currentRoute.value.path).toBe('/corner')
-      await hold(confirm.element, 2_000)
+      await tapDots(wrapper, [1, 2, 3, 4])
       expect(router.currentRoute.value.path).toBe('/home')
       wrapper.unmount()
     })
 
-    it('falls back to the second hold when the PIN check fails for lack of a connection', async () => {
+    it('the pattern resets on a tap out of order, and after 10 seconds', async () => {
+      const wrapper = await mountAt('/corner')
+      setOnline(false)
+      await flushPromises()
+      await hold(wrapper.get('button[aria-label^="Exit Kids"]').element, 2_000)
+
+      await tapDots(wrapper, [1, 2, 4, 3])
+      expect(wrapper.findAll('[data-testid="pattern-dot"][data-tapped]')).toHaveLength(0)
+      expect(router.currentRoute.value.path).toBe('/corner')
+
+      await tapDots(wrapper, [1, 2, 3])
+      expect(wrapper.findAll('[data-testid="pattern-dot"][data-tapped]')).toHaveLength(3)
+      await vi.advanceTimersByTimeAsync(10_001)
+      expect(wrapper.findAll('[data-testid="pattern-dot"][data-tapped]')).toHaveLength(0)
+      await tapDots(wrapper, [4])
+      expect(router.currentRoute.value.path).toBe('/corner')
+
+      await tapDots(wrapper, [1, 2, 3, 4])
+      expect(router.currentRoute.value.path).toBe('/home')
+      wrapper.unmount()
+    })
+
+    it('falls back to the pattern when the PIN check fails for lack of a connection', async () => {
       const wrapper = await mountAt('/corner')
       vi.spyOn(useLogStore(pinia), 'verifyPin').mockRejectedValue(new LogWriteError('offline', true, null))
       await hold(wrapper.get('button[aria-label^="Exit Kids"]').element, 2_000)
       await wrapper.get('[role="dialog"] button[aria-label="Sam"]').trigger('click')
       for (const digit of ['1', '2', '3', '4']) await wrapper.get(`[role="dialog"] button[aria-label="${digit}"]`).trigger('click')
       await flushPromises()
-      expect(wrapper.find('[role="dialog"] button[aria-label="Adults: hold again to exit"]').exists()).toBe(true)
+      expect(wrapper.find('[role="dialog"] [data-testid="pattern-instruction"]').exists()).toBe(true)
+      wrapper.unmount()
+    })
+
+    it('history back from the Corner is cancelled', async () => {
+      const wrapper = await mountAt('/home')
+      await wrapper.get('button[aria-label="Kids\' Corner"]').trigger('click')
+      await flushPromises()
+      expect(router.currentRoute.value.path).toBe('/corner')
+
+      router.back()
+      for (let i = 0; i < 5; i++) await flushPromises()
+      expect(router.currentRoute.value.path).toBe('/corner')
+      expect(wrapper.find('[data-testid="picture-schedule"]').exists()).toBe(true)
+
+      await router.push('/home')
+      expect(router.currentRoute.value.path).toBe('/corner')
+      wrapper.unmount()
+    })
+
+    it('still leaves when the display is removed', async () => {
+      const wrapper = await mountAt('/corner')
+      useDisplayStore(pinia).state = { kind: 'revoked' }
+      for (let i = 0; i < 5; i++) await flushPromises()
+      expect(router.currentRoute.value.path).toBe('/removed')
       wrapper.unmount()
     })
   })
