@@ -204,6 +204,57 @@ describe('useHouseholdStore', () => {
     })
   })
 
+  describe('midnight reload', () => {
+    beforeEach(() => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-09-14T19:00:00Z')) // 3pm EDT; demo household tz is America/New_York
+    })
+    afterEach(() => vi.useRealTimers())
+
+    it('reloads right at the household\'s next local midnight, not before', async () => {
+      const { source, load } = fakeSource(async (_id, now) => buildDemoSnapshot(now))
+      const store = newStore()
+      await store.start('h1', source)
+      load.mockClear()
+
+      const msToMidnight = Date.parse('2026-09-15T04:00:00.000Z') - Date.now() // next local midnight
+      await vi.advanceTimersByTimeAsync(msToMidnight - 1_000)
+      expect(load).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(load).toHaveBeenCalledTimes(1)
+    })
+
+    it('reschedules for the following midnight after firing', async () => {
+      const { source, load } = fakeSource(async (_id, now) => buildDemoSnapshot(now))
+      const store = newStore()
+      await store.start('h1', source)
+      load.mockClear()
+
+      const msToFirstMidnight = Date.parse('2026-09-15T04:00:00.000Z') - Date.now()
+      await vi.advanceTimersByTimeAsync(msToFirstMidnight)
+      expect(load).toHaveBeenCalledTimes(1)
+
+      const msToSecondMidnight = 24 * 3_600_000
+      await vi.advanceTimersByTimeAsync(msToSecondMidnight - 1_000)
+      expect(load).toHaveBeenCalledTimes(1)
+
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(load).toHaveBeenCalledTimes(2)
+    })
+
+    it('clears the midnight timer on stop, so it never fires', async () => {
+      const { source, load } = fakeSource(async (_id, now) => buildDemoSnapshot(now))
+      const store = newStore()
+      await store.start('h1', source)
+      load.mockClear()
+      store.stop()
+
+      await vi.advanceTimersByTimeAsync(25 * 3_600_000)
+      expect(load).not.toHaveBeenCalled()
+    })
+  })
+
   describe('races', () => {
     it('ignores an out-of-order response: an older request resolving after a newer one is dropped', async () => {
       const { source, resolve } = deferredSource()

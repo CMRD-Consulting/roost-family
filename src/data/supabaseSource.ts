@@ -1,3 +1,4 @@
+import { TZDate } from '@date-fns/tz'
 import { householdDate } from '@/domain/time'
 import type { HouseholdSource } from './householdSource'
 import type { HouseholdSnapshot } from './snapshot'
@@ -101,6 +102,11 @@ export function createSupabaseSource(client: RoostClient): HouseholdSource {
     )
     const household = toHousehold(householdRow)
     const today = householdDate(now, household.timeZone)
+    // Also load tomorrow's routine progress/overrides so they're ready the instant the
+    // household's day rolls over, without waiting on a fresh load past midnight.
+    const tomorrowTZDate = new TZDate(now.getTime(), household.timeZone)
+    tomorrowTZDate.setDate(tomorrowTZDate.getDate() + 1)
+    const tomorrow = householdDate(new Date(tomorrowTZDate.getTime()), household.timeZone)
     const cutoff48h = new Date(now.getTime() - 2 * DAY_MS).toISOString()
     const cutoff8d = new Date(now.getTime() - 8 * DAY_MS).toISOString()
     const cutoff24h = new Date(now.getTime() - DAY_MS).toISOString()
@@ -121,8 +127,8 @@ export function createSupabaseSource(client: RoostClient): HouseholdSource {
       client.from('sticker_categories').select('*').eq('household_id', householdId).is('archived_at', null).order('sort_order'),
       client.from('sticker_entries').select('*').eq('household_id', householdId).gte('at', cutoff8d),
       client.from('routines').select('*').eq('household_id', householdId).order('sort_order'),
-      client.from('routine_progress').select('*').eq('household_id', householdId).eq('day', today),
-      client.from('routine_day_overrides').select('*').eq('household_id', householdId).eq('day', today),
+      client.from('routine_progress').select('*').eq('household_id', householdId).in('day', [today, tomorrow]),
+      client.from('routine_day_overrides').select('*').eq('household_id', householdId).in('day', [today, tomorrow]),
       client.from('jots').select('*').eq('household_id', householdId).is('done_at', null),
       client.from('grocery_items').select('*').eq('household_id', householdId).or(`checked_at.is.null,checked_at.gte.${cutoff24h}`),
       client

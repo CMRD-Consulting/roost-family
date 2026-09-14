@@ -256,10 +256,10 @@ describe('createSupabaseSource load', () => {
       'select:*', 'eq:household_id=h1', 'order:sort_order:asc',
     ])
     expect(calls.find((c) => c.table === 'routine_progress')?.ops).toEqual([
-      'select:*', 'eq:household_id=h1', 'eq:day=2026-09-14',
+      'select:*', 'eq:household_id=h1', 'in:day=2026-09-14,2026-09-15',
     ])
     expect(calls.find((c) => c.table === 'routine_day_overrides')?.ops).toEqual([
-      'select:*', 'eq:household_id=h1', 'eq:day=2026-09-14',
+      'select:*', 'eq:household_id=h1', 'in:day=2026-09-14,2026-09-15',
     ])
     expect(calls.find((c) => c.table === 'jots')?.ops).toEqual([
       'select:*', 'eq:household_id=h1', 'is:done_at=null',
@@ -288,6 +288,37 @@ describe('createSupabaseSource load', () => {
     })
     const source = createSupabaseSource(client)
     await expect(source.load('h1', now)).rejects.toThrow('household not found')
+  })
+
+  describe("today and tomorrow's routine progress/overrides", () => {
+    it('loads and returns rows for both today and tomorrow', async () => {
+      const progressToday = { child_id: 'c1', routine_id: 'r1', day: '2026-09-14', completed_step_indexes: [0] }
+      const progressTomorrow = { child_id: 'c1', routine_id: 'r1', day: '2026-09-15', completed_step_indexes: [] }
+      const overrideTomorrow = { child_id: 'c1', day: '2026-09-15', routine_id: 'r2' }
+      const { client } = createFakeClient({
+        ...baseTableData(),
+        routine_progress: { data: [progressToday, progressTomorrow], error: null },
+        routine_day_overrides: { data: [overrideTomorrow], error: null },
+      })
+      const source = createSupabaseSource(client)
+      const snapshot = await source.load('h1', now)
+
+      expect(snapshot.routineProgress.map((p) => p.day).sort()).toEqual(['2026-09-14', '2026-09-15'])
+      expect(snapshot.routineOverrides).toEqual([{ childId: 'c1', day: '2026-09-15', routineId: 'r2' }])
+    })
+
+    it("computes tomorrow's household date across a DST transition", async () => {
+      // 2026-11-01 00:30 EDT (just after midnight, before the fall-back at 2am local);
+      // tomorrow in America/New_York is still simply the next calendar day, 2026-11-02.
+      const dstNow = new Date('2026-11-01T04:30:00Z')
+      const { client, calls } = createFakeClient(baseTableData())
+      const source = createSupabaseSource(client)
+      await source.load('h1', dstNow)
+
+      expect(calls.find((c) => c.table === 'routine_progress')?.ops).toEqual([
+        'select:*', 'eq:household_id=h1', 'in:day=2026-11-01,2026-11-02',
+      ])
+    })
   })
 
   describe('multiple open sitter sessions', () => {

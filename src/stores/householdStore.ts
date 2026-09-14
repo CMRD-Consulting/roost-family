@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import { msUntilNextHouseholdMidnight } from '@/composables/householdMidnight'
 import type { HouseholdSource, RealtimeStatus } from '@/data/householdSource'
 import type { HouseholdSnapshot } from '@/data/snapshot'
 
@@ -19,6 +20,9 @@ export const useHouseholdStore = defineStore('household', () => {
   let unsubscribe: (() => void) | null = null
   /** Monotonic counter; a load result is applied only if it's still the latest one issued. */
   let loadSeq = 0
+  /** Fires a reload right at the household's next local midnight, so "today"/"tomorrow"
+   *  data (routine progress, day overrides) rolls over even with no other trigger. */
+  let midnightTimer: ReturnType<typeof setTimeout> | null = null
 
   function handleOnline(): void {
     online.value = true
@@ -27,6 +31,21 @@ export const useHouseholdStore = defineStore('household', () => {
 
   function handleOffline(): void {
     online.value = false
+  }
+
+  /** (Re)schedule the midnight timer against the current snapshot's household time zone. */
+  function scheduleMidnightReload(): void {
+    if (midnightTimer !== null) {
+      clearTimeout(midnightTimer)
+      midnightTimer = null
+    }
+    if (snapshot.value === null) return
+    const tz = snapshot.value.household.timeZone
+    const ms = msUntilNextHouseholdMidnight(new Date(), tz)
+    midnightTimer = setTimeout(() => {
+      midnightTimer = null
+      void reload()
+    }, ms)
   }
 
   async function reload(): Promise<void> {
@@ -43,6 +62,7 @@ export const useHouseholdStore = defineStore('household', () => {
       status.value = 'ready'
       error.value = null
       freshAt.value = next.loadedAt
+      scheduleMidnightReload()
     } catch (e) {
       if (isStale()) return
       error.value = e instanceof Error ? e.message : String(e)
@@ -84,6 +104,10 @@ export const useHouseholdStore = defineStore('household', () => {
     currentHouseholdId = null
     currentSource = null
     realtime.value = 'unknown'
+    if (midnightTimer !== null) {
+      clearTimeout(midnightTimer)
+      midnightTimer = null
+    }
   }
 
   /** Minutes of staleness for the header's "Updated N min ago" badge. Always 0 while realtime is connected. */
