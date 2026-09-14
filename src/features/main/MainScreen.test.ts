@@ -128,6 +128,37 @@ describe('MainScreen (demo source)', () => {
     wrapper.unmount()
   })
 
+  // 1024x768: with Offline, saved-info and Syncing badges beside the buttons the date used to wrap
+  // ("September / 14"). The badges now sit in their own row under the clock line, so the clock line only
+  // shares the header's width with the four 60 px buttons (~460 px of clock and date in ~656 px).
+  it('puts status badges in their own row under the clock line, and never wraps the date', async () => {
+    const wrapper = await mountMain()
+    expect(wrapper.find('[data-testid="status-badges"]').exists()).toBe(false)
+
+    setOnline(false)
+    useHouseholdStore(pinia).fromCache = true
+    await flushPromises()
+
+    const header = wrapper.get('header')
+    const badges = header.get('[data-testid="status-badges"]')
+    expect(badges.text()).toContain('Offline')
+    expect(badges.text()).toContain('Showing saved info from 3:00 PM')
+    expect(badges.classes()).toContain('flex-nowrap')
+    // Same column as the clock line, below it; not in the row with the buttons.
+    const clockLine = header.get('[data-testid="clock-line"]')
+    expect(badges.element.parentElement).toBe(clockLine.element.parentElement)
+    expect(clockLine.element.compareDocumentPosition(badges.element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(header.get('button[aria-label="Nap Mode"]').element.contains(badges.element)).toBe(false)
+    expect(badges.element.contains(header.get('button[aria-label="Nap Mode"]').element)).toBe(false)
+
+    const date = header.get('[data-testid="clock-date"]')
+    expect(date.classes()).toContain('whitespace-nowrap')
+    expect(date.text()).toContain('September 14')
+    // Every badge stays at the 16 px text floor.
+    for (const badge of badges.findAll('[role="status"]')) expect(badge.classes()).toContain('text-[16px]')
+    wrapper.unmount()
+  })
+
   it('warns that recent doses can\'t be checked while showing saved info', async () => {
     const wrapper = await mountMain()
     expect(wrapper.find('[data-testid="medicine-stale"]').exists()).toBe(false)

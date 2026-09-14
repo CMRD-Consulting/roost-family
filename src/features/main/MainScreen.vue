@@ -135,38 +135,49 @@ const MODE_BUTTONS = [
          or a dose alert), and the log row. -->
     <div v-else-if="model" class="main-grid grid h-full grid-rows-[auto_minmax(0,1fr)_60px_auto] gap-4 px-10 pb-8 pt-9">
       <header class="flex min-w-0 items-start justify-between gap-6">
-        <div class="flex min-w-0 items-baseline gap-6">
-          <p class="whitespace-nowrap font-semibold leading-none tracking-[-0.03em] tabular-nums">
-            <span class="clock-time text-[132px]">{{ clock.time }}</span>{{ clock.suffix ? ' ' : '' }}<span v-if="clock.suffix" class="clock-suffix text-[36px] tracking-normal text-ink-2">{{ clock.suffix }}</span>
-          </p>
-          <div class="flex min-w-0 flex-col gap-1">
-            <span class="clock-date-weekday text-[30px] font-medium leading-tight">{{ date.weekday }}</span>
-            <span class="clock-date-rest text-[22px] text-ink-2">{{ date.rest }}</span>
+        <!-- Status badges get their own row under the clock line: beside the buttons they squeezed the date
+             into wrapping at 1024 px ("September / 14"). The clock line itself never wraps. -->
+        <div class="flex min-w-0 flex-col gap-2">
+          <div data-testid="clock-line" class="flex shrink-0 items-baseline gap-6">
+            <p class="whitespace-nowrap font-semibold leading-none tracking-[-0.03em] tabular-nums">
+              <span class="clock-time text-[132px]">{{ clock.time }}</span>{{ clock.suffix ? ' ' : '' }}<span v-if="clock.suffix" class="clock-suffix text-[36px] tracking-normal text-ink-2">{{ clock.suffix }}</span>
+            </p>
+            <div data-testid="clock-date" class="flex flex-col gap-1 whitespace-nowrap">
+              <span class="clock-date-weekday text-[30px] font-medium leading-tight">{{ date.weekday }}</span>
+              <span class="clock-date-rest text-[22px] text-ink-2">{{ date.rest }}</span>
+            </div>
+          </div>
+          <div
+            v-if="offline || cacheBadge || logStore.pendingCount > 0"
+            data-testid="status-badges"
+            class="flex min-w-0 flex-nowrap items-center gap-2"
+          >
+            <span
+              v-if="offline"
+              role="status"
+              class="shrink-0 rounded-lg bg-orange-tint px-3 py-1 text-[16px] font-semibold uppercase tracking-[0.08em] text-warn-ink"
+            >
+              Offline
+            </span>
+            <!-- The only badge that may shorten (with an ellipsis) if a row ever runs out of room. -->
+            <span
+              v-if="cacheBadge"
+              role="status"
+              class="min-w-0 truncate rounded-lg bg-surface-2 px-3 py-1 text-[16px] font-medium text-ink-2"
+            >
+              {{ cacheBadge }}
+            </span>
+            <span
+              v-if="logStore.pendingCount > 0"
+              role="status"
+              data-testid="syncing"
+              class="shrink-0 rounded-lg bg-surface-2 px-3 py-1 text-[16px] font-semibold uppercase tracking-[0.08em] text-ink-2"
+            >
+              Syncing {{ logStore.pendingCount }}…
+            </span>
           </div>
         </div>
         <div class="flex shrink-0 items-center gap-2">
-          <span
-            v-if="offline"
-            role="status"
-            class="mr-2 rounded-lg bg-orange-tint px-3 py-1.5 text-[16px] font-semibold uppercase tracking-[0.08em] text-warn-ink"
-          >
-            Offline
-          </span>
-          <span
-            v-if="cacheBadge"
-            role="status"
-            class="mr-2 rounded-lg bg-surface-2 px-3 py-1.5 text-[16px] font-medium text-ink-2"
-          >
-            {{ cacheBadge }}
-          </span>
-          <span
-            v-if="logStore.pendingCount > 0"
-            role="status"
-            data-testid="syncing"
-            class="mr-2 rounded-lg bg-surface-2 px-3 py-1.5 text-[16px] font-semibold uppercase tracking-[0.08em] text-ink-2"
-          >
-            Syncing {{ logStore.pendingCount }}…
-          </span>
           <button
             type="button"
             aria-label="Nap Mode"
