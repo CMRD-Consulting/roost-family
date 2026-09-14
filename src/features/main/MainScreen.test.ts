@@ -75,6 +75,21 @@ describe('MainScreen (demo source)', () => {
     wrapper.unmount()
   })
 
+  it('renders the conflict banner and medicine zone before kid cards when compact with a conflict', async () => {
+    window.history.replaceState({}, '', '/home?conflict&manyKids')
+    const wrapper = await mountMain()
+    const html = wrapper.html()
+    const conflictIndex = html.indexOf('data-testid="conflict"')
+    const medicineIndex = html.indexOf('data-testid="medicine-line"')
+    const firstKidCardIndex = html.indexOf('data-testid="kid-card-compact"')
+    expect(conflictIndex).toBeGreaterThan(-1)
+    expect(medicineIndex).toBeGreaterThan(-1)
+    expect(firstKidCardIndex).toBeGreaterThan(-1)
+    expect(conflictIndex).toBeLessThan(firstKidCardIndex)
+    expect(medicineIndex).toBeLessThan(firstKidCardIndex)
+    wrapper.unmount()
+  })
+
   it('shows a placeholder toast after a log button is held', async () => {
     vi.stubGlobal('requestAnimationFrame', () => 0)
     vi.stubGlobal('cancelAnimationFrame', () => {})

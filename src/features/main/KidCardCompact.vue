@@ -11,10 +11,10 @@ const status = computed(() => props.card.sleep?.label ?? props.card.nowNext?.now
 <template>
   <article
     data-testid="kid-card-compact"
-    class="flex min-w-0 items-center gap-3 rounded-[18px] border-l-8 bg-surface px-4 py-1.5"
+    class="flex min-w-0 items-center gap-3 rounded-[18px] border-l-8 bg-surface px-4 py-1"
     :style="{ borderLeftColor: card.color }"
   >
-    <RAvatar :name="card.name" :color="card.color" :size="48" />
+    <RAvatar :name="card.name" :color="card.color" :size="40" />
     <div class="flex min-w-0 flex-col">
       <span class="truncate text-[20px] font-semibold leading-tight">{{ card.name }}</span>
       <span

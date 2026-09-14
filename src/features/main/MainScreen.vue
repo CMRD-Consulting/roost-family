@@ -142,11 +142,11 @@ const MODE_BUTTONS = [
       <header class="flex min-w-0 items-start justify-between gap-6">
         <div class="flex min-w-0 items-baseline gap-6">
           <p class="whitespace-nowrap font-semibold leading-none tracking-[-0.03em] tabular-nums">
-            <span class="text-[132px]">{{ clock.time }}</span>{{ clock.suffix ? ' ' : '' }}<span v-if="clock.suffix" class="text-[36px] tracking-normal text-ink-2">{{ clock.suffix }}</span>
+            <span class="clock-time text-[132px]">{{ clock.time }}</span>{{ clock.suffix ? ' ' : '' }}<span v-if="clock.suffix" class="clock-suffix text-[36px] tracking-normal text-ink-2">{{ clock.suffix }}</span>
           </p>
           <div class="flex min-w-0 flex-col gap-1">
-            <span class="text-[30px] font-medium leading-tight">{{ date.weekday }}</span>
-            <span class="text-[22px] text-ink-2">{{ date.rest }}</span>
+            <span class="clock-date-weekday text-[30px] font-medium leading-tight">{{ date.weekday }}</span>
+            <span class="clock-date-rest text-[22px] text-ink-2">{{ date.rest }}</span>
           </div>
         </div>
         <div class="flex shrink-0 items-center gap-2">
@@ -184,24 +184,38 @@ const MODE_BUTTONS = [
 
       <div class="grid min-h-0 grid-cols-[minmax(0,1fr)_300px] gap-6 min-[1100px]:grid-cols-[minmax(0,1fr)_340px]">
         <div class="flex min-h-0 min-w-0 flex-col gap-3 overflow-y-auto">
-          <!-- 3 columns only when wide enough for a 24 px status line without truncation. -->
-          <div v-if="model.layout === 'compact'" class="grid shrink-0 grid-cols-2 gap-2.5 min-[1300px]:grid-cols-3">
-            <KidCardCompact v-for="card in model.kidCards" :key="card.childId" :card="card" />
-          </div>
-          <div v-else class="grid shrink-0 grid-cols-2 gap-3">
-            <KidCard v-for="card in model.kidCards" :key="card.childId" :card="card" />
-          </div>
-          <ConflictBanner :conflicts="model.conflicts" />
-          <MedicineZone :lines="model.medicine" />
-          <DinnerLine :dinner="model.dinner" />
+          <!-- Safety-critical zones (conflict alert, medicine) must be visible without scrolling. With
+               a compact roster (5+ kids) and an unacknowledged conflict, the kid grid is the one thing
+               allowed to scroll below the fold, so it goes last. -->
+          <template v-if="model.layout === 'compact' && model.conflicts.length > 0">
+            <ConflictBanner :conflicts="model.conflicts" />
+            <MedicineZone :lines="model.medicine" />
+            <div class="grid shrink-0 grid-cols-2 gap-2.5 min-[1300px]:grid-cols-3">
+              <KidCardCompact v-for="card in model.kidCards" :key="card.childId" :card="card" />
+            </div>
+          </template>
+          <template v-else>
+            <!-- 3 columns only when wide enough for a 24 px status line without truncation. -->
+            <div v-if="model.layout === 'compact'" class="grid shrink-0 grid-cols-2 gap-2.5 min-[1300px]:grid-cols-3">
+              <KidCardCompact v-for="card in model.kidCards" :key="card.childId" :card="card" />
+            </div>
+            <div v-else class="grid shrink-0 grid-cols-2 gap-3">
+              <KidCard v-for="card in model.kidCards" :key="card.childId" :card="card" />
+            </div>
+            <ConflictBanner :conflicts="model.conflicts" />
+            <MedicineZone :lines="model.medicine" />
+          </template>
         </div>
 
-        <section class="flex min-h-0 flex-col gap-3 rounded-[var(--radius-card)] bg-surface px-[26px] py-[22px]">
-          <h2 class="text-[16px] font-semibold uppercase tracking-[0.1em] text-ink-3">Today</h2>
-          <p class="text-[18px] text-ink-3">Calendar arrives in Phase 4</p>
-          <div class="flex-1" />
-          <p v-if="staleMinutes > STALE_AFTER_MIN" class="text-[16px] text-ink-3">Updated {{ staleMinutes }} min ago</p>
-        </section>
+        <div class="flex min-h-0 flex-col gap-3">
+          <DinnerLine :dinner="model.dinner" />
+          <section class="flex min-h-0 flex-1 flex-col gap-3 rounded-[var(--radius-card)] bg-surface px-[26px] py-[22px]">
+            <h2 class="text-[16px] font-semibold uppercase tracking-[0.1em] text-ink-3">Today</h2>
+            <p class="text-[18px] text-ink-3">Calendar arrives in Phase 4</p>
+            <div class="flex-1" />
+            <p v-if="staleMinutes > STALE_AFTER_MIN" class="text-[16px] text-ink-3">Updated {{ staleMinutes }} min ago</p>
+          </section>
+        </div>
       </div>
 
       <LogRow :buttons="model.logButtons" @open="onOpenLog" />
@@ -225,3 +239,23 @@ const MODE_BUTTONS = [
     </p>
   </main>
 </template>
+
+<style scoped>
+/* Short tablets (e.g. 1024x768 in landscape): shrink the clock so the header leaves more
+   room for the medicine zone below, per docs/superpowers/specs/2026-09-14-roost-design.md §7.2.
+   Sizes stay within spec minimums: date line stays >= 18px (secondary text floor). */
+@media (max-height: 800px) {
+  .clock-time {
+    font-size: 104px;
+  }
+  .clock-suffix {
+    font-size: 28px;
+  }
+  .clock-date-weekday {
+    font-size: 24px;
+  }
+  .clock-date-rest {
+    font-size: 18px;
+  }
+}
+</style>
