@@ -127,3 +127,40 @@ export function photoNote(photos: Pick<CollectedPhotos, 'omittedForSize' | 'miss
   }
   return lines.length === 0 ? '' : ['Photos not included', '--------------------', ...lines, ''].join('\r\n')
 }
+
+/**
+ * A response body as one Uint8Array. With a Content-Length it reads straight into a buffer of that size (one copy of
+ * the bytes, rather than a Blob and then an ArrayBuffer); without one, or if the length turns out wrong, it gathers the
+ * chunks and joins them once.
+ */
+export async function readBytes(response: Response): Promise<Uint8Array> {
+  const reader = response.body?.getReader()
+  if (!reader) return new Uint8Array(0)
+  const declared = Number(response.headers.get('Content-Length'))
+  let buffer = Number.isSafeInteger(declared) && declared > 0 ? new Uint8Array(declared) : null
+  let length = 0
+  const chunks: Uint8Array[] = []
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    if (buffer && length + value.length <= buffer.length) {
+      buffer.set(value, length)
+    } else {
+      if (buffer) {
+        // Longer than declared: keep what was read so far as a chunk and gather the rest.
+        chunks.push(buffer.subarray(0, length))
+        buffer = null
+      }
+      chunks.push(value)
+    }
+    length += value.length
+  }
+  if (buffer) return length === buffer.length ? buffer : buffer.slice(0, length)
+  const out = new Uint8Array(length)
+  let offset = 0
+  for (const chunk of chunks) {
+    out.set(chunk, offset)
+    offset += chunk.length
+  }
+  return out
+}

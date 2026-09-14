@@ -4,7 +4,7 @@ import * as fflate from 'fflate'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AuthError } from '../_shared/auth.ts'
 import { zipExport, type ExportInput } from '../_shared/exportBuilder.ts'
-import { ExportFailure, createCallerExport, createExportHandler, type CallerExport, type ExportHandlerDeps } from './handler.ts'
+import { ExportFailure, PHOTO_CAP_BYTES, createCallerExport, createExportHandler, type CallerExport, type ExportHandlerDeps } from './handler.ts'
 
 const HOUSEHOLD = 'aaaaaaaa-0000-0000-0000-000000000001'
 const EXPORT = 'eeeeeeee-0000-0000-0000-000000000001'
@@ -51,7 +51,9 @@ function deps(overrides: Partial<ExportHandlerDeps> = {}): Mocked<ExportHandlerD
     readRows: vi.fn(async () => input()),
     downloadPhoto: vi.fn(async () => new Uint8Array([0xff, 0xd8, 0xff, 0xd9])),
     zip: vi.fn((files, photos) => zipExport(files, photos, fflate)),
+    stillClaimed: vi.fn(async () => true),
     upload: vi.fn(async () => {}),
+    removeUpload: vi.fn(async () => {}),
     markReady: vi.fn(async () => {}),
     markFailed: vi.fn(async () => {}),
     sendEmail: vi.fn(async () => {}),
@@ -77,7 +79,7 @@ const post = (body: unknown, authorization: string | null = 'Bearer owner-jwt') 
 afterEach(() => vi.restoreAllMocks())
 
 describe('export-household: build', () => {
-  it('answers 202 at once, then builds the ZIP, uploads it, emails the owner and marks it ready', async () => {
+  it('answers 202 at once, then builds the ZIP, uploads it, marks it ready and emails the owner', async () => {
     const d = deps()
     const res = await createExportHandler(d)(post({ exportId: EXPORT }))
     expect(res.status).toBe(202)
@@ -107,9 +109,12 @@ describe('export-household: build', () => {
     expect(message.text).toContain(`http://localhost:5173/manage/export/${EXPORT}`)
     expect(message.text).not.toContain('Secret tacos')
     expect(message.text).not.toContain('Ivy')
-    // Uploaded before the email; ready after it, so a link that was sent always leads to a file.
-    expect(d.upload.mock.invocationCallOrder[0]!).toBeLessThan(d.sendEmail.mock.invocationCallOrder[0]!)
-    expect(d.sendEmail.mock.invocationCallOrder[0]!).toBeLessThan(d.markReady.mock.invocationCallOrder[0]!)
+    // Checked, uploaded, marked ready, then emailed: an email only ever goes out for an export that is ready.
+    expect(d.stillClaimed).toHaveBeenCalledWith(EXPORT)
+    expect(d.stillClaimed.mock.invocationCallOrder[0]!).toBeLessThan(d.upload.mock.invocationCallOrder[0]!)
+    expect(d.upload.mock.invocationCallOrder[0]!).toBeLessThan(d.markReady.mock.invocationCallOrder[0]!)
+    expect(d.markReady.mock.invocationCallOrder[0]!).toBeLessThan(d.sendEmail.mock.invocationCallOrder[0]!)
+    expect(d.removeUpload).not.toHaveBeenCalled()
   })
 
   it('awaits the build when the runtime cannot run it in the background', async () => {
@@ -149,13 +154,51 @@ describe('export-household: build', () => {
     expect(d2.markFailed).toHaveBeenCalledWith(EXPORT, 'too_large')
   })
 
-  it('marks it failed when the email cannot be sent', async () => {
+  it('moves a ready export to failed (email_failed) and removes its file when the email cannot be sent', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     const d = deps({ sendEmail: vi.fn(async () => Promise.reject(new Error('smtp down'))) })
     await createExportHandler(d)(post({ exportId: EXPORT }))
     await d.tasks[0]
+    expect(d.markReady).toHaveBeenCalled()
     expect(d.markFailed).toHaveBeenCalledWith(EXPORT, 'email_failed')
+    expect(d.markReady.mock.invocationCallOrder[0]!).toBeLessThan(d.markFailed.mock.invocationCallOrder[0]!)
+    expect(d.removeUpload).toHaveBeenCalledWith(`${HOUSEHOLD}/${EXPORT}.zip`)
+  })
+
+  it('uploads nothing and sends nothing when the export is no longer claimed just before the upload', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const d = deps({ stillClaimed: vi.fn(async () => false) })
+    await createExportHandler(d)(post({ exportId: EXPORT }))
+    await d.tasks[0]
+    expect(d.upload).not.toHaveBeenCalled()
     expect(d.markReady).not.toHaveBeenCalled()
+    expect(d.sendEmail).not.toHaveBeenCalled()
+    expect(d.markFailed).not.toHaveBeenCalled()
+  })
+
+  it('deletes the uploaded file and sends no email when marking it ready fails (purged or household deleted meanwhile)', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const d = deps({ markReady: vi.fn(async () => Promise.reject(Object.assign(new Error('svc_mark_export_ready failed'), { code: '22023' }))) })
+    await createExportHandler(d)(post({ exportId: EXPORT }))
+    await d.tasks[0]
+    expect(d.upload).toHaveBeenCalled()
+    expect(d.removeUpload).toHaveBeenCalledWith(`${HOUSEHOLD}/${EXPORT}.zip`)
+    expect(d.sendEmail).not.toHaveBeenCalled()
+  })
+
+  it('still finishes when removing the file after a failure also fails', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const d = deps({
+      markReady: vi.fn(async () => Promise.reject(new Error('gone'))),
+      removeUpload: vi.fn(async () => Promise.reject(new Error('storage down'))),
+    })
+    await createExportHandler(d)(post({ exportId: EXPORT }))
+    await expect(d.tasks[0]).resolves.toBeUndefined()
+    expect(d.sendEmail).not.toHaveBeenCalled()
+  })
+
+  it('caps photos at 30 MiB by default', () => {
+    expect(PHOTO_CAP_BYTES).toBe(30 * 1024 * 1024)
   })
 
   it('leaves photos out past the cap and says so in README.txt', async () => {
@@ -192,7 +235,7 @@ describe('export-household: build', () => {
     expect(d.background).not.toHaveBeenCalled()
   })
 
-  it('refuses to claim anything when APP_URL or SMTP is not configured', async () => {
+  it('refuses to claim anything when APP_URL or SMTP is not configured, and marks the export failed', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     for (const overrides of [{ appUrl: null }, { emailConfigured: false }]) {
       const d = deps(overrides)
@@ -200,7 +243,10 @@ describe('export-household: build', () => {
       expect(res.status).toBe(503)
       expect(await res.json()).toEqual({ error: 'not_configured' })
       expect(d.claim).not.toHaveBeenCalled()
+      expect(d.markFailed).toHaveBeenCalledWith(EXPORT, 'not_configured')
     }
+    const d = deps({ appUrl: null, markFailed: vi.fn(async () => Promise.reject(new Error('db down'))) })
+    expect((await createExportHandler(d)(post({ exportId: EXPORT }))).status).toBe(503)
   })
 
   it('rejects bad requests', async () => {

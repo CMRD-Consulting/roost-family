@@ -20,7 +20,7 @@ import nodemailer from 'npm:nodemailer@7.0.13'
 import type { RpcClient } from '../_shared/auth.ts'
 import { zipExport } from '../_shared/exportBuilder.ts'
 import { fflate } from '../_shared/fflateModule.ts'
-import { readHouseholdRows } from './collect.ts'
+import { readBytes, readHouseholdRows } from './collect.ts'
 import { ExportFailure, createCallerExport, createExportHandler, type ClaimedExport } from './handler.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
@@ -101,17 +101,32 @@ const handler = createExportHandler({
       return (data ?? []) as unknown as Record<string, unknown>[]
     }, householdId),
 
+  // Straight from the Storage API rather than supabase-js's download (a Blob, then another copy as an ArrayBuffer), so
+  // each photo is held once.
   async downloadPhoto(path) {
-    const { data, error } = await admin.storage.from(PHOTOS_BUCKET).download(path)
-    if (error) {
-      const status = statusOf(error) ?? statusOf((error as { originalError?: unknown }).originalError)
-      if (status === 404 || /not.?found/i.test(error.message)) return null
-      throw Object.assign(new Error('photo download failed'), { code: status })
+    const url = `${SUPABASE_URL}/storage/v1/object/authenticated/${PHOTOS_BUCKET}/${path.split('/').map(encodeURIComponent).join('/')}`
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`, apikey: SUPABASE_SERVICE_ROLE_KEY } })
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      // Storage answers a missing object with 400 and {"statusCode":"404"}, or with 404.
+      if (res.status === 404 || /"statusCode":\s*"404"|not.?found/i.test(text)) return null
+      throw Object.assign(new Error('photo download failed'), { code: res.status })
     }
-    return new Uint8Array(await data.arrayBuffer())
+    return readBytes(res)
   },
 
   zip: (files, photos) => zipExport(files, photos, fflate),
+
+  async stillClaimed(exportId) {
+    const { data, error } = await admin.rpc('svc_export_still_claimed', { p_export_id: exportId })
+    if (error) throw rpcFailure('svc_export_still_claimed', error)
+    return data === true
+  },
+
+  async removeUpload(path) {
+    const { error } = await admin.storage.from(EXPORTS_BUCKET).remove([path])
+    if (error) throw Object.assign(new Error('export remove failed'), { code: statusOf(error) })
+  },
 
   async upload(path, bytes) {
     const { error } = await admin.storage.from(EXPORTS_BUCKET).upload(path, bytes, { contentType: 'application/zip', upsert: false })

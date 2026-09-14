@@ -62,11 +62,20 @@ describe('requestExport', () => {
     const forbidden = client({ invoke: { data: null, error: httpError(403, { error: 'forbidden' }) } })
     await expect(requestExport(forbidden.c, HOUSEHOLD)).rejects.toMatchObject({ reason: 'forbidden', code: 'auth' })
 
+    // The export was recorded but never started: say so, rather than the hourly limit the owner would hit next.
+    const started = 'We couldn’t start the export. Try again in a few minutes.'
     const offline = client({ invoke: { data: null, error: { name: 'FunctionsFetchError', message: 'Failed to send a request' } } })
-    await expect(requestExport(offline.c, HOUSEHOLD)).rejects.toMatchObject({ reason: 'network' })
+    await expect(requestExport(offline.c, HOUSEHOLD)).rejects.toMatchObject({ reason: 'not_started', code: 'other', message: started })
+
+    const thrown = client()
+    thrown.invoke.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    await expect(requestExport(thrown.c, HOUSEHOLD)).rejects.toMatchObject({ reason: 'not_started', message: started })
 
     const broken = client({ invoke: { data: null, error: httpError(500, { error: 'internal' }) } })
-    await expect(requestExport(broken.c, HOUSEHOLD)).rejects.toMatchObject({ reason: 'internal', code: 'other', message: 'Couldn’t start the export. Try again.' })
+    await expect(requestExport(broken.c, HOUSEHOLD)).rejects.toMatchObject({ reason: 'not_started', message: started })
+
+    const busy = client({ invoke: { data: null, error: httpError(409, { error: 'not_pending' }) } })
+    await expect(requestExport(busy.c, HOUSEHOLD)).rejects.toMatchObject({ reason: 'not_started', message: started })
   })
 })
 

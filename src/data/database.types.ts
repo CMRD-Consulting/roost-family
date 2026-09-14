@@ -2115,6 +2115,10 @@ export type Database = {
         }
         Returns: string
       }
+      svc_export_still_claimed: {
+        Args: { p_export_id: string }
+        Returns: boolean
+      }
       svc_finish_calendar_oauth_attempt: {
         Args: { p_attempt_hash: string; p_membership_id: string }
         Returns: {

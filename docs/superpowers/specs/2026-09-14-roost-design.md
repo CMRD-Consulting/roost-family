@@ -570,6 +570,7 @@ All household-owned tables are scoped to a household, directly through `househol
 7. Invite codes enabled; per-household limits enforced
 8. pg_cron purge jobs scheduled and monitored (`supabase/manual-checks/cron_check.sql` reports READY)
 9. Photo storage sweep (`storage-sweep` Edge Function) deployed and scheduled hourly, so deleted photos' files are erased, not just unreadable
+10. Household export tested on the hosted project at the photo cap (30 MiB of photos plus a large log history): the `export-household` build stays within the Edge Function limits (150 MB memory, 2 s CPU time) and the emailed link downloads the ZIP
 
 ## 16. Revision History
 

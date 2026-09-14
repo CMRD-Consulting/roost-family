@@ -22,4 +22,11 @@ describe('exportReadyEmail', () => {
     expect(email.html).not.toContain('<b>Tom')
     expect(email.text).toContain('<b>Tom & "Jo"</b>')
   })
+
+  it('strips control characters from the household name', () => {
+    const email = exportReadyEmail({ householdName: 'Rivera\r\nBcc: x@evil.test\u0007\u0085', link: LINK })
+    expect(email.text).toContain('Your export of RiveraBcc: x@evil.test is ready')
+    expect(email.text).not.toMatch(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/)
+    expect(email.html).toContain('RiveraBcc: x@evil.test')
+  })
 })

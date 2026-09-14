@@ -12,8 +12,12 @@ export interface EmailMessage {
 const escapeHtml = (value: string) =>
   value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
 
+/** C0 and C1 control characters (CR, LF, tabs, bell, …): never part of a household name worth showing. */
+const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/g
+
 export function exportReadyEmail(input: { householdName: string; link: string }): EmailMessage {
-  const { householdName, link } = input
+  const householdName = input.householdName.replace(CONTROL_CHARS, '')
+  const { link } = input
   const text = [
     'Hi,',
     '',

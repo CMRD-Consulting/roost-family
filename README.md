@@ -132,9 +132,14 @@ CSV per log type, photos) into the private `exports` bucket and emails the reque
 `/manage/export/<id>`. That page signs the owner in again and asks the same function (`action: 'download'`) for a
 10-minute signed URL. Exports expire 24 hours after they are ready; `storage-sweep` erases expired files.
 
-- Photos are capped at 40 MB per export (memory and the 50 MiB upload limit); photos past the cap are left out and
+- Photos are capped at 30 MiB per export (hosted Edge Functions allow 150 MB of memory and 2 s of CPU time, and the
+  upload limit is 50 MiB); photos past the cap are left out and
   README.txt in the ZIP says how many. A ZIP over 50 MiB fails as `too_large`.
 - The build runs after the function's 202 response (`EdgeRuntime.waitUntil`), within the runtime's wall-clock limit.
+  It is marked ready before the email goes out; an export that can't be emailed becomes failed (`email_failed`).
+- Limits: one pending or ready export per household per hour, and at most 3 requests per hour including failed ones
+  (purge timeouts excepted).
+- Production: test an export at the photo cap on the hosted project before launch (spec §15, item 10).
 
 | Variable | Notes |
 |---|---|

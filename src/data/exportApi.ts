@@ -20,6 +20,7 @@ export type ExportErrorReason =
   | 'not_ready'
   | 'expired'
   | 'failed'
+  | 'not_started'
   | 'internal'
 
 const MESSAGES: Record<Exclude<ExportErrorReason, 'rate_limited'>, string> = {
@@ -31,6 +32,7 @@ const MESSAGES: Record<Exclude<ExportErrorReason, 'rate_limited'>, string> = {
   not_ready: 'This export is still being prepared.',
   expired: 'This export has expired.',
   failed: 'This export didn’t finish.',
+  not_started: 'We couldn’t start the export. Try again in a few minutes.',
   internal: 'Couldn’t start the export. Try again.',
 }
 
@@ -44,6 +46,7 @@ const SETTINGS_CODES: Record<ExportErrorReason, SettingsErrorCode> = {
   not_ready: 'other',
   expired: 'other',
   failed: 'other',
+  not_started: 'other',
   internal: 'other',
 }
 
@@ -143,7 +146,15 @@ async function invoke(client: RoostClient, body: Record<string, unknown>, refuse
 export async function requestExport(client: RoostClient, householdId: string): Promise<string> {
   const exportId = await rpc(client, 'request_household_export', { p_household_id: householdId }, 'forbidden')
   if (typeof exportId !== 'string') throw new ExportError('internal')
-  await invoke(client, { exportId }, 'forbidden')
+  try {
+    await invoke(client, { exportId }, 'forbidden')
+  } catch (e) {
+    // The export is recorded but didn't start (it fails on its own after 15 minutes). Unless the function said why,
+    // don't let the owner's next try read as the hourly limit with no explanation.
+    const reason = e instanceof ExportError ? e.reason : null
+    if (reason === 'not_configured' || reason === 'forbidden' || reason === 'session') throw e
+    throw new ExportError('not_started', null, e instanceof ExportError ? e.status : null)
+  }
   return exportId
 }
 

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { EXPORT_TABLES } from '../_shared/exportBuilder.ts'
-import { collectPhotos, photoNote, readHouseholdRows, type RowQuery } from './collect.ts'
+import { collectPhotos, photoNote, readBytes, readHouseholdRows, type RowQuery } from './collect.ts'
 
 const HOUSEHOLD = 'aaaaaaaa-0000-0000-0000-000000000001'
 const KID1 = 'cccccccc-0000-0000-0000-000000000001'
@@ -108,14 +108,43 @@ describe('collectPhotos', () => {
 
 describe('photoNote', () => {
   it('is empty when every photo is included', () => {
-    expect(photoNote({ omittedForSize: 0, missing: 0 }, 40 * 1024 * 1024)).toBe('')
+    expect(photoNote({ omittedForSize: 0, missing: 0 }, 30 * 1024 * 1024)).toBe('')
   })
 
   it('explains photos left out for size and missing files', () => {
-    const note = photoNote({ omittedForSize: 3, missing: 1 }, 40 * 1024 * 1024)
+    const note = photoNote({ omittedForSize: 3, missing: 1 }, 30 * 1024 * 1024)
     expect(note).toContain('3 photos were not included')
-    expect(note).toContain('40 MB')
+    expect(note).toContain('30 MB')
     expect(note).toContain('1 photo file could not be found')
     expect(note.endsWith('\r\n')).toBe(true)
+  })
+})
+
+describe('readBytes', () => {
+  const body = (chunks: number[][], headers: Record<string, string> = {}) =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          for (const c of chunks) controller.enqueue(new Uint8Array(c))
+          controller.close()
+        },
+      }),
+      { headers },
+    )
+
+  it('reads a response with Content-Length straight into one buffer of that size', async () => {
+    const bytes = await readBytes(body([[1, 2], [3], [4, 5]], { 'Content-Length': '5' }))
+    expect([...bytes]).toEqual([1, 2, 3, 4, 5])
+    expect(bytes.buffer.byteLength).toBe(5)
+  })
+
+  it('reads a response without Content-Length, or with a wrong one', async () => {
+    expect([...(await readBytes(body([[1, 2], [3]])))]).toEqual([1, 2, 3])
+    expect([...(await readBytes(body([[1, 2], [3, 4]], { 'Content-Length': '2' })))]).toEqual([1, 2, 3, 4])
+    expect([...(await readBytes(body([[1]], { 'Content-Length': '3' })))]).toEqual([1])
+  })
+
+  it('reads an empty body', async () => {
+    expect((await readBytes(new Response(null))).length).toBe(0)
   })
 })

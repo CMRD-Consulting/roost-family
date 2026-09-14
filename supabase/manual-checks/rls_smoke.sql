@@ -1973,14 +1973,14 @@ select pg_temp.expect('anon and authenticated cannot execute any private calenda
     'set_calendar_status', 'set_calendar_selection_gone', 'require_calendar_assignee', 'hide_unassigned_calendar_selection',
     'delete_calendar_vault_secret', 'end_membership')
     and (has_function_privilege('authenticated', p.oid, 'execute') or has_function_privilege('anon', p.oid, 'execute'))));
-select pg_temp.expect('only service_role can execute the 16 svc_ wrappers (6 here, 2 OAuth state wrappers in migration 9, 3 export wrappers in migration 10, 5 calendar wrappers in migration 11)', (
+select pg_temp.expect('only service_role can execute the 17 svc_ wrappers (6 here, 2 OAuth state wrappers in migration 9, 3 export wrappers in migration 10, 5 calendar wrappers in migration 11, 1 export wrapper in migration 12)', (
   select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
   where n.nspname = 'public' and p.proname like 'svc\_%'
     and has_function_privilege('service_role', p.oid, 'execute')
     and not has_function_privilege('authenticated', p.oid, 'execute')
-    and not has_function_privilege('anon', p.oid, 'execute')) = 16
+    and not has_function_privilege('anon', p.oid, 'execute')) = 17
   and (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-       where n.nspname = 'public' and p.proname like 'svc\_%') = 16);
+       where n.nspname = 'public' and p.proname like 'svc\_%') = 17);
 select pg_temp.expect('anon cannot execute svc_calendar_secret',
   not has_function_privilege('anon', 'public.svc_calendar_secret(uuid)', 'execute'));
 select pg_temp.expect('PUBLIC cannot execute any calendar function', not exists (
@@ -2533,7 +2533,7 @@ update public.household_exports set status = 'failed', error = 'internal', start
 set local role authenticated;
 select set_config('request.jwt.claims', :'X', true);
 select public.request_household_export(:'household_x') as export_x2 \gset
-select pg_temp.expect('a failed export does not count toward the limit', :'export_x2'::uuid is not null);
+select pg_temp.expect('a failed export does not count toward the one-per-hour limit', :'export_x2'::uuid is not null);
 reset role;
 update public.household_exports set created_at = now() - interval '61 minutes', expires_at = now() + interval '1 hour' where id = :'export_x2';
 set local role authenticated;
@@ -2577,6 +2577,9 @@ reset role;
 -- Privilege checks only: calling an unprivileged function from a pg_temp helper crashes this image (see the note above [26]).
 select pg_temp.expect('only service_role can execute the export wrappers; nobody can execute the private helpers',
   has_function_privilege('service_role', 'public.svc_claim_household_export(uuid)', 'execute')
+  and has_function_privilege('service_role', 'public.svc_export_still_claimed(uuid)', 'execute')
+  and not has_function_privilege('authenticated', 'public.svc_export_still_claimed(uuid)', 'execute')
+  and not has_function_privilege('anon', 'public.svc_export_still_claimed(uuid)', 'execute')
   and has_function_privilege('service_role', 'public.svc_mark_export_ready(uuid, text)', 'execute')
   and has_function_privilege('service_role', 'public.svc_mark_export_failed(uuid, text)', 'execute')
   and not has_function_privilege('authenticated', 'public.svc_claim_household_export(uuid)', 'execute')
@@ -2607,7 +2610,7 @@ select pg_temp.expect('ready: path, ready_at and a fresh 24-hour expiry', (
     and ready_at is not null and expires_at > now() + interval '23 hours'
   from public.household_exports where id = pg_temp.v('export_x3')));
 select pg_temp.expect_error('ready twice', $q$select public.svc_mark_export_ready(pg_temp.v('export_x3'), pg_temp.v('household_x')::text || '/' || pg_temp.v('export_x3')::text || '.zip')$q$, '22023');
-select pg_temp.expect_error('failed after ready', $q$select public.svc_mark_export_failed(pg_temp.v('export_x3'), 'internal')$q$, '22023');
+select pg_temp.expect_error('failed twice', $q$select public.svc_mark_export_failed(pg_temp.v_text('export_x')::uuid, 'internal')$q$, '22023');
 select public.svc_mark_export_failed(:'export_v', 'Error: stack trace at line 1');
 select pg_temp.expect('failed: an error that is not a short code is stored as "internal"', (
   select status = 'failed' and error = 'internal' from public.household_exports where id = pg_temp.v('export_v')));
@@ -2820,6 +2823,117 @@ reset role;
 select pg_temp.expect('set_calendar_selection share-locks memberships before locking the selection row', (
   select position('for share of m' in p.prosrc) between 1 and position('for update of s' in p.prosrc)
   from pg_proc p where p.oid = 'public.set_calendar_selection(uuid, boolean, uuid, uuid)'::regprocedure));
+
+-- ─── Export hardening (migration 12) ─────────────────────────────────────
+-- Fixtures: household T (owner T, for the rate limit), a second owner V2 of household V, household U (owner U).
+\set T '{"sub":"00000000-0000-0000-0000-000000000026","role":"authenticated","is_anonymous":false}'
+reset role;
+insert into auth.users (id, instance_id, aud, role, email, raw_app_meta_data, raw_user_meta_data, is_anonymous, created_at, updated_at)
+values
+  ('00000000-0000-0000-0000-000000000026', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 't@roost.test', '{}', '{}', false, now(), now()),
+  ('00000000-0000-0000-0000-000000000027', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'v2@roost.test', '{}', '{}', false, now(), now()),
+  ('00000000-0000-0000-0000-000000000028', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'u@roost.test', '{}', '{}', false, now(), now());
+insert into public.households (name, time_zone) values ('T family', 'UTC') returning id as household_t \gset
+insert into public.households (name, time_zone) values ('U family', 'UTC') returning id as household_u \gset
+insert into public.memberships (user_id, household_id, role, display_name, color) values
+  ('00000000-0000-0000-0000-000000000026', :'household_t', 'owner', 'Tam', '#2F86A6') returning id as membership_t \gset
+insert into public.memberships (user_id, household_id, role, display_name, color) values
+  ('00000000-0000-0000-0000-000000000027', :'household_v', 'owner', 'Vic', '#2F86A6') returning id as membership_v2 \gset
+insert into public.memberships (user_id, household_id, role, display_name, color) values
+  ('00000000-0000-0000-0000-000000000028', :'household_u', 'owner', 'Uma', '#2F86A6') returning id as membership_u \gset
+select set_config('smoke.household_t', :'household_t', true), set_config('smoke.household_u', :'household_u', true);
+
+\echo '[112] Export rate limit: at most 3 requests per household per hour, counting failed ones except purge timeouts'
+insert into public.household_exports (household_id, requested_by, status, error, created_at) values
+  (:'household_t', :'membership_t', 'failed', 'internal', now() - interval '20 minutes'),
+  (:'household_t', :'membership_t', 'failed', 'internal', now() - interval '10 minutes'),
+  (:'household_t', :'membership_t', 'failed', 'timeout', now() - interval '5 minutes'),
+  (:'household_t', :'membership_t', 'failed', 'internal', now() - interval '70 minutes');
+set local role authenticated;
+select set_config('request.jwt.claims', :'T', true);
+select public.request_household_export(:'household_t') as export_t3 \gset
+select pg_temp.expect('two failed requests this hour (and a timeout, and an old one) still allow a third', :'export_t3'::uuid is not null);
+reset role;
+update public.household_exports set status = 'failed', error = 'not_configured' where id = :'export_t3';
+set local role authenticated;
+select set_config('request.jwt.claims', :'T', true);
+do $$
+declare v_detail text;
+begin
+  perform public.request_household_export(current_setting('smoke.household_t')::uuid);
+  raise exception 'FAIL: the fourth request in an hour did not raise';
+exception when sqlstate 'RL001' then
+  get stacked diagnostics v_detail = pg_exception_detail;
+  -- The oldest of the three counted requests (20 minutes ago) leaves the hour in 40 minutes.
+  if v_detail !~ '^retry_after_minutes=(40|41)$' then
+    raise exception 'FAIL: rate limit detail was %', v_detail;
+  end if;
+end $$;
+reset role;
+
+\echo '[113] Claim: only within 15 minutes of the request, for a requester who is still an owner, in a live household'
+insert into public.household_exports (household_id, requested_by, created_at) values
+  (:'household_v', :'membership_v', now() - interval '16 minutes') returning id as export_old_claim \gset
+insert into public.household_exports (household_id, requested_by) values (:'household_v', :'membership_v2') returning id as export_v2 \gset
+insert into public.household_exports (household_id, requested_by) values (:'household_u', :'membership_u') returning id as export_u \gset
+select set_config('smoke.export_old_claim', :'export_old_claim', true), set_config('smoke.export_v2', :'export_v2', true),
+       set_config('smoke.export_u', :'export_u', true);
+set local role service_role;
+select pg_temp.expect('an export requested 16 minutes ago cannot be claimed', not exists (
+  select 1 from public.svc_claim_household_export(pg_temp.v('export_old_claim'))));
+reset role;
+update public.memberships set role = 'adult' where id = :'membership_v2';
+set local role service_role;
+select pg_temp.expect('a requester who is no longer an owner: no claim', not exists (select 1 from public.svc_claim_household_export(pg_temp.v('export_v2'))));
+reset role;
+update public.memberships set role = 'owner', left_at = now() where id = :'membership_v2';
+set local role service_role;
+select pg_temp.expect('a requester who left: no claim', not exists (select 1 from public.svc_claim_household_export(pg_temp.v('export_v2'))));
+reset role;
+-- The deletion trigger removes a deleted household's exports; turn it off to reach the claim's own household check.
+alter table public.households disable trigger delete_exports_of_deleted_household;
+update public.households set deleted_at = now() where id = :'household_u';
+set local role service_role;
+select pg_temp.expect('a deleted household: no claim', not exists (select 1 from public.svc_claim_household_export(pg_temp.v('export_u'))));
+reset role;
+update public.households set deleted_at = null where id = :'household_u';
+alter table public.households enable trigger delete_exports_of_deleted_household;
+select pg_temp.expect('the refused claims left the rows unclaimed', not exists (
+  select 1 from public.household_exports where id in (:'export_old_claim', :'export_v2', :'export_u') and started_at is not null));
+
+\echo '[114] Before upload: still claimed; ready needs a claim; ready can become failed (email_failed); the purge respects started_at'
+set local role service_role;
+select pg_temp.expect('an unclaimed export is not still claimed', not public.svc_export_still_claimed(:'export_u'));
+select pg_temp.expect_error('ready for an unclaimed export', $q$select public.svc_mark_export_ready(pg_temp.v('export_u'), pg_temp.v_text('household_u') || '/' || pg_temp.v('export_u')::text || '.zip')$q$, '22023');
+select pg_temp.expect('the owner''s export is claimed', exists (select 1 from public.svc_claim_household_export(:'export_u')));
+select pg_temp.expect('a claimed, pending export of a live household is still claimed', public.svc_export_still_claimed(:'export_u'));
+select pg_temp.expect('an unknown export is not', not public.svc_export_still_claimed(gen_random_uuid()));
+reset role;
+alter table public.households disable trigger delete_exports_of_deleted_household;
+update public.households set deleted_at = now() where id = :'household_u';
+set local role service_role;
+select pg_temp.expect('a claimed export of a deleted household is not still claimed', not public.svc_export_still_claimed(:'export_u'));
+reset role;
+update public.households set deleted_at = null where id = :'household_u';
+alter table public.households enable trigger delete_exports_of_deleted_household;
+set local role service_role;
+select public.svc_mark_export_ready(:'export_u', :'household_u' || '/' || :'export_u' || '.zip');
+select pg_temp.expect('a ready export is not still claimed', not public.svc_export_still_claimed(:'export_u'));
+select public.svc_mark_export_failed(:'export_u', 'email_failed');
+select pg_temp.expect('ready → failed (email_failed) clears the path and ready time', (
+  select status = 'failed' and error = 'email_failed' and storage_path is null and ready_at is null
+  from public.household_exports where id = pg_temp.v('export_u')));
+select pg_temp.expect_error('failed → failed', $q$select public.svc_mark_export_failed(pg_temp.v('export_u'), 'internal')$q$, '22023');
+reset role;
+insert into public.household_exports (household_id, requested_by, created_at, started_at) values
+  (:'household_u', :'membership_u', now() - interval '20 minutes', now() - interval '5 minutes') returning id as export_building \gset
+insert into public.household_exports (household_id, requested_by, created_at, started_at) values
+  (:'household_u', :'membership_u', now() - interval '30 minutes', now() - interval '16 minutes') returning id as export_stuck \gset
+select private.purge_deleted_households();
+select pg_temp.expect('the purge keeps an export claimed 5 minutes ago (requested 20) building', (
+  select status = 'pending' from public.household_exports where id = :'export_building'));
+select pg_temp.expect('the purge fails an export claimed 16 minutes ago (timeout)', (
+  select status = 'failed' and error = 'timeout' from public.household_exports where id = :'export_stuck'));
 \o
 \echo 'ALL RLS SMOKE CHECKS PASSED'
 rollback;

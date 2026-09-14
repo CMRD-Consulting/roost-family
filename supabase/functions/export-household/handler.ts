@@ -7,11 +7,13 @@
  * action 'build' (default), called by Manage household right after `request_household_export`:
  *   202 { exportId, status: 'pending' }   the export was claimed; it is built after the response (see `background`)
  *   409 { error: 'not_pending' }          already building, ready or failed
- *   503 { error: 'not_configured' }       APP_URL or the SMTP settings are missing (nothing is claimed)
+ *   503 { error: 'not_configured' }       APP_URL or the SMTP settings are missing (nothing is claimed; the export is
+ *                                         marked failed 'not_configured')
  * The build reads the household's rows (exact `EXPORT_TABLES` columns) and photo files with the service role, zips
- * them (`buildExportFiles` + `zipExport`), uploads `exports/<household>/<export>.zip`, emails the requesting owner a
- * link to `${APP_URL}/manage/export/<id>`, then marks the export ready. Any failure marks it failed with a short code:
- * `too_large` (the ZIP is over the upload limit), `email_failed`, or `internal`.
+ * them (`buildExportFiles` + `zipExport`), checks the export is still claimed, uploads
+ * `exports/<household>/<export>.zip`, marks the export ready, then emails the requesting owner a link to
+ * `${APP_URL}/manage/export/<id>` (see `runExport` for each failure). Failure codes: `too_large` (the ZIP is over the
+ * upload limit), `email_failed`, `not_configured`, or `internal`.
  *
  * action 'download', called by /manage/export/:id after the owner signs in:
  *   200 { path, expiresAt }   a signed Storage URL path valid for 10 minutes, relative to the Supabase URL (the
@@ -23,9 +25,11 @@
  * Both actions:
  *   400 { error: 'invalid_request' }   401/403 { error: 'forbidden' }   500 { error: 'internal' }
  *
- * Memory: photos are capped at 40 MB per export (`PHOTO_CAP_BYTES`); the ZIP holds them uncompressed plus the
- * compressed data files, and the build keeps photos and ZIP in memory together, so the peak stays around 100 MB. Photos
- * past the cap are left out and README.txt says how many. A ZIP over 50 MiB (the project's upload limit) fails as
+ * Memory: photos are capped at 30 MiB per export (`PHOTO_CAP_BYTES`), each read once into a single buffer. The ZIP
+ * stores them uncompressed, and photos and ZIP are in memory together only while zipping (about 60 MiB plus the data
+ * files); only the ZIP is referenced during the upload. Hosted Edge Functions allow 150 MB of memory and 2 s of CPU:
+ * the launch gate (spec §15) includes a hosted test at the cap. Photos past the cap are left out and README.txt says
+ * how many. A ZIP over 50 MiB (the project's upload limit) fails as
  * `too_large`. Logs carry only error names and codes, never household data.
  */
 import { AuthError, type CallerClientFactory } from '../_shared/auth.ts'
@@ -35,7 +39,7 @@ import { collectPhotos, photoNote } from './collect.ts'
 import { exportReadyEmail } from './email.ts'
 
 const METHODS = 'POST'
-export const PHOTO_CAP_BYTES = 40 * 1024 * 1024
+export const PHOTO_CAP_BYTES = 30 * 1024 * 1024
 export const MAX_ZIP_BYTES = 50 * 1024 * 1024
 export const DOWNLOAD_URL_SECONDS = 600
 
@@ -73,8 +77,12 @@ export interface ExportHandlerDeps {
   /** A photo file's bytes; null when the file is missing. */
   downloadPhoto(path: string): Promise<Uint8Array | null>
   zip(files: ExportFiles, photos: readonly { path: string; bytes: Uint8Array }[]): Uint8Array
+  /** True while the export is pending, claimed and its household live (`svc_export_still_claimed`). */
+  stillClaimed(exportId: string): Promise<boolean>
   /** Uploads to the exports bucket; throws ExportFailure('too_large') when Storage refuses the size. */
   upload(path: string, bytes: Uint8Array): Promise<void>
+  /** Deletes an uploaded export file (best effort; the storage sweep catches anything left). */
+  removeUpload(path: string): Promise<void>
   markReady(exportId: string, path: string): Promise<void>
   markFailed(exportId: string, code: string): Promise<void>
   sendEmail(message: { to: string; subject: string; text: string; html: string }): Promise<void>
@@ -126,41 +134,83 @@ function errorName(e: unknown): string {
   return e instanceof Error ? e.name : 'error'
 }
 
-/** Builds, uploads and emails one claimed export, marking it ready or failed. Never throws. */
-export async function runExport(deps: ExportHandlerDeps & { appUrl: string }, exportId: string, claimed: ClaimedExport): Promise<void> {
+function codeOf(e: unknown): string {
+  const code = (e as { code?: unknown } | null)?.code
+  return typeof code === 'string' ? code : ''
+}
+
+/** Reads the household and zips it. Rows, photos and data files stay local to this call, so only the ZIP is still
+ *  referenced once it returns (nothing else holds a copy while the upload runs). */
+async function buildZip(deps: ExportHandlerDeps, claimed: ClaimedExport): Promise<Uint8Array> {
   const cap = deps.photoCapBytes ?? PHOTO_CAP_BYTES
+  const rows = await deps.readRows(claimed.householdId)
+  const photos = await collectPhotos(rows.photos, (p) => deps.downloadPhoto(p), cap)
+  const files = buildExportFiles(rows, { timeZone: claimed.timeZone, exportedAt: deps.now().toISOString() })
+  const note = photoNote(photos, cap)
+  if (note) files['README.txt'] = `${files['README.txt']}\r\n${note}`
+  return deps.zip(files, photos.files)
+}
+
+async function quietly(label: string, work: () => Promise<void>): Promise<void> {
+  try {
+    await work()
+  } catch (e) {
+    console.error(`export-household: ${label}`, { error: errorName(e) })
+  }
+}
+
+/**
+ * Builds, uploads, marks ready and emails one claimed export. Never throws.
+ *  - Before uploading it checks the export is still claimed (not failed by the purge, household not deleted); if not,
+ *    it stops without uploading anything.
+ *  - It marks the export ready before emailing, so an email only goes out for a ready export. If marking ready fails,
+ *    the uploaded file is deleted and no email is sent.
+ *  - If the email fails, the ready export becomes failed ('email_failed') and its file is deleted.
+ *  - Any other failure marks it failed with a short code.
+ */
+export async function runExport(deps: ExportHandlerDeps & { appUrl: string }, exportId: string, claimed: ClaimedExport): Promise<void> {
   const path = `${claimed.householdId}/${exportId}.zip`
   let stage = 'build'
+  let uploaded = false
   try {
-    const rows = await deps.readRows(claimed.householdId)
-    const photos = await collectPhotos(rows.photos, (p) => deps.downloadPhoto(p), cap)
-    const files = buildExportFiles(rows, { timeZone: claimed.timeZone, exportedAt: deps.now().toISOString() })
-    const note = photoNote(photos, cap)
-    if (note) files['README.txt'] = `${files['README.txt']}\r\n${note}`
-    const bytes = deps.zip(files, photos.files)
+    let bytes: Uint8Array | null = await buildZip(deps, claimed)
     if (bytes.length > (deps.maxZipBytes ?? MAX_ZIP_BYTES)) throw new ExportFailure('too_large')
+
+    stage = 'check'
+    if (!(await deps.stillClaimed(exportId))) {
+      console.error('export-household: no longer claimed; nothing uploaded')
+      return
+    }
 
     stage = 'upload'
     await deps.upload(path, bytes)
+    bytes = null
+    uploaded = true
+
+    stage = 'ready'
+    try {
+      await deps.markReady(exportId, path)
+    } catch (e) {
+      // Failed by the purge or deleted with its household meanwhile: don't leave the file for the sweep, don't email.
+      console.error('export-household: could not mark ready; removing the file', { error: errorName(e), code: codeOf(e) })
+      await quietly('could not remove the file', () => deps.removeUpload(path))
+      return
+    }
 
     stage = 'email'
     const email = exportReadyEmail({ householdName: claimed.householdName, link: `${deps.appUrl}/manage/export/${exportId}` })
     try {
       await deps.sendEmail({ to: claimed.requesterEmail, ...email })
     } catch (e) {
-      throw Object.assign(new ExportFailure('email_failed'), { cause: errorName(e) })
+      console.error('export-household: email failed', { error: errorName(e) })
+      await quietly('could not mark the export failed', () => deps.markFailed(exportId, 'email_failed'))
+      await quietly('could not remove the file', () => deps.removeUpload(path))
     }
-
-    stage = 'ready'
-    await deps.markReady(exportId, path)
   } catch (e) {
     const code = e instanceof ExportFailure ? e.code : 'internal'
     console.error('export-household: failed', { stage, code, error: errorName(e) })
-    try {
-      await deps.markFailed(exportId, code)
-    } catch (markError) {
-      console.error('export-household: could not mark the export failed', { error: errorName(markError) })
-    }
+    await quietly('could not mark the export failed', () => deps.markFailed(exportId, code))
+    if (uploaded) await quietly('could not remove the file', () => deps.removeUpload(path))
   }
 }
 
@@ -195,6 +245,8 @@ export function createExportHandler(deps: ExportHandlerDeps): (req: Request) => 
       const appUrl = deps.appUrl
       if (!appUrl || !deps.emailConfigured) {
         console.error('export-household: APP_URL or SMTP settings are missing')
+        // Fail it now, so the owner isn't left waiting on a pending export (it counts toward the hourly limit).
+        await quietly('could not mark the export failed', () => deps.markFailed(exportId, 'not_configured'))
         return json(503, { error: 'not_configured' })
       }
       const claimed = await deps.claim(exportId)
