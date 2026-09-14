@@ -49,6 +49,8 @@ export default defineConfig({
   server: { host: true, port: 5173 },
   test: {
     environment: 'jsdom',
-    include: ['src/**/*.test.ts'],
+    // supabase/functions/_shared/** is plain TS shared with the Deno Edge Function (spec §5.6);
+    // Vitest runs its tests directly rather than through the Deno test runner.
+    include: ['src/**/*.test.ts', 'supabase/functions/**/*.test.ts'],
   },
 })
