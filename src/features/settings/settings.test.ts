@@ -8,6 +8,7 @@ import { buildDemoSnapshot } from '@/data/demo/demoFixture'
 import { mutateDemo, resetDemoForTests } from '@/data/demo/demoHousehold'
 import { SettingsError, type SettingsApi } from '@/data/settingsApi'
 import { resolveSettingsRoute } from '@/router'
+import { useDisplayStore } from '@/session/displayStore'
 import { useHouseholdStore } from '@/stores/householdStore'
 import { useSettingsSessionStore } from '@/stores/settingsSession'
 import LegalPlaceholder from './LegalPlaceholder.vue'
@@ -33,6 +34,7 @@ vi.mock('@/data/supabase', () => {
 })
 
 const SAM = 'bbbbbbbb-0000-0000-0000-000000000001'
+const ALEX = 'bbbbbbbb-0000-0000-0000-000000000002'
 const SAM_AUTH = { membershipId: SAM, pin: '1234' }
 
 let pinia: Pinia
@@ -215,10 +217,36 @@ describe('SettingsShell', () => {
     w.unmount()
   })
 
-  it('sections that are not built yet show Coming soon', async () => {
-    const w = await openShell(fakeApi(), 'members')
+  it('in demo, an owner changes roles in Members and renames the display without a sign-in', async () => {
+    const settingsApi = await demoApi()
+    await useDisplayStore().refresh()
+    const w = await openShell(settingsApi, 'members')
     expect(w.find('h2').text()).toBe('Members')
-    expect(w.text()).toContain('Coming soon')
+    expect(w.find('[data-testid="adult-sign-in"]').exists()).toBe(false)
+    expect(w.findAll('button').some((b) => b.text() === 'Add adult')).toBe(false)
+
+    await w.find(`[data-testid="member-${ALEX}"]`).findAll('button').find((b) => b.text() === 'Make owner')!.trigger('click')
+    await settle()
+    expect(settingsApi.setMemberRole).toHaveBeenCalledWith(expect.anything(), ALEX, 'owner')
+    expect(w.find(`[data-testid="member-${ALEX}"]`).text()).toContain('Owner')
+
+    await router.replace('/settings/displays')
+    await settle()
+    expect(w.find('[data-testid="display-demo-display"]').text()).toContain('This display')
+    await buttonByText(w, 'Rename').trigger('click')
+    await inputByLabel(w, 'Display name').setValue('Hall')
+    await buttonByText(w, 'Save name').trigger('click')
+    await settle()
+    expect(settingsApi.renameDisplay).toHaveBeenCalledWith(expect.anything(), 'demo-display', 'Hall')
+    expect(w.find('[data-testid="display-demo-display"]').text()).toContain('Hall')
+    w.unmount()
+  })
+
+  it('in demo, deleting the household is not available', async () => {
+    const w = await openShell(await demoApi(), 'delete-household')
+    expect(w.find('h2').text()).toBe('Delete household')
+    expect(w.text()).toContain('Not available in demo.')
+    expect(w.findAll('button').some((b) => b.text().startsWith('Delete'))).toBe(false)
     w.unmount()
   })
 

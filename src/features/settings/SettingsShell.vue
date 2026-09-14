@@ -16,11 +16,13 @@ import RButton from '@/ui/RButton.vue'
 import RLogo from '@/ui/RLogo.vue'
 import AboutSection from './sections/AboutSection.vue'
 import ChildrenSection from './sections/ChildrenSection.vue'
-import ComingSoonSection from './sections/ComingSoonSection.vue'
+import DeleteHouseholdSection from './sections/DeleteHouseholdSection.vue'
+import DisplaysSection from './sections/DisplaysSection.vue'
 import HouseholdSection from './sections/HouseholdSection.vue'
 import InboxSection from './sections/InboxSection.vue'
 import LogsSection from './sections/LogsSection.vue'
 import MedicinesSection from './sections/MedicinesSection.vue'
+import MembersSection from './sections/MembersSection.vue'
 import MyAccountSection from './sections/MyAccountSection.vue'
 import RoutinesSection from './sections/RoutinesSection.vue'
 import SitterInfoSection from './sections/SitterInfoSection.vue'
@@ -28,7 +30,7 @@ import StickersSection from './sections/StickersSection.vue'
 import { findSection, SETTINGS_SECTIONS, type SettingsSectionId } from './settingsNav'
 import { useSettingsOffline } from './useSettingsSave'
 
-const SECTION_COMPONENTS: Partial<Record<SettingsSectionId, Component>> = {
+const SECTION_COMPONENTS: Record<SettingsSectionId, Component> = {
   household: HouseholdSection,
   children: ChildrenSection,
   routines: RoutinesSection,
@@ -38,6 +40,9 @@ const SECTION_COMPONENTS: Partial<Record<SettingsSectionId, Component>> = {
   logs: LogsSection,
   inbox: InboxSection,
   'my-account': MyAccountSection,
+  members: MembersSection,
+  displays: DisplaysSection,
+  'delete-household': DeleteHouseholdSection,
   about: AboutSection,
 }
 
@@ -51,7 +56,7 @@ const { unreachable } = useHouseholdSession()
 useNightPeekTaps()
 
 const section = computed(() => findSection(route.params.section))
-const sectionComponent = computed(() => SECTION_COMPONENTS[section.value.id] ?? null)
+const sectionComponent = computed(() => SECTION_COMPONENTS[section.value.id])
 
 const adult = computed(() => {
   const info = session.info
@@ -144,8 +149,7 @@ onBeforeUnmount(() => {
           </p>
 
           <template v-if="store.view">
-            <component :is="sectionComponent" v-if="sectionComponent" />
-            <ComingSoonSection v-else :title="section.label" />
+            <component :is="sectionComponent" />
           </template>
           <p v-else-if="unreachable" role="status" class="text-[22px] text-ink-2">Can’t reach Roost Family. Retrying…</p>
           <div v-else class="flex justify-center py-16 text-orange" aria-label="Loading" role="status">

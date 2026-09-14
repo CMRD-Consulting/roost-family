@@ -4,11 +4,13 @@ import {
   SettingsError,
   type AddChildInput,
   type AdultClient,
+  type DisplayRow,
   type EntryPatch,
   type HouseholdSettingsInput,
   type ListEntriesQuery,
   type LogEntryRow,
   type LogTable,
+  type MemberRow,
   type MedicineInput,
   type RoutineInput,
   type SettingsApi,
@@ -85,6 +87,9 @@ const SNAPSHOT_KEY = {
   diaper_entries: 'diapers',
   jots: 'jots',
 } as const satisfies Record<EntryTable, keyof HouseholdSnapshot>
+
+/** Same id as `DEMO_DISPLAY` in householdSource (not imported: householdSource loads this module). */
+const DEMO_DISPLAY_ID = 'demo-display'
 
 /** Renaming "this display" isn't part of the demo household (there is exactly one, fixed, display); a
  *  module-local name stands in so the My devices/Displays screens have something to show and change. */
@@ -333,7 +338,23 @@ export function createDemoSettingsApi(): SettingsApi {
     throw new SettingsError('Not available in demo', 'other')
   }
 
+  async function listMembers(): Promise<MemberRow[]> {
+    return getDemoSnapshot(new Date()).members.map((m) => ({
+      membershipId: m.id, displayName: m.displayName, color: m.color, role: m.role, joinedAt: null,
+    }))
+  }
+
+  async function listDisplays(): Promise<DisplayRow[]> {
+    return [{ displayId: DEMO_DISPLAY_ID, name: demoDisplayName, lastSeenAt: new Date().toISOString() }]
+  }
+
   async function setMemberRole(_client: AdultClient, membershipId: string, role: 'owner' | 'adult'): Promise<void> {
+    const members = getDemoSnapshot(new Date()).members
+    const target = members.find((m) => m.id === membershipId)
+    if (!target) throw new SettingsError('Not found', 'other')
+    if (target.role === 'owner' && role !== 'owner' && !members.some((m) => m.id !== membershipId && m.role === 'owner')) {
+      throw new SettingsError('a household must keep at least one owner', 'invalid')
+    }
     mutateDemo((s) => ({ ...s, members: s.members.map((m) => (m.id === membershipId ? { ...m, role } : m)) }))
   }
 
@@ -368,7 +389,11 @@ export function createDemoSettingsApi(): SettingsApi {
     leaveHousehold: notAvailable,
     setMyPin: notAvailable,
     adultMembership: notAvailable,
+    recordConsent: notAvailable,
+    listMembers,
+    listDisplays,
     renameDisplay,
+    revokeDisplay: notAvailable,
     deleteHousehold: notAvailable,
   }
 }

@@ -260,10 +260,30 @@ describe('createDemoSettingsApi', () => {
       await expect(api.deleteHousehold(fakeAdultClient, 'household-1', 'Rivera')).rejects.toBeInstanceOf(SettingsError)
     })
 
+    it('revokeDisplay and recordConsent are not available', async () => {
+      const api = createDemoSettingsApi()
+      await expect(api.revokeDisplay({} as never, 'demo-display')).rejects.toMatchObject({ message: 'Not available in demo' })
+      await expect(api.recordConsent({} as never, '2026-09-14')).rejects.toMatchObject({ message: 'Not available in demo' })
+    })
+
+    it('listMembers lists the demo adults and listDisplays the demo display', async () => {
+      const api = createDemoSettingsApi()
+      const members = await api.listMembers({} as never, 'household-1')
+      expect(members.map((m) => [m.membershipId, m.displayName, m.role])).toEqual([[SAM_ID, 'Sam', 'owner'], [ALEX_ID, 'Alex', 'adult']])
+      await api.renameDisplay({} as never, 'demo-display', 'Hall')
+      expect(await api.listDisplays({} as never, 'household-1')).toEqual([{ displayId: 'demo-display', name: 'Hall', lastSeenAt: expect.any(String) }])
+    })
+
     it('setMemberRole mutates the demo household', async () => {
       const api = createDemoSettingsApi()
       await api.setMemberRole({} as never, ALEX_ID, 'owner')
       expect(getDemoSnapshot(new Date()).members.find((m) => m.id === ALEX_ID)?.role).toBe('owner')
+    })
+
+    it('setMemberRole keeps at least one owner', async () => {
+      const api = createDemoSettingsApi()
+      await expect(api.setMemberRole({} as never, SAM_ID, 'adult')).rejects.toMatchObject({ code: 'invalid' })
+      expect(getDemoSnapshot(new Date()).members.find((m) => m.id === SAM_ID)?.role).toBe('owner')
     })
 
     it('renameDisplay mutates the demo display name', async () => {

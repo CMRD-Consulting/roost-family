@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, useId } from 'vue'
+import { ref } from 'vue'
 import WizardFrame from '../WizardFrame.vue'
+import ConsentChecks from '../ConsentChecks.vue'
 import RButton from '@/ui/RButton.vue'
 import { POLICY_VERSION, type WizardState } from '../wizardState'
 
@@ -8,8 +9,6 @@ const props = defineProps<{ state: WizardState }>()
 const emit = defineEmits<{ next: []; back: [] }>()
 const terms = ref(false)
 const health = ref(false)
-const termsId = useId()
-const healthId = useId()
 
 async function accept() {
   if (!props.state.adult) return
@@ -32,21 +31,7 @@ async function accept() {
 
 <template>
   <WizardFrame title="Your family’s information" :error="state.error" can-go-back @back="emit('back')">
-    <p class="text-[20px] text-ink-2">
-      Roost Family stores your children’s sleep, feeding and medicine logs so everyone caring for them sees the same
-      thing. We never show ads, never sell data, and never share it with analytics companies. You can export or delete
-      everything at any time.
-    </p>
-    <div class="flex min-h-[44px] items-center gap-4 text-[20px]">
-      <input :id="termsId" v-model="terms" type="checkbox" class="size-7 shrink-0 accent-[var(--color-orange-deep)]" />
-      <label :for="termsId">I agree to the Terms and Privacy Policy.</label>
-    </div>
-    <div class="flex min-h-[44px] items-center gap-4 text-[20px]">
-      <input :id="healthId" v-model="health" type="checkbox" class="size-7 shrink-0 accent-[var(--color-orange-deep)]" />
-      <label :for="healthId">
-        I consent to Roost Family storing my children’s health information (medicine, sleep and feeding logs).
-      </label>
-    </div>
+    <ConsentChecks v-model:terms="terms" v-model:health="health" />
     <RButton :disabled="!terms || !health || state.busy" @click="accept">Agree and continue</RButton>
   </WizardFrame>
 </template>

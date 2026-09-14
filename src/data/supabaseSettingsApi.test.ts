@@ -398,6 +398,51 @@ describe('createSupabaseSettingsApi', () => {
       await createSupabaseSettingsApi(client).deleteHousehold(client, 'household-1', 'Rivera')
       expect(calls).toEqual([{ op: 'rpc', name: 'delete_household', args: { p_household_id: 'household-1', p_confirm_name: 'Rivera' } }])
     })
+
+    it('revokeDisplay -> revoke_display', async () => {
+      const { client, calls } = createFakeClient()
+      await createSupabaseSettingsApi(client).revokeDisplay(client, 'display-1')
+      expect(calls).toEqual([{ op: 'rpc', name: 'revoke_display', args: { p_display_id: 'display-1' } }])
+    })
+
+    it('recordConsent -> record_consent with health-data consent', async () => {
+      const { client, calls } = createFakeClient()
+      await createSupabaseSettingsApi(client).recordConsent(client, '2026-09-14')
+      expect(calls).toEqual([{ op: 'rpc', name: 'record_consent', args: { p_policy_version: '2026-09-14', p_health_data_consent: true } }])
+    })
+
+    it("listMembers reads the household's current members, oldest first", async () => {
+      const { client, calls } = createFakeClient({
+        from: {
+          error: null,
+          data: [{ id: 'm1', display_name: 'Sam', color: '#653437', role: 'owner', joined_at: '2026-01-02T10:00:00Z' }],
+        },
+      })
+      const rows = await createSupabaseSettingsApi(client).listMembers(client, 'household-1')
+      expect(rows).toEqual([{ membershipId: 'm1', displayName: 'Sam', color: '#653437', role: 'owner', joinedAt: '2026-01-02T10:00:00Z' }])
+      expect(calls).toEqual([{
+        op: 'from', table: 'memberships',
+        chain: [
+          ['select', 'id, display_name, color, role, joined_at'], ['eq', 'household_id', 'household-1'], ['is', 'left_at', null],
+          ['order', 'joined_at', { ascending: true }],
+        ],
+      }])
+    })
+
+    it("listDisplays reads the household's active displays, oldest first", async () => {
+      const { client, calls } = createFakeClient({
+        from: { error: null, data: [{ id: 'd1', name: 'Kitchen', last_seen_at: null }] },
+      })
+      const rows = await createSupabaseSettingsApi(client).listDisplays(client, 'household-1')
+      expect(rows).toEqual([{ displayId: 'd1', name: 'Kitchen', lastSeenAt: null }])
+      expect(calls).toEqual([{
+        op: 'from', table: 'displays',
+        chain: [
+          ['select', 'id, name, last_seen_at'], ['eq', 'household_id', 'household-1'], ['is', 'revoked_at', null],
+          ['order', 'created_at', { ascending: true }],
+        ],
+      }])
+    })
   })
 
   describe('error mapping', () => {

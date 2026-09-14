@@ -64,17 +64,38 @@ export const useDisplayStore = defineStore('display', () => {
       state.value = next
       if (!isDemo) {
         if (next.kind === 'registered') void deviceCache.saveIdentity(next.identity)
-        // Revoked or unregistered: this tablet no longer owns whatever household data was cached, and its
-        // pending logs must never replay into a household it has lost access to.
-        else {
-          void deviceCache.clear()
-          void clearOfflineQueue()
-        }
+        // Revoked or unregistered: forget the household on this device.
+        else void forgetHouseholdData()
       }
     } catch {
       state.value = { kind: 'offline' }
     }
     return state.value
+  }
+
+  /** This tablet no longer owns whatever household data was cached, and its pending logs must never replay
+   *  into a household it has lost access to. */
+  async function forgetHouseholdData(): Promise<void> {
+    const clearCache = async () => {
+      try {
+        await deviceCache.clear()
+      } catch (e) {
+        console.warn("Couldn't clear the device cache", e)
+      }
+    }
+    await Promise.all([clearCache(), clearOfflineQueue()])
+  }
+
+  /**
+   * An owner just removed this display, or deleted its household, from this tablet's own Settings: the server
+   * already revoked it, so mark it revoked now (no network round trip, which could fail and leave the
+   * household's data behind) and forget the household's data on this device.
+   */
+  async function markRemoved(): Promise<void> {
+    const revoked: DisplayState = { kind: 'revoked' }
+    lastKnown.value = revoked
+    state.value = revoked
+    if (!isDemo) await forgetHouseholdData()
   }
 
   function refreshOnce(): Promise<DisplayStoreState> {
@@ -123,5 +144,5 @@ export const useDisplayStore = defineStore('display', () => {
     }
   }
 
-  return { state, lastKnown, identity, refresh, ensure, watch, markReachable }
+  return { state, lastKnown, identity, refresh, ensure, watch, markReachable, markRemoved }
 })

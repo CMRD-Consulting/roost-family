@@ -173,6 +173,22 @@ describe('displayStore', () => {
     expect(deviceCache.clear).not.toHaveBeenCalled()
   })
 
+  it('markRemoved forgets the household on this device at once, without asking the server', async () => {
+    loadDisplayState.mockResolvedValue(REGISTERED)
+    const store = useDisplayStore()
+    await store.refresh()
+    loadDisplayState.mockClear()
+
+    await store.markRemoved()
+
+    expect(store.state).toEqual({ kind: 'revoked' })
+    expect(store.lastKnown).toEqual({ kind: 'revoked' })
+    expect(store.identity).toBeNull()
+    expect(deviceCache.clear).toHaveBeenCalled()
+    expect(offlineQueue.clear).toHaveBeenCalled()
+    expect(loadDisplayState).not.toHaveBeenCalled()
+  })
+
   it('clears the device cache when the display is revoked', async () => {
     loadDisplayState.mockResolvedValue({ kind: 'revoked' })
     const store = useDisplayStore()

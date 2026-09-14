@@ -128,6 +128,24 @@ export interface EntryPatch {
   doneAt?: string | null
 }
 
+/** A current member of the household, as Settings > Members lists it. */
+export interface MemberRow {
+  membershipId: string
+  displayName: string
+  color: string
+  role: 'owner' | 'adult' | 'caregiver'
+  /** ISO timestamp; null when unknown (demo). */
+  joinedAt: string | null
+}
+
+/** An active (not revoked) display of the household, as Settings > Displays lists it. */
+export interface DisplayRow {
+  displayId: string
+  name: string
+  /** ISO timestamp of the last heartbeat; null when it has never checked in. */
+  lastSeenAt: string | null
+}
+
 /**
  * Every configuration change goes through this interface (spec §7.9). Most methods are PIN-checked
  * (`SettingsAuth`, re-verified by the server on every call); the members/displays/deletion methods instead
@@ -180,6 +198,15 @@ export interface SettingsApi {
   setMyPin(client: AdultClient, householdId: string, pin: string): Promise<void>
   /** The signed-in adult's current membership in the household, or null when they aren't a member. */
   adultMembership(client: AdultClient, householdId: string, userId: string): Promise<{ membershipId: string; role: string } | null>
+  /** Records the signed-in adult's acceptance of `policyVersion` with health-data consent (spec §6.4 step 3),
+   *  which `acceptMemberInvite` requires. */
+  recordConsent(client: AdultClient, policyVersion: string): Promise<void>
+  /** Current members (not former), oldest first. Read with the owner's client (members can read memberships). */
+  listMembers(client: AdultClient, householdId: string): Promise<MemberRow[]>
+  /** Active displays, oldest first, with last-seen times. */
+  listDisplays(client: AdultClient, householdId: string): Promise<DisplayRow[]>
   renameDisplay(client: AdultClient, displayId: string, name: string): Promise<void>
+  /** Removes a display from the household at once (spec §6.3); that tablet shows "This display was removed". */
+  revokeDisplay(client: AdultClient, displayId: string): Promise<void>
   deleteHousehold(client: AdultClient, householdId: string, confirmName: string): Promise<void>
 }

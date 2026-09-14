@@ -4,10 +4,12 @@ import {
   SettingsError,
   type AddChildInput,
   type AdultClient,
+  type DisplayRow,
   type EntryPatch,
   type HouseholdSettingsInput,
   type ListEntriesQuery,
   type LogEntryRow,
+  type MemberRow,
   type MedicineInput,
   type RoutineInput,
   type SettingsApi,
@@ -304,6 +306,38 @@ export function createSupabaseSettingsApi(client: RoostClient): SettingsApi {
     await run(() => adult.rpc('rename_display', { p_display_id: displayId, p_name: name }))
   }
 
+  async function revokeDisplay(adult: AdultClient, displayId: string): Promise<void> {
+    await run(() => adult.rpc('revoke_display', { p_display_id: displayId }))
+  }
+
+  async function recordConsent(adult: AdultClient, policyVersion: string): Promise<void> {
+    await run(() => adult.rpc('record_consent', { p_policy_version: policyVersion, p_health_data_consent: true }))
+  }
+
+  async function listMembers(adult: AdultClient, householdId: string): Promise<MemberRow[]> {
+    const rows = await run<{ id: string; display_name: string; color: string; role: MemberRow['role']; joined_at: string }[] | null>(() =>
+      adult
+        .from('memberships')
+        .select('id, display_name, color, role, joined_at')
+        .eq('household_id', householdId)
+        .is('left_at', null)
+        .order('joined_at', { ascending: true }),
+    )
+    return (rows ?? []).map((r) => ({ membershipId: r.id, displayName: r.display_name, color: r.color, role: r.role, joinedAt: r.joined_at }))
+  }
+
+  async function listDisplays(adult: AdultClient, householdId: string): Promise<DisplayRow[]> {
+    const rows = await run<{ id: string; name: string; last_seen_at: string | null }[] | null>(() =>
+      adult
+        .from('displays')
+        .select('id, name, last_seen_at')
+        .eq('household_id', householdId)
+        .is('revoked_at', null)
+        .order('created_at', { ascending: true }),
+    )
+    return (rows ?? []).map((r) => ({ displayId: r.id, name: r.name, lastSeenAt: r.last_seen_at }))
+  }
+
   async function deleteHousehold(adult: AdultClient, householdId: string, confirmName: string): Promise<void> {
     await run(() => adult.rpc('delete_household', { p_household_id: householdId, p_confirm_name: confirmName }))
   }
@@ -335,7 +369,11 @@ export function createSupabaseSettingsApi(client: RoostClient): SettingsApi {
     leaveHousehold,
     setMyPin,
     adultMembership,
+    recordConsent,
+    listMembers,
+    listDisplays,
     renameDisplay,
+    revokeDisplay,
     deleteHousehold,
   }
 }
