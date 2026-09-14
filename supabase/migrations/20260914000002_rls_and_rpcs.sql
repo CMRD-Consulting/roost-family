@@ -504,11 +504,16 @@ language sql stable security definer set search_path = '' as $$
   from public.displays d where d.auth_user_id = auth.uid()
 $$;
 
-create function public.display_heartbeat() returns void
-language sql security definer set search_path = '' as $$
-  update public.displays set last_seen_at = now()
-  where auth_user_id = auth.uid() and revoked_at is null
-$$;
+-- True while this device is bound to an active display in a live household; false once the display
+-- was revoked (or the household deleted) or the device is not bound at all.
+create function public.display_heartbeat() returns boolean
+language plpgsql security definer set search_path = '' as $$
+begin
+  update public.displays d set last_seen_at = now()
+  where d.auth_user_id = auth.uid() and d.revoked_at is null
+    and exists (select 1 from public.households h where h.id = d.household_id and h.deleted_at is null);
+  return found;
+end $$;
 
 create function public.revoke_display(p_display_id uuid) returns void
 language plpgsql security definer set search_path = '' as $$

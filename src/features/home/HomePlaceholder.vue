@@ -15,10 +15,10 @@ let tick: ReturnType<typeof setInterval> | undefined
 
 onMounted(async () => {
   tick = setInterval(() => (now.value = new Date()), 15_000)
-  const state = displayStore.state
-  if (state?.kind !== 'registered') return
+  const identity = displayStore.identity
+  if (!identity) return
   const [{ data: household }, { data: children }] = await Promise.all([
-    displayClient.from('households').select('name, time_zone').eq('id', state.identity.householdId).single(),
+    displayClient.from('households').select('name, time_zone').eq('id', identity.householdId).single(),
     displayClient.from('children').select('id, name, color').order('sort_order'),
   ])
   householdName.value = household?.name ?? ''
@@ -34,7 +34,7 @@ onBeforeUnmount(() => clearInterval(tick))
   <main class="flex min-h-dvh flex-col gap-10 bg-app px-10 py-9">
     <header class="flex items-center justify-between">
       <div class="flex items-center gap-3"><RLogo /><span class="text-[24px] font-medium">roost family</span></div>
-      <span class="text-[18px] text-ink-3">{{ displayStore.state?.kind === 'registered' ? displayStore.state.identity.name : '' }}</span>
+      <span class="text-[18px] text-ink-3">{{ displayStore.identity?.name ?? '' }}</span>
     </header>
     <p class="text-[132px] leading-none font-semibold tracking-tight tabular-nums">{{ formatClock(now, timeZone) }}</p>
     <h1 class="text-[32px] font-semibold">{{ householdName }} household</h1>

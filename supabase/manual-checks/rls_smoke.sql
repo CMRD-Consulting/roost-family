@@ -241,6 +241,7 @@ select set_config('request.jwt.claims', :'D', true);
 select pg_temp.expect('revoked display sees 0 children', (select count(*) from public.children) = 0);
 select pg_temp.expect('revoked display sees 0 doses', (select count(*) from public.dose_entries) = 0);
 select pg_temp.expect('my_display revoked', (select out_revoked from public.my_display()));
+select pg_temp.expect('heartbeat false for a revoked display', not public.display_heartbeat());
 
 \echo '[22] claim_display works for a device whose previous display was revoked'
 select set_config('request.jwt.claims', :'A', true);
@@ -250,6 +251,11 @@ select set_config('request.jwt.claims', :'D', true);
 select public.claim_display(:'token_a2');
 select pg_temp.expect('re-claimed display sees A children', (select count(*) from public.children) = 1);
 select pg_temp.expect('my_display active', (select not out_revoked and out_name = 'Playroom' from public.my_display()));
+select pg_temp.expect('heartbeat true for an active display', public.display_heartbeat());
+
+select set_config('request.jwt.claims', :'A', true);
+select pg_temp.expect('heartbeat false for an unbound user', not public.display_heartbeat());
+select set_config('request.jwt.claims', :'D', true);
 
 \echo '[23] claim_display rejects a device already bound to an active display'
 select pg_temp.expect_error('claim while bound to active display',

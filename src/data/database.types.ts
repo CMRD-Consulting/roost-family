@@ -1325,7 +1325,7 @@ export type Database = {
       }
       display_heartbeat: {
         Args: Record<PropertyKey, never>
-        Returns: undefined
+        Returns: boolean
       }
       my_display: {
         Args: Record<PropertyKey, never>

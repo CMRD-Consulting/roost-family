@@ -13,8 +13,10 @@ export type DisplayState =
   | { kind: 'registered'; identity: DisplayIdentity }
   | { kind: 'revoked' }
 
+/** Throws when the session or the server can't be read; callers treat that as offline, not unregistered. */
 export async function loadDisplayState(client: DisplaySessionClient): Promise<DisplayState> {
-  const { data } = await client.auth.getSession()
+  const { data, error: sessionError } = await client.auth.getSession()
+  if (sessionError) throw sessionError
   if (!data.session) return { kind: 'unregistered' }
 
   const { data: rows, error } = await client.rpc('my_display')
@@ -34,7 +36,8 @@ export async function loadDisplayState(client: DisplaySessionClient): Promise<Di
  * registered; that identity is returned instead of claiming again.
  */
 export async function claimDisplay(client: DisplaySessionClient, token: string): Promise<DisplayIdentity> {
-  const { data } = await client.auth.getSession()
+  const { data, error: sessionError } = await client.auth.getSession()
+  if (sessionError) throw sessionError
   if (data.session) {
     const current = await loadDisplayState(client)
     if (current.kind === 'registered') return current.identity
@@ -48,6 +51,17 @@ export async function claimDisplay(client: DisplaySessionClient, token: string):
   const state = await loadDisplayState(client)
   if (state.kind !== 'registered') throw new Error('Display claim did not register this tablet')
   return state.identity
+}
+
+/**
+ * Records a heartbeat and reports whether this tablet is still an active display.
+ * `'revoked'` covers a removed display, a deleted household and a device that is no longer bound.
+ * Throws on network or server errors.
+ */
+export async function checkStillRegistered(client: DisplaySessionClient): Promise<'active' | 'revoked'> {
+  const { data, error } = await client.rpc('display_heartbeat')
+  if (error) throw error
+  return data === true ? 'active' : 'revoked'
 }
 
 /** Forget this tablet's identity (after revocation, or to start over). */
