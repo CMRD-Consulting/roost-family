@@ -38,15 +38,26 @@ const tz = computed(() => view.value?.household.timeZone ?? 'UTC')
 const children = computed(() => (view.value ? eligibleChildren(view.value, 'sleep', now.value) : []))
 const child = computed(() => children.value.find((c) => c.id === childId.value) ?? null)
 
-/** The picked child's open sleep. Frozen while saving so the optimistic update doesn't flip the sheet's mode. */
+/** The picked child's open sleep in the live view (including this display's unsynced logs). */
+const liveOpenSleep = computed(() => (view.value && childId.value ? openSleepFor(view.value, childId.value) : null))
+
+/** Identity of an open sleep for change detection (never object identity: every view rebuild makes new objects). */
+function sleepKey(entry: SleepEntry | null): string | null {
+  return entry ? `${entry.id}|${entry.startAt}|${entry.endAt}` : null
+}
+
+/**
+ * The open sleep the sheet is acting on. Re-read from the live view on open, on switching child and when a
+ * failed save ends; frozen while saving (and after a successful save until the sheet closes) so this
+ * display's own optimistic update doesn't flip the mode under the adult.
+ */
 const openSleep = ref<SleepEntry | null>(null)
-watch(
-  () => (view.value && childId.value ? openSleepFor(view.value, childId.value) : null),
-  (entry) => {
-    if (!busy.value) openSleep.value = entry
-  },
-  { immediate: true },
-)
+/** True from a save's start until the sheet next opens (a successful save closes it) or the save fails. */
+const saving = ref(false)
+/** Shown when another display changed this child's sleep while the sheet was open. */
+const modeNotice = ref<string | null>(null)
+/** After such a change, the next tap on the action button only acknowledges it: it was aimed at the old mode. */
+const needsFreshTap = ref(false)
 
 const minAt = computed(() =>
   openSleep.value ? openSleep.value.startAt : new Date(now.value.getTime() - LOOKBACK_MS).toISOString(),
@@ -59,11 +70,41 @@ function autoType(): string | null {
   return classifySleep(new Date(at.value), window, tz.value)
 }
 
-// Switching child: re-derive the type and keep the time inside the new bounds (an open sleep's start is the minimum).
-watch(childId, () => {
-  typeTouched.value = false
+function clampAt(): void {
   const atMs = Date.parse(at.value)
-  if (atMs < Date.parse(minAt.value) || atMs > now.value.getTime()) at.value = now.value.toISOString()
+  const minMs = Date.parse(minAt.value)
+  const maxMs = now.value.getTime()
+  if (atMs < minMs) at.value = new Date(minMs).toISOString()
+  else if (atMs > maxMs) at.value = new Date(maxMs).toISOString()
+}
+
+/** Adopts the live open sleep. With `announce`, a change of mode (or of which sleep would be ended) is shown. */
+function adoptLiveOpenSleep(announce: boolean): void {
+  const live = liveOpenSleep.value
+  const current = openSleep.value
+  if (sleepKey(live) === sleepKey(current)) return
+  const visibleChange = (live === null) !== (current === null) || (live !== null && current !== null && live.id !== current.id)
+  openSleep.value = live
+  clampAt()
+  if (announce && visibleChange && child.value) {
+    modeNotice.value = `Another display just updated ${child.value.name}'s sleep.`
+    needsFreshTap.value = true
+  }
+}
+
+// Switching child: re-derive the type, adopt that child's open sleep and keep the time inside the new bounds
+// (an open sleep's start is the minimum). Otherwise a changed open sleep came from elsewhere: announce it.
+watch([childId, () => sleepKey(liveOpenSleep.value)], ([nextChild], [prevChild]) => {
+  if (nextChild !== prevChild) {
+    typeTouched.value = false
+    modeNotice.value = null
+    needsFreshTap.value = false
+    openSleep.value = liveOpenSleep.value
+    if (Date.parse(at.value) < Date.parse(minAt.value) || Date.parse(at.value) > now.value.getTime()) at.value = now.value.toISOString()
+    return
+  }
+  if (!props.open || saving.value) return
+  adoptLiveOpenSleep(true)
 })
 
 watch([at, childId], () => {
@@ -78,8 +119,12 @@ watch(
     at.value = now.value.toISOString()
     who.value = null
     typeTouched.value = false
+    saving.value = false
+    modeNotice.value = null
+    needsFreshTap.value = false
     clearError()
     childId.value = defaultChildId(children.value)
+    openSleep.value = liveOpenSleep.value
     type.value = autoType()
   },
   { immediate: true },
@@ -90,13 +135,22 @@ function onTypeChange(value: string | null): void {
   typeTouched.value = true
 }
 
-const canSave = computed(() => !busy.value && child.value !== null && (openSleep.value !== null || type.value !== null))
+const canSave = computed(() => !busy.value && !saving.value && child.value !== null && (openSleep.value !== null || type.value !== null))
 
 async function save(): Promise<void> {
   if (!view.value || !child.value || !canSave.value) return
+  if (needsFreshTap.value) {
+    needsFreshTap.value = false
+    return
+  }
   const householdId = view.value.household.id
   let cmd: LogCommand
   if (openSleep.value) {
+    // Never end a sleep before it started.
+    if (Date.parse(at.value) < Date.parse(openSleep.value.startAt)) {
+      clampAt()
+      return
+    }
     cmd = { kind: 'sleep.end', householdId, entryId: openSleep.value.id, endAt: at.value, previousEndAt: openSleep.value.endAt }
   } else {
     cmd = {
@@ -106,11 +160,16 @@ async function save(): Promise<void> {
       attribution: attributionFor(identity.value, who.value, view.value.members),
     }
   }
+  saving.value = true
   const result = await submit(cmd)
   if (result) {
     emit('saved', result)
     emit('close')
+    return
   }
+  // Failed: the optimistic update is gone. Anything else that changed meanwhile came from elsewhere.
+  saving.value = false
+  adoptLiveOpenSleep(true)
 }
 </script>
 
@@ -124,6 +183,9 @@ async function save(): Promise<void> {
       </ChildPicker>
 
       <template v-if="child">
+        <p v-if="modeNotice" role="status" data-testid="sleep-mode-notice" class="text-[18px] font-medium text-warn-ink">
+          {{ modeNotice }}
+        </p>
         <template v-if="openSleep">
           <p class="text-[26px] font-semibold text-ink">Sleeping since {{ sleepingSince }}</p>
           <div class="flex flex-col gap-2">

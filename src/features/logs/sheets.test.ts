@@ -29,6 +29,8 @@ const SAM = 'bbbbbbbb-0000-0000-0000-000000000001'
 let pinia: Pinia
 let writer: FakeWriter
 let wrapper: VueWrapper | null = null
+/** What the (fake) server returns on the next load; tests change it and call `useHouseholdStore().reload()`. */
+let serverSnapshot: HouseholdSnapshot
 
 async function setup(nowIso: string, mutate: (s: HouseholdSnapshot) => void = () => {}) {
   vi.setSystemTime(new Date(nowIso))
@@ -36,7 +38,8 @@ async function setup(nowIso: string, mutate: (s: HouseholdSnapshot) => void = ()
   setActivePinia(pinia)
   const snapshot = buildDemoSnapshot(new Date(nowIso))
   mutate(snapshot)
-  const source: HouseholdSource = { load: async () => structuredClone(snapshot), subscribe: () => () => {} }
+  serverSnapshot = snapshot
+  const source: HouseholdSource = { load: async () => structuredClone(serverSnapshot), subscribe: () => () => {} }
   await useHouseholdStore().start(HOUSEHOLD_ID, source)
   writer = createFakeWriter()
   await useLogStore().init(writer, createFakeQueue())
@@ -45,6 +48,20 @@ async function setup(nowIso: string, mutate: (s: HouseholdSnapshot) => void = ()
     identity: { displayId: 'display-1', householdId: HOUSEHOLD_ID, name: 'Kitchen' },
   }
 }
+
+function setOnline(value: boolean) {
+  Object.defineProperty(window.navigator, 'onLine', { value, configurable: true })
+  window.dispatchEvent(new Event(value ? 'online' : 'offline'))
+}
+
+async function reopen(w: VueWrapper) {
+  await w.setProps({ open: false })
+  await flushPromises()
+  await w.setProps({ open: true })
+  await flushPromises()
+}
+
+const footerButton = (w: VueWrapper) => w.get('[role="dialog"] .sticky button')
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function mountSheet(component: any, props: Record<string, unknown> = {}): VueWrapper {
@@ -61,7 +78,9 @@ describe('log sheets', () => {
   afterEach(() => {
     wrapper?.unmount()
     wrapper = null
+    setOnline(true)
     useHouseholdStore().stop()
+    useLogStore().stop()
     vi.useRealTimers()
   })
 
@@ -110,6 +129,87 @@ describe('log sheets', () => {
         { kind: 'sleep.end', householdId: HOUSEHOLD_ID, entryId: 'open-theo', endAt: '2026-09-14T18:55:00.000Z', previousEndAt: null },
       ])
       expect(w.emitted('close')).toHaveLength(1)
+    })
+
+    it('reopening after ending a sleep (and a reload that confirms it) offers Start sleep', async () => {
+      await setup('2026-09-14T19:00:00Z', (s) => {
+        s.sleeps.push({ id: 'open-theo', childId: THEO, startAt: '2026-09-14T18:30:00.000Z', endAt: null, type: 'nap' })
+      })
+      const w = mountSheet(SleepSheet)
+      await flushPromises()
+      await click(button(w, 'End sleep'))
+      expect(w.find('[data-testid="sleep-mode-notice"]').exists()).toBe(false) // its own save isn't "another display"
+
+      await w.setProps({ open: false })
+      serverSnapshot.sleeps = serverSnapshot.sleeps.map((s) => (s.id === 'open-theo' ? { ...s, endAt: '2026-09-14T19:00:00.000Z' } : s))
+      await useHouseholdStore().reload()
+      await flushPromises()
+      await w.setProps({ open: true })
+      await flushPromises()
+
+      expect(footerButton(w).text()).toBe('Start sleep')
+      expect(w.text()).not.toContain('Sleeping since')
+      expect(w.find('[data-testid="sleep-mode-notice"]').exists()).toBe(false)
+    })
+
+    it('reopening after starting a sleep offline offers End sleep', async () => {
+      await setup('2026-09-14T19:00:00Z')
+      setOnline(false)
+      const w = mountSheet(SleepSheet)
+      await flushPromises()
+      await click(button(w, 'Start sleep'))
+      expect(useLogStore().pendingCount).toBe(1)
+
+      await reopen(w)
+
+      expect(footerButton(w).text()).toBe('End sleep')
+      expect(w.text()).toContain('Sleeping since 3:00 PM')
+    })
+
+    it('an open sleep arriving from another display while the sheet is open is announced, re-clamps the time and needs a fresh tap', async () => {
+      await setup('2026-09-14T19:00:00Z')
+      const w = mountSheet(SleepSheet)
+      await flushPromises()
+      for (let i = 0; i < 6; i++) await click(button(w, '−5 min')) // 2:30 PM
+      expect(footerButton(w).text()).toBe('Start sleep')
+
+      serverSnapshot.sleeps.push({ id: 'other-display', childId: THEO, startAt: '2026-09-14T18:50:00.000Z', endAt: null, type: 'nap' })
+      await useHouseholdStore().reload()
+      await flushPromises()
+
+      const notice = w.get('[data-testid="sleep-mode-notice"]')
+      expect(notice.text()).toBe("Another display just updated Theo's sleep.")
+      expect(notice.classes()).toContain('text-[18px]')
+      expect(footerButton(w).text()).toBe('End sleep')
+      expect(w.text()).toContain('Sleeping since 2:50 PM')
+      expect(w.text()).toContain('2:50 PM') // woke-up time pulled up to the sleep's start
+
+      await click(footerButton(w)) // a tap meant for "Start sleep" doesn't end the other display's sleep
+      expect(writer.calls).toEqual([])
+      await click(footerButton(w))
+      expect(writer.calls).toEqual([
+        { kind: 'sleep.end', householdId: HOUSEHOLD_ID, entryId: 'other-display', endAt: '2026-09-14T18:50:00.000Z', previousEndAt: null },
+      ])
+    })
+
+    it('an open sleep ended by another display while the sheet is open flips to Start sleep with a notice', async () => {
+      await setup('2026-09-14T19:00:00Z', (s) => {
+        s.sleeps.push({ id: 'open-theo', childId: THEO, startAt: '2026-09-14T18:30:00.000Z', endAt: null, type: 'nap' })
+      })
+      const w = mountSheet(SleepSheet)
+      await flushPromises()
+      expect(footerButton(w).text()).toBe('End sleep')
+
+      serverSnapshot.sleeps = serverSnapshot.sleeps.map((s) => (s.id === 'open-theo' ? { ...s, endAt: '2026-09-14T18:55:00.000Z' } : s))
+      await useHouseholdStore().reload()
+      await flushPromises()
+
+      expect(w.get('[data-testid="sleep-mode-notice"]').text()).toBe("Another display just updated Theo's sleep.")
+      expect(footerButton(w).text()).toBe('Start sleep')
+      await click(footerButton(w))
+      expect(writer.calls).toEqual([])
+      await click(footerButton(w))
+      expect(writer.calls[0]?.kind).toBe('sleep.start')
     })
 
     it('shows a save error inline and stays open', async () => {
