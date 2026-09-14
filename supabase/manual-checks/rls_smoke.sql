@@ -40,17 +40,20 @@ grant execute on all functions in schema pg_temp to anon, authenticated;
 \set D '{"sub":"00000000-0000-0000-0000-00000000000d","role":"authenticated","is_anonymous":true}'
 \set D_NOT_ANON '{"sub":"00000000-0000-0000-0000-00000000000d","role":"authenticated","is_anonymous":false}'
 \set E '{"sub":"00000000-0000-0000-0000-00000000000e","role":"authenticated","is_anonymous":true}'
+\set F '{"sub":"00000000-0000-0000-0000-00000000000f","role":"authenticated","is_anonymous":false}'
 
 -- ─── Fixtures ────────────────────────────────────────────────────────────
--- Adults A and B, adult C (deleted later), anonymous device users D (A's display) and E (B's display).
+-- Adults A and B, adult C (deleted later), anonymous device users D (A's display) and E (B's display),
+-- adult F (runs setup_household).
 insert into auth.users (id, instance_id, aud, role, email, raw_app_meta_data, raw_user_meta_data, is_anonymous, created_at, updated_at)
 values
   ('00000000-0000-0000-0000-00000000000a', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'a@roost.test', '{}', '{}', false, now(), now()),
   ('00000000-0000-0000-0000-00000000000b', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'b@roost.test', '{}', '{}', false, now(), now()),
   ('00000000-0000-0000-0000-00000000000c', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'c@roost.test', '{}', '{}', false, now(), now()),
   ('00000000-0000-0000-0000-00000000000d', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', null, '{}', '{}', true, now(), now()),
-  ('00000000-0000-0000-0000-00000000000e', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', null, '{}', '{}', true, now(), now());
-insert into public.invite_codes (code) values ('SMOKE1'), ('SMOKE2'), ('SMOKE3'), ('SMOKE4'), ('SMOKE5');
+  ('00000000-0000-0000-0000-00000000000e', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', null, '{}', '{}', true, now(), now()),
+  ('00000000-0000-0000-0000-00000000000f', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'f@roost.test', '{}', '{}', false, now(), now());
+insert into public.invite_codes (code) values ('SMOKE1'), ('SMOKE2'), ('SMOKE3'), ('SMOKE4'), ('SMOKE5'), ('SMOKE6');
 
 set local role authenticated;
 
@@ -305,6 +308,10 @@ select pg_temp.expect('anon has no privilege on any public sequence', not exists
 select pg_temp.expect('anon has no execute on private functions', not exists (
   select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
   where n.nspname = 'private' and has_function_privilege('anon', p.oid, 'execute')));
+select pg_temp.expect('authenticated cannot execute private write helpers', not exists (
+  select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'private' and p.proname in ('create_household_for', 'add_child_to', 'set_pin_for', 'pin_ok')
+    and has_function_privilege('authenticated', p.oid, 'execute')));
 set local role anon;
 select set_config('request.jwt.claims', '{"role":"anon"}', true);
 select pg_temp.expect_error('anon calls create_household',
@@ -389,6 +396,57 @@ select pg_temp.expect('surrogate primary keys', (
   where k.contype = 'p' and k.conrelid in ('public.routine_progress'::regclass, 'public.routine_day_overrides'::regclass, 'public.feature_overrides'::regclass)
     and k.conkey = array[(select a.attnum from pg_attribute a where a.attrelid = k.conrelid and a.attname = 'id')]::int2[]
 ) = 3);
+
+-- ─── setup_household ─────────────────────────────────────────────────────
+\echo '[32] setup_household rolls back everything when a child is invalid'
+reset role;
+set local role authenticated;
+select set_config('request.jwt.claims', :'F', true);
+select public.record_consent('2026-09-14', true);
+select pg_temp.expect_error('setup with a 41-character child name',
+  $q$select public.setup_household('F family', 'America/Denver', '', null, null, 'smoke6', 'Frankie', '#2C7F8C',
+     jsonb_build_array(jsonb_build_object('name', 'Ok kid', 'birthday', '2024-01-01', 'color', '#653437'),
+                       jsonb_build_object('name', repeat('x', 41), 'birthday', '2024-01-01', 'color', '#887425')), '2468')$q$,
+  '22023');
+select pg_temp.expect_error('setup with a future birthday',
+  $q$select public.setup_household('F family', 'America/Denver', '', null, null, 'SMOKE6', 'Frankie', '#2C7F8C',
+     jsonb_build_array(jsonb_build_object('name', 'Kid', 'birthday', (current_date + 2)::text, 'color', '#653437')), '2468')$q$,
+  '22023');
+select pg_temp.expect_error('setup with no children',
+  $q$select public.setup_household('F family', 'America/Denver', '', null, null, 'SMOKE6', 'Frankie', '#2C7F8C', '[]'::jsonb, '2468')$q$,
+  '22023');
+select pg_temp.expect_error('setup with a bad PIN',
+  $q$select public.setup_household('F family', 'America/Denver', '', null, null, 'SMOKE6', 'Frankie', '#2C7F8C',
+     jsonb_build_array(jsonb_build_object('name', 'Kid', 'birthday', '2024-01-01', 'color', '#653437')), '24x8')$q$,
+  '22023');
+reset role;
+select pg_temp.expect('failed setup left no membership', not exists (
+  select 1 from public.memberships where user_id = '00000000-0000-0000-0000-00000000000f'));
+select pg_temp.expect('failed setup left no household', not exists (select 1 from public.households where name = 'F family'));
+select pg_temp.expect('failed setup left the invite unused', (
+  select used_at is null and used_by_household_id is null from public.invite_codes where code = 'SMOKE6'));
+
+\echo '[33] setup_household creates the household, children and a verifiable PIN in one call'
+set local role authenticated;
+select set_config('request.jwt.claims', :'F', true);
+select public.setup_household('F family', 'America/Denver', '80202', 39.74, -104.99, 'smoke6', 'Frankie', '#2C7F8C',
+  jsonb_build_array(jsonb_build_object('name', '  Ivy ', 'birthday', '2023-04-10', 'color', '#653437'),
+                    jsonb_build_object('name', 'Theo', 'birthday', '2025-06-02', 'color', '#887425')), '2468') as household_f \gset
+select set_config('smoke.household_f', :'household_f', true);
+select m.id as membership_f from public.memberships m where m.user_id = '00000000-0000-0000-0000-00000000000f' \gset
+select set_config('smoke.membership_f', :'membership_f', true);
+select pg_temp.expect('F owns the new household', (
+  select role = 'owner' and display_name = 'Frankie' from public.memberships where id = pg_temp.v('membership_f')));
+select pg_temp.expect('F household has two children', (
+  select count(*) from public.child_households where household_id = pg_temp.v('household_f')) = 2);
+select pg_temp.expect('child names are trimmed', exists (select 1 from public.children where name = 'Ivy'));
+select pg_temp.expect('F household has default sticker categories', (
+  select count(*) from public.sticker_categories where household_id = pg_temp.v('household_f')) = 3);
+select pg_temp.expect('F PIN verifies', public.verify_pin(pg_temp.v('membership_f'), '2468'));
+select pg_temp.expect('F wrong PIN rejected', not public.verify_pin(pg_temp.v('membership_f'), '8642'));
+reset role;
+select pg_temp.expect('invite marked used by F household', (
+  select used_at is not null and used_by_household_id = pg_temp.v('household_f') from public.invite_codes where code = 'SMOKE6'));
 
 \o
 \echo 'ALL RLS SMOKE CHECKS PASSED'

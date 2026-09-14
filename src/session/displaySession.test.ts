@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { loadDisplayState, type DisplaySessionClient } from './displaySession'
+import { claimDisplay, loadDisplayState, type DisplaySessionClient } from './displaySession'
 
 function fakeClient(opts: { session: boolean; rows: unknown[] }): DisplaySessionClient {
   return {
@@ -30,6 +30,15 @@ describe('loadDisplayState', () => {
       kind: 'registered',
       identity: { displayId: 'd1', householdId: 'h1', name: 'Kitchen' },
     })
+  })
+
+  it('claimDisplay returns the existing identity when an earlier claim already landed', async () => {
+    const client = fakeClient({
+      session: true,
+      rows: [{ out_display_id: 'd1', out_household_id: 'h1', out_name: 'Kitchen', out_revoked: false }],
+    })
+    expect(await claimDisplay(client, 'tok')).toEqual({ displayId: 'd1', householdId: 'h1', name: 'Kitchen' })
+    expect(client.rpc).not.toHaveBeenCalledWith('claim_display', expect.anything())
   })
 
   it('is revoked when the display was removed', async () => {

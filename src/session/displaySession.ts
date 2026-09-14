@@ -28,10 +28,17 @@ export async function loadDisplayState(client: DisplaySessionClient): Promise<Di
   }
 }
 
-/** Signs in anonymously if needed, then binds this tablet to the display registered with `token`. */
+/**
+ * Signs in anonymously if needed, then binds this tablet to the display registered with `token`.
+ * If an earlier attempt's claim reached the server but its response was lost, the tablet is already
+ * registered; that identity is returned instead of claiming again.
+ */
 export async function claimDisplay(client: DisplaySessionClient, token: string): Promise<DisplayIdentity> {
   const { data } = await client.auth.getSession()
-  if (!data.session) {
+  if (data.session) {
+    const current = await loadDisplayState(client)
+    if (current.kind === 'registered') return current.identity
+  } else {
     const { error } = await client.auth.signInAnonymously()
     if (error) throw error
   }

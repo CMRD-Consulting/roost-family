@@ -180,17 +180,18 @@ begin
   values (v_user, p_policy_version, true);
 end $$;
 
-create function public.create_household(
-  p_name text, p_time_zone text, p_zip text, p_lat double precision, p_lon double precision,
+-- Shared bodies for household setup. Called only from the security-definer RPCs below (which
+-- establish the caller with private.require_adult()); never granted to any client role.
+create function private.create_household_for(
+  p_user uuid, p_name text, p_time_zone text, p_zip text, p_lat double precision, p_lon double precision,
   p_invite_code text, p_display_name text, p_color text
 ) returns uuid
 language plpgsql security definer set search_path = '' as $$
 declare
-  v_user uuid := private.require_adult();
   v_household uuid;
   v_invites_required boolean;
 begin
-  if not exists (select 1 from public.consent_records c where c.user_id = v_user and c.health_data_consent) then
+  if not exists (select 1 from public.consent_records c where c.user_id = p_user and c.health_data_consent) then
     raise exception 'consent required' using errcode = '42501';
   end if;
   if not exists (select 1 from pg_catalog.pg_timezone_names tz where tz.name = p_time_zone) then
@@ -198,11 +199,11 @@ begin
   end if;
 
   -- Serialize this user's household creation so the ownership limit holds under concurrency.
-  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('roost.create_household:' || v_user::text, 0));
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('roost.create_household:' || p_user::text, 0));
   if (
     select count(*) from public.memberships m
     join public.households h on h.id = m.household_id and h.deleted_at is null
-    where m.user_id = v_user and m.role = 'owner' and m.left_at is null
+    where m.user_id = p_user and m.role = 'owner' and m.left_at is null
   ) >= 3 then
     raise exception 'a user can own at most 3 households' using errcode = '22023';
   end if;
@@ -230,7 +231,7 @@ begin
   end if;
 
   insert into public.memberships (user_id, household_id, role, display_name, color)
-  values (v_user, v_household, 'owner', p_display_name, p_color);
+  values (p_user, v_household, 'owner', p_display_name, p_color);
 
   insert into public.sticker_categories (household_id, name, icon_key, sort_order) values
     (v_household, 'Potty', 'potty', 0),
@@ -240,22 +241,106 @@ begin
   return v_household;
 end $$;
 
-create function public.add_child(p_household_id uuid, p_name text, p_birthday date, p_color text) returns uuid
+-- Does not check the caller; callers must first establish membership of p_household_id.
+create function private.add_child_to(p_household_id uuid, p_name text, p_birthday date, p_color text) returns uuid
 language plpgsql security definer set search_path = '' as $$
-declare v_child uuid;
+declare
+  v_child uuid;
+  v_today date;
 begin
-  perform private.require_adult();
-  if not private.is_household_member(p_household_id) then
-    raise exception 'not a member of this household' using errcode = '42501';
+  if p_name is null or char_length(p_name) not between 1 and 40 then
+    raise exception 'a child''s name must be 1 to 40 characters' using errcode = '22023';
   end if;
   -- Lock the household so concurrent calls cannot both pass the limit check.
-  perform 1 from public.households where id = p_household_id for update;
+  select (now() at time zone h.time_zone)::date into v_today
+  from public.households h where h.id = p_household_id
+  for update;
+  if p_birthday is null or p_birthday > v_today then
+    raise exception 'a child''s birthday cannot be in the future' using errcode = '22023';
+  end if;
   if (select count(*) from public.child_households ch where ch.household_id = p_household_id) >= 8 then
     raise exception 'a household can have at most 8 children' using errcode = '22023';
   end if;
   insert into public.children (name, birthday, color) values (p_name, p_birthday, p_color) returning id into v_child;
   insert into public.child_households (child_id, household_id) values (v_child, p_household_id);
   return v_child;
+end $$;
+
+create function private.set_pin_for(p_user uuid, p_household_id uuid, p_pin text) returns void
+language plpgsql security definer set search_path = '' as $$
+begin
+  if p_pin is null or p_pin !~ '^\d{4}$' then
+    raise exception 'PIN must be 4 digits' using errcode = '22023';
+  end if;
+  insert into public.member_pins (membership_id, pin_hash)
+  select m.id, extensions.crypt(p_pin, extensions.gen_salt('bf', 8))
+  from public.memberships m
+  where m.user_id = p_user and m.household_id = p_household_id and m.left_at is null
+  on conflict (membership_id) do update set pin_hash = excluded.pin_hash, updated_at = now();
+  if not found then
+    raise exception 'not a member of this household' using errcode = '42501';
+  end if;
+end $$;
+
+revoke execute on function
+  private.create_household_for(uuid, text, text, text, double precision, double precision, text, text, text),
+  private.add_child_to(uuid, text, date, text),
+  private.set_pin_for(uuid, uuid, text)
+from public;
+
+create function public.create_household(
+  p_name text, p_time_zone text, p_zip text, p_lat double precision, p_lon double precision,
+  p_invite_code text, p_display_name text, p_color text
+) returns uuid
+language plpgsql security definer set search_path = '' as $$
+begin
+  return private.create_household_for(
+    private.require_adult(), p_name, p_time_zone, p_zip, p_lat, p_lon, p_invite_code, p_display_name, p_color);
+end $$;
+
+create function public.add_child(p_household_id uuid, p_name text, p_birthday date, p_color text) returns uuid
+language plpgsql security definer set search_path = '' as $$
+begin
+  perform private.require_adult();
+  if not private.is_household_member(p_household_id) then
+    raise exception 'not a member of this household' using errcode = '42501';
+  end if;
+  return private.add_child_to(p_household_id, p_name, p_birthday, p_color);
+end $$;
+
+-- The whole setup wizard in one transaction (spec §7.1): household, owner membership, kids and the
+-- owner's PIN. Any failure rolls everything back, so the invite code stays unused and a retry is clean.
+-- p_kids: [{"name": text, "birthday": "YYYY-MM-DD", "color": "#RRGGBB"}], 1 to 8 entries.
+create function public.setup_household(
+  p_name text, p_time_zone text, p_zip text, p_lat double precision, p_lon double precision,
+  p_invite_code text, p_display_name text, p_color text, p_kids jsonb, p_pin text
+) returns uuid
+language plpgsql security definer set search_path = '' as $$
+declare
+  v_user uuid := private.require_adult();
+  v_household uuid;
+  v_kid jsonb;
+begin
+  if p_kids is null or jsonb_typeof(p_kids) <> 'array' or jsonb_array_length(p_kids) not between 1 and 8 then
+    raise exception 'a household needs 1 to 8 children' using errcode = '22023';
+  end if;
+  if p_pin is null or p_pin !~ '^\d{4}$' then
+    raise exception 'PIN must be 4 digits' using errcode = '22023';
+  end if;
+
+  v_household := private.create_household_for(
+    v_user, p_name, p_time_zone, p_zip, p_lat, p_lon, p_invite_code, p_display_name, p_color);
+
+  for v_kid in select k.value from jsonb_array_elements(p_kids) as k (value) loop
+    if jsonb_typeof(v_kid) <> 'object' then
+      raise exception 'each child must be an object' using errcode = '22023';
+    end if;
+    perform private.add_child_to(
+      v_household, btrim(v_kid ->> 'name'), (v_kid ->> 'birthday')::date, v_kid ->> 'color');
+  end loop;
+
+  perform private.set_pin_for(v_user, v_household, p_pin);
+  return v_household;
 end $$;
 
 -- ─── RPC: household lists ────────────────────────────────────────────────
@@ -276,19 +361,8 @@ end $$;
 -- ─── RPC: PINs ───────────────────────────────────────────────────────────
 create function public.set_my_pin(p_household_id uuid, p_pin text) returns void
 language plpgsql security definer set search_path = '' as $$
-declare v_user uuid := private.require_adult();
 begin
-  if p_pin !~ '^\d{4}$' then
-    raise exception 'PIN must be 4 digits' using errcode = '22023';
-  end if;
-  insert into public.member_pins (membership_id, pin_hash)
-  select m.id, extensions.crypt(p_pin, extensions.gen_salt('bf', 8))
-  from public.memberships m
-  where m.user_id = v_user and m.household_id = p_household_id and m.left_at is null
-  on conflict (membership_id) do update set pin_hash = excluded.pin_hash, updated_at = now();
-  if not found then
-    raise exception 'not a member of this household' using errcode = '42501';
-  end if;
+  perform private.set_pin_for(private.require_adult(), p_household_id, p_pin);
 end $$;
 
 create function public.verify_pin(p_membership_id uuid, p_pin text) returns boolean
@@ -468,6 +542,7 @@ grant execute on function
   public.record_consent(text, boolean),
   public.create_household(text, text, text, double precision, double precision, text, text, text),
   public.add_child(uuid, text, date, text),
+  public.setup_household(text, text, text, double precision, double precision, text, text, text, jsonb, text),
   public.set_dinner_tonight(uuid, text),
   public.set_my_pin(uuid, text), public.verify_pin(uuid, text),
   public.void_dose(uuid, uuid, text, text), public.acknowledge_dose_conflict(uuid, uuid, text),

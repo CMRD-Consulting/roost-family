@@ -16,57 +16,87 @@ export interface SetupInput {
   displayLabel: string
 }
 
-type RpcResult<T> = { data: T; error: { message: string } | null }
-
-function unwrap<T>(result: RpcResult<T>): T {
-  if (result.error) throw new Error(result.error.message)
-  return result.data
+/** A registered display's claim token, kept so a retry after a failed claim does not register again. */
+export interface PendingDisplayClaim {
+  token: string
+  /** Epoch ms after which the token should be treated as expired. */
+  expiresAt: number
 }
 
+/** What a previous, partly successful attempt already did. `completeSetup` writes these as it goes. */
+export interface SetupProgress {
+  householdId: string | null
+  displayClaim: PendingDisplayClaim | null
+}
+
+/** Claim tokens expire 10 minutes after registration on the server; keep a margin for clock skew. */
+export const CLAIM_TOKEN_TTL_MS = 10 * 60_000
+export const CLAIM_TOKEN_MARGIN_MS = 30_000
+
+type AdultClient = Pick<AdultSession['client'], 'rpc'>
+
 /**
- * Writes the household with the adult's temporary session, registers this tablet,
- * claims it with the display session, and ends the adult session.
+ * Creates the household (with kids and the owner's PIN) in one transaction, registers this tablet,
+ * claims it with the display session, and only then ends the adult session.
+ *
+ * Retryable: the household id and claim token are recorded on `progress` as soon as they exist, so
+ * calling again after a failure skips the household and reuses an unexpired token.
  */
 export async function completeSetup(
-  input: SetupInput,
-  adult: AdultSession,
+  progress: SetupInput & SetupProgress,
+  adult: Pick<AdultSession, 'end'> & { client: AdultClient },
   claim: (token: string) => Promise<DisplayIdentity>,
+  now: () => number = Date.now,
 ): Promise<DisplayIdentity> {
-  const rpc = adult.client.rpc.bind(adult.client) as unknown as (fn: string, args?: object) => Promise<RpcResult<unknown>>
-
-  const householdId = unwrap(
-    await rpc('create_household', {
-      p_name: input.householdName.trim(),
-      p_time_zone: input.timeZone,
-      p_zip: input.zip,
-      p_lat: input.lat,
-      p_lon: input.lon,
-      p_invite_code: input.inviteCode.trim().toUpperCase(),
-      p_display_name: input.displayName.trim(),
-      p_color: input.color,
-    }),
-  ) as string
-
-  for (const kid of input.kids) {
-    unwrap(
-      await rpc('add_child', {
-        p_household_id: householdId,
-        p_name: kid.name.trim(),
-        p_birthday: kid.birthday,
-        p_color: kid.color,
-      }),
-    )
+  if (!progress.householdId) {
+    const { data, error } = await adult.client.rpc('setup_household', {
+      p_name: progress.householdName.trim(),
+      p_time_zone: progress.timeZone,
+      p_zip: progress.zip,
+      p_lat: progress.lat,
+      p_lon: progress.lon,
+      p_invite_code: progress.inviteCode.trim().toUpperCase(),
+      p_display_name: progress.displayName.trim(),
+      p_color: progress.color,
+      p_kids: progress.kids.map((k) => ({ name: k.name.trim(), birthday: k.birthday, color: k.color })),
+      p_pin: progress.pin,
+    })
+    if (error) throw new Error(error.message)
+    if (!data) throw new Error('Household setup returned no household')
+    progress.householdId = data
   }
 
-  unwrap(await rpc('set_my_pin', { p_household_id: householdId, p_pin: input.pin }))
+  if (!progress.displayClaim || progress.displayClaim.expiresAt <= now()) {
+    progress.displayClaim = null
+    const registeredAt = now()
+    const { data, error } = await adult.client.rpc('register_display', {
+      p_household_id: progress.householdId,
+      p_name: progress.displayLabel.trim(),
+    })
+    if (error) throw new Error(error.message)
+    const token = data?.[0]?.out_claim_token
+    if (!token) throw new Error('Display registration returned no token')
+    progress.displayClaim = { token, expiresAt: registeredAt + CLAIM_TOKEN_TTL_MS - CLAIM_TOKEN_MARGIN_MS }
+  }
 
-  const rows = unwrap(
-    await rpc('register_display', { p_household_id: householdId, p_name: input.displayLabel.trim() }),
-  ) as { out_display_id: string; out_claim_token: string }[]
-  const token = rows[0]?.out_claim_token
-  if (!token) throw new Error('Display registration returned no token')
-
-  const identity = await claim(token)
+  const identity = await claim(progress.displayClaim.token)
   await adult.end()
   return identity
+}
+
+export function isInvalidInviteError(error: unknown): boolean {
+  return error instanceof Error && /invalid invite code/i.test(error.message)
+}
+
+/** True when the signed-in adult already owns an active household. */
+export async function adultOwnsHousehold(adult: Pick<AdultSession, 'client' | 'userId'>): Promise<boolean> {
+  const { data, error } = await adult.client
+    .from('memberships')
+    .select('id')
+    .eq('user_id', adult.userId)
+    .eq('role', 'owner')
+    .is('left_at', null)
+    .limit(1)
+  if (error) throw new Error(error.message)
+  return (data ?? []).length > 0
 }

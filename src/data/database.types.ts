@@ -1315,8 +1315,8 @@ export type Database = {
           p_name: string
           p_time_zone: string
           p_zip: string
-          p_lat: number
-          p_lon: number
+          p_lat: number | null
+          p_lon: number | null
           p_invite_code: string
           p_display_name: string
           p_color: string
@@ -1372,6 +1372,21 @@ export type Database = {
           p_pin: string
         }
         Returns: undefined
+      }
+      setup_household: {
+        Args: {
+          p_name: string
+          p_time_zone: string
+          p_zip: string
+          p_lat: number | null
+          p_lon: number | null
+          p_invite_code: string
+          p_display_name: string
+          p_color: string
+          p_kids: Json
+          p_pin: string
+        }
+        Returns: string
       }
       verify_pin: {
         Args: {

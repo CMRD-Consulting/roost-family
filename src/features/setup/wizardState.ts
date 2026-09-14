@@ -1,6 +1,7 @@
 import { reactive } from 'vue'
 import type { AdultSession } from '@/session/adultSession'
 import { PERSON_COLORS } from '@/ui/personPalette'
+import type { PendingDisplayClaim } from './completeSetup'
 
 export const POLICY_VERSION = '2026-09-14'
 
@@ -29,6 +30,10 @@ export function createWizardState() {
     color: PERSON_COLORS[0] as string,
     pin: '',
     displayLabel: 'Kitchen',
+    /** Set once setup_household succeeds, so a retry never creates a second household. */
+    householdId: null as string | null,
+    /** Set once this tablet is registered, so a retry reuses the claim token until it expires. */
+    displayClaim: null as PendingDisplayClaim | null,
     busy: false,
     error: null as string | null,
   })
