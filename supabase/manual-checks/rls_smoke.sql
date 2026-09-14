@@ -1646,7 +1646,8 @@ select public.revoke_display(:'display_spare');
 select pg_temp.expect('revoke_display audited', pg_temp.audited(pg_temp.v('household_f'), pg_temp.v('membership_f'), 'displays', 'revoke', :'display_spare'::uuid));
 select public.set_my_pin(:'household_f', '2468');
 select pg_temp.expect('set_my_pin audited without the PIN', pg_temp.audited(pg_temp.v('household_f'), pg_temp.v('membership_f'), 'my_account', 'pin', pg_temp.v('membership_f'))
-  and not exists (select 1 from public.settings_audit where change::text like '%2468%'));
+  -- Match the PIN only as a standalone value: random UUIDs in audit rows can contain "2468".
+  and not exists (select 1 from public.settings_audit where change::text ~ '(^|[^0-9a-f])2468([^0-9a-f]|$)'));
 select set_config('request.jwt.claims', :'A', true);
 select pg_temp.expect_error('set_my_pin in a household the adult is not a member of',
   $q$select public.set_my_pin(pg_temp.v('household_f'), '1234')$q$, '42501');
