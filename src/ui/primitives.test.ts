@@ -106,6 +106,47 @@ describe('RTimeStepper', () => {
     await w.findAll('button')[0]!.trigger('click')
     expect(w.props('modelValue')).toBe(min)
   })
+
+  it('keeps the relative label current as time passes', async () => {
+    const w = mountModel(RTimeStepper, '2026-09-14T18:56:00.000Z', { min, max: now, timeZone: 'UTC' })
+    expect(w.text()).toContain('4m ago')
+
+    await vi.advanceTimersByTimeAsync(60_000)
+
+    expect(w.text()).toContain('5m ago')
+    w.unmount()
+  })
+
+  it('shows only the clock for a time in the future', () => {
+    const w = mountModel(RTimeStepper, '2026-09-14T19:10:00.000Z', { timeZone: 'UTC' })
+    expect(w.text()).toContain('7:10')
+    expect(w.text()).not.toContain('now')
+    expect(w.text()).not.toContain('ago')
+    w.unmount()
+  })
+
+  it('ignores invalid min/max instead of throwing', async () => {
+    const w = mountModel(RTimeStepper, now, { min: 'not a date', max: '', timeZone: 'UTC' })
+    const buttons = w.findAll('button')
+    expect(buttons[0]!.attributes('disabled')).toBeUndefined()
+    expect(buttons[1]!.attributes('disabled')).toBeUndefined()
+
+    await buttons[0]!.trigger('click')
+    expect(w.props('modelValue')).toBe('2026-09-14T18:55:00.000Z')
+    await w.findAll('button')[1]!.trigger('click')
+    await w.findAll('button')[1]!.trigger('click')
+    expect(w.props('modelValue')).toBe('2026-09-14T19:05:00.000Z')
+    w.unmount()
+  })
+
+  it('announces the displayed time politely', async () => {
+    const w = mountModel(RTimeStepper, now, { min, max: now, timeZone: 'UTC' })
+    const live = w.get('[aria-live="polite"]')
+    expect(live.text()).toContain('7:00')
+    await w.findAll('button')[0]!.trigger('click')
+    expect(w.get('[aria-live="polite"]').text()).toContain('6:55')
+    w.unmount()
+  })
 })
 
 describe('RPinPad', () => {
