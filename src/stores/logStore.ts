@@ -83,9 +83,9 @@ export const useLogStore = defineStore('log', () => {
     pendingCount.value = queued.length
   }
 
-  function requireWriterAndQueue(): { writer: LogWriter; queue: OfflineQueue } {
-    if (writer === null || queue === null) throw new Error('useLogStore().init() must be called before use')
-    return { writer, queue }
+  function requireWriter(): LogWriter {
+    if (writer === null) throw new Error('useLogStore().init() must be called before use')
+    return writer
   }
 
   function isOffline(): boolean {
@@ -104,7 +104,10 @@ export const useLogStore = defineStore('log', () => {
 
   /** Adds `cmd` to the offline queue. If the queue refuses it, removes its overlay and throws a QUEUE error. */
   async function enqueue(cmd: LogCommand, opts: { triggerReplay: boolean }): Promise<'queued'> {
-    const { queue } = requireWriterAndQueue()
+    if (queue === null) {
+      householdStore.removeOverlay(cmd)
+      throw new LogWriteError("Offline saving isn't available on this device.", true, 'NO_QUEUE')
+    }
     enqueuing++
     let key: number
     try {
@@ -124,7 +127,7 @@ export const useLogStore = defineStore('log', () => {
   }
 
   async function sendDirect(cmd: LogCommand, opts: { confirmOffline?: boolean }): Promise<'saved' | 'queued'> {
-    const { writer } = requireWriterAndQueue()
+    const writer = requireWriter()
     try {
       await writer.execute(cmd)
     } catch (e) {
@@ -150,7 +153,7 @@ export const useLogStore = defineStore('log', () => {
   }
 
   async function submit(cmd: LogCommand, opts: { confirmOffline?: boolean } = {}): Promise<'saved' | 'queued'> {
-    requireWriterAndQueue()
+    requireWriter()
     const offline = isOffline()
 
     if (requiresOnline(cmd) && offline) throw offlineError()
@@ -193,8 +196,7 @@ export const useLogStore = defineStore('log', () => {
     if (key !== null) {
       // Being sent right now: let that finish, then undo it like any other sent command.
       while (inFlightKey === key && replayPromise !== null) await replayPromise.catch(() => {})
-      if (queued.some((i) => i.key === key)) {
-        const { queue } = requireWriterAndQueue()
+      if (queue !== null && queued.some((i) => i.key === key)) {
         removeFromMirror(key)
         householdStore.removeOverlay(action.command)
         await queue.remove(key)
@@ -211,7 +213,9 @@ export const useLogStore = defineStore('log', () => {
   }
 
   async function runReplay(): Promise<void> {
-    const { writer, queue } = requireWriterAndQueue()
+    const writer = requireWriter()
+    const q = queue
+    if (q === null) return
     while (directSend !== null) await directSend.catch(() => {})
     // E.g. no user session yet: sending now would only fail. The online event or the retry timer tries again.
     if (writer.ready && !(await writer.ready())) return
@@ -238,7 +242,8 @@ export const useLogStore = defineStore('log', () => {
         householdStore.removeOverlay(item.command)
         failures.value = [...failures.value, error instanceof Error ? error.message : String(error)]
       }
-      await queue.remove(item.key)
+      // If this fails the command is re-sent after a reload, which is harmless: writes are idempotent by id.
+      await q.remove(item.key).catch((e: unknown) => console.warn('Could not remove a sent command from the offline queue', e))
     }
   }
 
@@ -262,19 +267,38 @@ export const useLogStore = defineStore('log', () => {
   }
 
   async function init(w: LogWriter, q: OfflineQueue): Promise<void> {
+    stop()
     writer = w
-    queue = q
-    queued = await q.list()
+    queue = null
+    queued = []
+    // Listen and schedule retries first, so a queue that fails to open can't leave the store without them.
+    window.addEventListener('online', handleOnline)
+    replayTimer = setInterval(() => void replayIfPending(), 30_000)
+
+    try {
+      queued = await q.list()
+      queue = q
+    } catch (e) {
+      // E.g. Safari private browsing. Keep working online; offline commands will say they can't be saved.
+      console.warn('Offline queue unavailable; running without offline saving', e)
+      syncPendingCount()
+      return
+    }
     // Queued-but-unsent commands must still show optimistically, even before their first replay.
     for (const item of queued) householdStore.addOverlay(item.command)
     syncPendingCount()
 
-    window.addEventListener('online', handleOnline)
-    if (replayTimer !== null) clearInterval(replayTimer)
-    replayTimer = setInterval(() => void replayIfPending(), 30_000)
-
     await replay()
   }
 
-  return { lastAction, pendingCount, failures, init, submit, undo, replay }
+  /** Removes the online listener and the retry timer. */
+  function stop(): void {
+    window.removeEventListener('online', handleOnline)
+    if (replayTimer !== null) {
+      clearInterval(replayTimer)
+      replayTimer = null
+    }
+  }
+
+  return { lastAction, pendingCount, failures, init, stop, submit, undo, replay }
 })

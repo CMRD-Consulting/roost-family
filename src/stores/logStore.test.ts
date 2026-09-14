@@ -399,6 +399,83 @@ describe('useLogStore', () => {
     })
   })
 
+  describe('init, stop and running without a queue', () => {
+    function brokenIndexedDbQueue(): OfflineQueue {
+      vi.spyOn(indexedDB, 'open').mockImplementation(() => {
+        throw new DOMException('IndexedDB is not available in private browsing', 'InvalidStateError')
+      })
+      return createOfflineQueue('roost-broken')
+    }
+
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    it('when the queue cannot open, init still registers the online listener and retry timer, and warns', async () => {
+      const { logStore, writer } = await setup()
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const addListener = vi.spyOn(window, 'addEventListener')
+
+      await expect(logStore.init(writer, brokenIndexedDbQueue())).resolves.toBeUndefined()
+
+      expect(addListener).toHaveBeenCalledWith('online', expect.any(Function))
+      expect(vi.getTimerCount()).toBeGreaterThan(0)
+      expect(warn).toHaveBeenCalled()
+      logStore.stop()
+    })
+
+    it('without a queue, online commands still save, and offline commands throw NO_QUEUE with no overlay left behind', async () => {
+      const { householdStore, logStore, writer } = await setup()
+      vi.spyOn(console, 'warn').mockImplementation(() => {})
+      await logStore.init(writer, brokenIndexedDbQueue())
+
+      expect(await logStore.submit(dinnerCmd('Pizza'))).toBe('saved')
+
+      writer.failNextWith = new LogWriteError('fetch failed', true, null)
+      const networkErr = await logStore.submit(feedingCmd('feed-1')).catch((e: unknown) => e)
+      expect((networkErr as LogWriteError).code).toBe('NO_QUEUE')
+      expect(householdStore.view?.feedings.some((f) => f.id === 'feed-1')).toBe(false)
+
+      setOnline(false)
+      const offlineErr = await logStore.submit(feedingCmd('feed-2')).catch((e: unknown) => e)
+      expect(offlineErr).toBeInstanceOf(LogWriteError)
+      expect((offlineErr as LogWriteError).message).toBe("Offline saving isn't available on this device.")
+      expect((offlineErr as LogWriteError).network).toBe(true)
+      expect((offlineErr as LogWriteError).code).toBe('NO_QUEUE')
+      expect(householdStore.view?.feedings.some((f) => f.id === 'feed-2')).toBe(false)
+      logStore.stop()
+    })
+
+    it('stop removes the online listener and the retry timer', async () => {
+      const { logStore, writer, queue } = await setup()
+      await logStore.init(writer, queue)
+      const removeListener = vi.spyOn(window, 'removeEventListener')
+      const timersBefore = vi.getTimerCount() // includes the household store's midnight timer
+
+      logStore.stop()
+
+      expect(removeListener).toHaveBeenCalledWith('online', expect.any(Function))
+      expect(vi.getTimerCount()).toBe(timersBefore - 1)
+      await queue.enqueue(dinnerCmd('Pizza'))
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(writer.calls).toEqual([])
+    })
+
+    it('the retry timer replays queued commands every 30 seconds', async () => {
+      const { logStore, writer, queue } = await setup()
+      writer.failNextWith = new LogWriteError('fetch failed', true, null)
+      await logStore.init(writer, queue)
+      await logStore.submit(dinnerCmd('Pizza'))
+      writer.calls = []
+
+      await vi.advanceTimersByTimeAsync(30_000)
+
+      expect(writer.calls).toEqual([dinnerCmd('Pizza')])
+      expect(await queue.count()).toBe(0)
+      logStore.stop()
+    })
+  })
+
   describe('replay', () => {
     it('replays queued commands in order on success', async () => {
       const { householdStore, logStore, writer, queue } = await setup()
