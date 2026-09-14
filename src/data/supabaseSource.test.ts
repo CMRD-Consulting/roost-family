@@ -175,6 +175,7 @@ function baseTableData(): Record<string, QueryResultSpec> {
     grocery_items: { data: [], error: null },
     sitter_sessions: { data: [], error: null },
     household_weather: { data: [], error: null },
+    photos: { data: [], error: null },
   }
 }
 
@@ -310,6 +311,25 @@ describe('createSupabaseSource load', () => {
       const { client } = createFakeClient({ ...baseTableData(), household_weather: { data: null, error: { message: 'nope' } } })
       const snapshot = await createSupabaseSource(client).load('h1', now)
       expect(snapshot.weather).toBeNull()
+      expect(snapshot.household.id).toBe('h1')
+    })
+  })
+
+  describe('photos', () => {
+    it("loads the household's photos oldest first", async () => {
+      const row = { id: 'p1', storage_path: 'h1/p1.jpg', kind: 'slideshow', added_at: '2026-09-14T18:00:00+00:00' }
+      const { client, calls } = createFakeClient({ ...baseTableData(), photos: { data: [row], error: null } })
+      const snapshot = await createSupabaseSource(client).load('h1', now)
+      expect(calls.find((c) => c.table === 'photos')?.ops).toEqual([
+        'select:id, storage_path, kind, added_at', 'eq:household_id=h1', 'order:added_at:asc',
+      ])
+      expect(snapshot.photos).toEqual([{ id: 'p1', storagePath: 'h1/p1.jpg', kind: 'slideshow', addedAt: '2026-09-14T18:00:00+00:00' }])
+    })
+
+    it('shows no photos instead of failing the whole load when the photos query errors', async () => {
+      const { client } = createFakeClient({ ...baseTableData(), photos: { data: null, error: { message: 'nope' } } })
+      const snapshot = await createSupabaseSource(client).load('h1', now)
+      expect(snapshot.photos).toEqual([])
       expect(snapshot.household.id).toBe('h1')
     })
   })
@@ -626,7 +646,7 @@ describe('createSupabaseSource subscribe', () => {
     for (const table of [
       'memberships', 'medicines', 'dose_entries', 'sleep_entries', 'feeding_entries',
       'diaper_entries', 'sticker_categories', 'sticker_entries', 'routines', 'routine_progress',
-      'routine_day_overrides', 'jots', 'grocery_items', 'sitter_sessions', 'household_weather',
+      'routine_day_overrides', 'jots', 'grocery_items', 'sitter_sessions', 'household_weather', 'photos',
     ]) {
       expect(byTable.get(table)).toBe(`household_id=eq.h1`)
     }

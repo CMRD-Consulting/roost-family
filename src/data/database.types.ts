@@ -1461,6 +1461,15 @@ export type Database = {
         }
         Returns: string
       }
+      add_photo: {
+        Args: {
+          p_kind: string
+          p_membership_id: string
+          p_photo_id: string
+          p_pin: string
+        }
+        Returns: undefined
+      }
       archive_medicine: {
         Args: { p_medicine_id: string; p_membership_id: string; p_pin: string }
         Returns: undefined
@@ -1515,6 +1524,10 @@ export type Database = {
           p_table: string
         }
         Returns: number
+      }
+      delete_photo: {
+        Args: { p_membership_id: string; p_photo_id: string; p_pin: string }
+        Returns: undefined
       }
       delete_routine: {
         Args: { p_membership_id: string; p_pin: string; p_routine_id: string }

@@ -7,7 +7,7 @@ import type { Tables } from './database.types'
 import {
   toChild, toDiaper, toDose, toFeeding, toGrocery, toHousehold, toJot, toMedicine, toMember,
   toRoutine, toRoutineOverride, toRoutineProgress, toSitterSession, toSleep, toSticker,
-  toStickerCategory, toWeather,
+  toPhoto, toStickerCategory, toWeather,
 } from './mappers'
 
 const HOUR_MS = 3_600_000
@@ -24,7 +24,7 @@ const CONFLICT_CONTEXT_WINDOW_MS = 72 * HOUR_MS
 const HOUSEHOLD_FILTERED_TABLES = [
   'memberships', 'medicines', 'dose_entries', 'sleep_entries', 'feeding_entries',
   'diaper_entries', 'sticker_categories', 'sticker_entries', 'routines', 'routine_progress',
-  'routine_day_overrides', 'jots', 'grocery_items', 'sitter_sessions', 'household_weather',
+  'routine_day_overrides', 'jots', 'grocery_items', 'sitter_sessions', 'household_weather', 'photos',
 ] as const
 
 /** Tables that lack a `household_id` column; RLS scopes them instead. */
@@ -164,7 +164,7 @@ export function createSupabaseSource(client: RoostClient): HouseholdSource {
       membershipResult, childrenAndOverrides, medicineResult, doseRows, sleepResult,
       feedingResult, diaperResult, stickerCategoryResult, stickerResult, routineResult,
       routineProgressResult, routineOverrideResult, jotResult, groceryResult, sitterSessionResult,
-      recentSitterSessionResult, unseenSitterSessionResult, weatherResult,
+      recentSitterSessionResult, unseenSitterSessionResult, weatherResult, photoResult,
     ] = await Promise.all([
       client.from('memberships').select('id, display_name, color, role').eq('household_id', householdId).is('left_at', null),
       loadChildrenAndOverrides(client, householdId),
@@ -214,6 +214,7 @@ export function createSupabaseSource(client: RoostClient): HouseholdSource {
         .select('fetched_at, current_temp_f, high_f, low_f, precip_chance, summary, icon')
         .eq('household_id', householdId)
         .maybeSingle(),
+      client.from('photos').select('id, storage_path, kind, added_at').eq('household_id', householdId).order('added_at', { ascending: true }),
     ])
 
     if (sitterSessionResult.error) throw new Error(sitterSessionResult.error.message)
@@ -246,6 +247,8 @@ export function createSupabaseSource(client: RoostClient): HouseholdSource {
       unseenSitterSessions,
       // Weather is never essential (spec §13): a failed read hides it rather than failing the load.
       weather: weatherResult.error ? null : toWeather(weatherResult.data),
+      // Photos are never essential either: without them Night Mode shows the clock alone (spec §7.7).
+      photos: photoResult.error || !photoResult.data ? [] : photoResult.data.map(toPhoto),
       loadedAt: now.toISOString(),
     }
   }

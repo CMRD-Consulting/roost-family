@@ -1,7 +1,7 @@
 import { personColor } from '@/ui/personPalette'
 import { householdDate } from '@/domain/time'
 import type { Medicine, Routine, RoutineStep } from '@/domain/types'
-import type { HouseholdSnapshot, Member, SitterSession, SnapshotChild } from '../snapshot'
+import type { HouseholdPhoto, HouseholdSnapshot, Member, SitterSession, SnapshotChild } from '../snapshot'
 
 const HOUR_MS = 3_600_000
 const MIN_MS = 60_000
@@ -11,6 +11,33 @@ export interface DemoOptions {
   manyKids?: boolean
   /** Starts with Sitter Mode on: "Jess" since 2 hours ago, with a few logs attributed to her. */
   sitter?: boolean
+  /** Starts with a few sample slideshow photos (bundled SVG scenes) for trying Night Mode and Settings > Photos. */
+  photos?: boolean
+}
+
+/** A simple landscape-ish SVG scene as a data URL: sky, sun and two hills, in the given colors. */
+function sampleScene(sky: string, sun: string, near: string, far: string): string {
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000">` +
+    `<rect width="1600" height="1000" fill="${sky}"/><circle cx="1150" cy="330" r="140" fill="${sun}"/>` +
+    `<path d="M0 700 Q400 480 850 690 T1600 640 V1000 H0Z" fill="${far}"/>` +
+    `<path d="M0 820 Q500 640 1000 830 T1600 800 V1000 H0Z" fill="${near}"/></svg>`
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`
+}
+
+function samplePhotos(now: Date): HouseholdPhoto[] {
+  const scenes = [
+    sampleScene('#f6c28b', '#fff1c9', '#5b7f4a', '#8fae6b'),
+    sampleScene('#9ec9e8', '#fffbe6', '#3f6f8f', '#6f9fbf'),
+    sampleScene('#d99aa5', '#ffe3c2', '#6b4a6e', '#9b7a9e'),
+    sampleScene('#2f3e5c', '#e8e4d0', '#1d2638', '#3b4a68'),
+  ]
+  return scenes.map((storagePath, i) => ({
+    id: `ffffffff-0000-0000-0000-00000000000${i + 1}`,
+    storagePath,
+    kind: 'slideshow',
+    addedAt: new Date(now.getTime() - (scenes.length - i) * 24 * HOUR_MS).toISOString(),
+  }))
 }
 
 const step = (iconKey: string | null, label: string, time: string | null): RoutineStep => ({
@@ -300,6 +327,7 @@ export function buildDemoSnapshot(now: Date, options: DemoOptions = {}): Househo
       summary: 'Mostly Sunny',
       icon: 'partly',
     },
+    photos: options.photos ? samplePhotos(now) : [],
     loadedAt: now.toISOString(),
   }
 }

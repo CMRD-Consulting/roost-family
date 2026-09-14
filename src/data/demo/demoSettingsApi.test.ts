@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createDemoSettingsApi, getDemoDisplayName, resetDemoSettingsApiForTests } from './demoSettingsApi'
 import { getDemoSnapshot, resetDemoForTests } from './demoHousehold'
 import { SettingsError } from '../settingsApi'
@@ -291,6 +291,57 @@ describe('createDemoSettingsApi', () => {
       expect(getDemoDisplayName()).toBe('Kitchen')
       await api.renameDisplay({} as never, 'demo-display', 'Living room')
       expect(getDemoDisplayName()).toBe('Living room')
+    })
+  })
+  describe('photos', () => {
+    const household = 'aaaaaaaa-0000-0000-0000-000000000001'
+    const original = { create: URL.createObjectURL, revoke: URL.revokeObjectURL }
+
+    beforeEach(() => {
+      let n = 0
+      URL.createObjectURL = vi.fn(() => `blob:demo/${++n}`)
+      URL.revokeObjectURL = vi.fn()
+    })
+    afterEach(() => {
+      URL.createObjectURL = original.create
+      URL.revokeObjectURL = original.revoke
+    })
+
+    it('uploads to a blob URL and adds it to the household as a slideshow photo', async () => {
+      const api = createDemoSettingsApi()
+      const id = await api.uploadPhoto(household, new Blob(['jpeg'], { type: 'image/jpeg' }))
+      expect(getDemoSnapshot(new Date()).photos ?? []).toEqual([])
+      await api.addPhoto(auth, id, 'slideshow')
+      expect(getDemoSnapshot(new Date()).photos).toEqual([
+        { id, storagePath: 'blob:demo/1', kind: 'slideshow', addedAt: expect.any(String) },
+      ])
+    })
+
+    it('add requires the PIN and an uploaded photo', async () => {
+      const api = createDemoSettingsApi()
+      const id = await api.uploadPhoto(household, new Blob())
+      await expect(api.addPhoto({ membershipId: SAM_ID, pin: '0000' }, id, 'slideshow')).rejects.toMatchObject({ code: 'auth' })
+      await expect(api.addPhoto(auth, 'never-uploaded', 'slideshow')).rejects.toMatchObject({ code: 'invalid' })
+    })
+
+    it('keeps at most 200 slideshow photos', async () => {
+      const api = createDemoSettingsApi()
+      for (let i = 0; i < 200; i++) await api.addPhoto(auth, await api.uploadPhoto(household, new Blob()), 'slideshow')
+      const extra = await api.uploadPhoto(household, new Blob())
+      await expect(api.addPhoto(auth, extra, 'slideshow')).rejects.toMatchObject({
+        code: 'invalid', message: 'a household can have at most 200 slideshow photos',
+      })
+      expect(getDemoSnapshot(new Date()).photos).toHaveLength(200)
+    })
+
+    it('deletes a photo with the PIN', async () => {
+      const api = createDemoSettingsApi()
+      const id = await api.uploadPhoto(household, new Blob())
+      await api.addPhoto(auth, id, 'slideshow')
+      await expect(api.deletePhoto({ membershipId: SAM_ID, pin: '0000' }, id)).rejects.toMatchObject({ code: 'auth' })
+      await api.deletePhoto(auth, id)
+      expect(getDemoSnapshot(new Date()).photos).toEqual([])
+      expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:demo/1')
     })
   })
 })

@@ -3,7 +3,12 @@ import { buildDemoSnapshot, type DemoOptions } from './demoFixture'
 
 function optionsFromUrl(): DemoOptions {
   const params = new URLSearchParams(window.location.search)
-  return { conflict: params.has('conflict'), manyKids: params.has('manyKids'), sitter: params.has('sitter') }
+  return {
+    conflict: params.has('conflict'),
+    manyKids: params.has('manyKids'),
+    sitter: params.has('sitter'),
+    photos: params.has('photos'),
+  }
 }
 
 let snapshot: HouseholdSnapshot | null = null

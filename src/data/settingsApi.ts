@@ -1,6 +1,6 @@
 import type { Feature, RoutineStep, TimeWindow } from '@/domain/types'
 import type { EntryTable } from './logCommands'
-import type { SitterInfo } from './snapshot'
+import type { PhotoKind, SitterInfo } from './snapshot'
 import type { RoostClient } from './supabase'
 
 export type SettingsErrorCode = 'auth' | 'invalid' | 'network' | 'other'
@@ -187,6 +187,16 @@ export interface SettingsApi {
   deleteEntry(table: EntryTable, entryId: string): Promise<void>
   /** Voids a dose with a reason (1–200 characters), checked against the settings session's PIN (spec §11.4). */
   voidDose(auth: SettingsAuth, doseId: string, reason: string): Promise<void>
+
+  // ─── Photos (spec §7.9, §11.1) ────────────────────────────────────────────────────────────────────────
+  /** Uploads an already prepared JPEG (see `prepareImage` in photosApi) to the household's private folder under a
+   *  new id and returns the id. Not PIN-checked (storage lets members and displays upload into their own household's
+   *  folder); the photo appears in the household only after `addPhoto`. */
+  uploadPhoto(householdId: string, image: Blob): Promise<string>
+  /** Adds an uploaded photo to the household. A household keeps at most 200 slideshow photos ('invalid' past that). */
+  addPhoto(auth: SettingsAuth, photoId: string, kind: PhotoKind): Promise<void>
+  /** Deletes the photo and its stored file, and clears any child or routine step that used it. */
+  deletePhoto(auth: SettingsAuth, photoId: string): Promise<void>
 
   // ─── Full sign-in only (spec §6.3): members, displays, household deletion ─────────────────────────────
   createMemberInvite(client: AdultClient, householdId: string, role: 'owner' | 'adult'): Promise<{ token: string; expiresAt: string }>

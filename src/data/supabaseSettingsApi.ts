@@ -18,7 +18,8 @@ import {
   type StickerCategoryInput,
   type UpdateChildInput,
 } from './settingsApi'
-import type { SitterInfo } from './snapshot'
+import { PHOTO_BUCKET, photoPath } from './photosApi'
+import type { PhotoKind, SitterInfo } from './snapshot'
 import type { RoostClient } from './supabase'
 
 type OpResult = { error: { message: string; code?: string } | null; data?: unknown; status?: number }
@@ -71,6 +72,18 @@ async function run<T>(op: () => PromiseLike<OpResult>): Promise<T> {
     throw new SettingsError(result.error.message, classify(status, code))
   }
   return result.data as T
+}
+
+/** A Storage upload failure: no status means the request never got a response. RLS refusals (401/403) mean this
+ *  device is no longer a member; 413 means the file is too large for the bucket. */
+function storageError(error: { message: string; status?: number; statusCode?: string }): SettingsError {
+  const status = error.status ?? (error.statusCode ? Number(error.statusCode) : undefined)
+  let code: SettingsErrorCode = 'other'
+  if (status === undefined || Number.isNaN(status)) code = 'network'
+  else if (status === 401 || status === 403) code = 'auth'
+  else if (status === 413 || error.statusCode === '413') code = 'invalid'
+  else if (status === 408 || status === 429 || status >= 500) code = 'network'
+  return new SettingsError(error.message, code)
 }
 
 /** Builds a `SettingsApi` whose PIN-checked methods run against `client` (the display's own client: PIN RPCs
@@ -257,6 +270,28 @@ export function createSupabaseSettingsApi(client: RoostClient): SettingsApi {
     )
   }
 
+  async function uploadPhoto(householdId: string, image: Blob): Promise<string> {
+    const photoId = crypto.randomUUID()
+    let result: { error: { message: string; status?: number; statusCode?: string } | null }
+    try {
+      result = await client.storage
+        .from(PHOTO_BUCKET)
+        .upload(photoPath(householdId, photoId), image, { contentType: 'image/jpeg', upsert: false })
+    } catch (e) {
+      throw new SettingsError(e instanceof Error ? e.message : String(e), 'network')
+    }
+    if (result.error) throw storageError(result.error)
+    return photoId
+  }
+
+  async function addPhoto(auth: SettingsAuth, photoId: string, kind: PhotoKind): Promise<void> {
+    await run(() => client.rpc('add_photo', { p_membership_id: auth.membershipId, p_pin: auth.pin, p_photo_id: photoId, p_kind: kind }))
+  }
+
+  async function deletePhoto(auth: SettingsAuth, photoId: string): Promise<void> {
+    await run(() => client.rpc('delete_photo', { p_membership_id: auth.membershipId, p_pin: auth.pin, p_photo_id: photoId }))
+  }
+
   // ─── Full sign-in only ────────────────────────────────────────────────────
   async function createMemberInvite(adult: AdultClient, householdId: string, role: 'owner' | 'adult') {
     const rows = await run<{ out_token: string; out_expires_at: string }[]>(() =>
@@ -362,6 +397,9 @@ export function createSupabaseSettingsApi(client: RoostClient): SettingsApi {
     updateEntry,
     deleteEntry,
     voidDose,
+    uploadPhoto,
+    addPhoto,
+    deletePhoto,
     createMemberInvite,
     acceptMemberInvite,
     setMemberRole,

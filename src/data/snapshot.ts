@@ -103,6 +103,19 @@ export interface HouseholdWeather {
   icon: WeatherIcon
 }
 
+/** Where a household photo is used (spec §7.7, §7.9, §12). */
+export type PhotoKind = 'slideshow' | 'avatar' | 'step'
+
+/** A photo in the household's private storage folder (`photos`). */
+export interface HouseholdPhoto {
+  id: string
+  /** `<household_id>/<id>.jpg` in the `household-photos` bucket; shown through a signed URL (the demo stores a
+   *  data: or blob: URL here instead). */
+  storagePath: string
+  kind: PhotoKind
+  addedAt: IsoTimestamp
+}
+
 export interface HouseholdSnapshot {
   household: HouseholdInfo
   members: Member[]
@@ -128,5 +141,8 @@ export interface HouseholdSnapshot {
   /** Null when the household has no location or nothing has been fetched yet. Optional: a device-cached snapshot
    *  from before weather was loaded won't have it. */
   weather?: HouseholdWeather | null
+  /** Every photo of the household, oldest first. Optional: a device-cached snapshot from before photos were loaded
+   *  won't have it. */
+  photos?: HouseholdPhoto[]
   loadedAt: IsoTimestamp
 }

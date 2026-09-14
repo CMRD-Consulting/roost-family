@@ -18,7 +18,8 @@ import {
   type StickerCategoryInput,
   type UpdateChildInput,
 } from '../settingsApi'
-import type { HouseholdSnapshot, SitterInfo, StickerCategory } from '../snapshot'
+import { MAX_SLIDESHOW_PHOTOS } from '../photosApi'
+import type { HouseholdSnapshot, PhotoKind, SitterInfo, StickerCategory } from '../snapshot'
 import { getDemoSnapshot, mutateDemo } from './demoHousehold'
 
 /** Membership id -> PIN, for the two demo adults (same as `createDemoLogWriter`). */
@@ -95,9 +96,13 @@ const DEMO_DISPLAY_ID = 'demo-display'
  *  module-local name stands in so the My devices/Displays screens have something to show and change. */
 let demoDisplayName = 'Kitchen'
 
-/** Test-only: resets the demo display name changed by `renameDisplay`. */
+/** Demo uploads not yet added: photo id -> object URL standing in for the storage path. */
+const demoUploads = new Map<string, string>()
+
+/** Test-only: resets the demo display name changed by `renameDisplay` and forgets pending uploads. */
 export function resetDemoSettingsApiForTests(): void {
   demoDisplayName = 'Kitchen'
+  demoUploads.clear()
 }
 
 /** Test-only: the current demo display name, as changed by `renameDisplay`. */
@@ -333,6 +338,35 @@ export function createDemoSettingsApi(): SettingsApi {
     }))
   }
 
+  // The demo keeps photos in this browser tab: an object URL stands in for the storage path.
+  async function uploadPhoto(_householdId: string, image: Blob): Promise<string> {
+    const id = crypto.randomUUID()
+    demoUploads.set(id, URL.createObjectURL(image))
+    return id
+  }
+
+  async function addPhoto(auth: SettingsAuth, photoId: string, kind: PhotoKind): Promise<void> {
+    requirePin(auth)
+    const url = demoUploads.get(photoId)
+    if (url === undefined) throw new SettingsError('upload the photo before adding it', 'invalid')
+    mutateDemo((s) => {
+      const photos = s.photos ?? []
+      if (kind === 'slideshow' && photos.filter((p) => p.kind === 'slideshow').length >= MAX_SLIDESHOW_PHOTOS) {
+        throw new SettingsError(`a household can have at most ${MAX_SLIDESHOW_PHOTOS} slideshow photos`, 'invalid')
+      }
+      return { ...s, photos: [...photos, { id: photoId, storagePath: url, kind, addedAt: new Date().toISOString() }] }
+    })
+    demoUploads.delete(photoId)
+  }
+
+  async function deletePhoto(auth: SettingsAuth, photoId: string): Promise<void> {
+    requirePin(auth)
+    const photo = getDemoSnapshot(new Date()).photos?.find((p) => p.id === photoId)
+    if (!photo) throw new SettingsError('photo not found', 'auth')
+    mutateDemo((s) => ({ ...s, photos: (s.photos ?? []).filter((p) => p.id !== photoId) }))
+    if (photo.storagePath.startsWith('blob:')) URL.revokeObjectURL(photo.storagePath)
+  }
+
   // ─── Full sign-in only: no demo backing except role changes and display rename ───────────────────────
   async function notAvailable(): Promise<never> {
     throw new SettingsError('Not available in demo', 'other')
@@ -382,6 +416,9 @@ export function createDemoSettingsApi(): SettingsApi {
     updateEntry,
     deleteEntry,
     voidDose,
+    uploadPhoto,
+    addPhoto,
+    deletePhoto,
     createMemberInvite: notAvailable,
     acceptMemberInvite: notAvailable,
     setMemberRole,

@@ -3,8 +3,8 @@ import type {
   SleepEntry, StickerEntry,
 } from '@/domain/types'
 import type {
-  GroceryItem, HouseholdInfo, HouseholdWeather, Jot, Member, RoutineDayOverride, RoutineProgress, SitterInfo,
-  SitterSession, SnapshotChild, StickerCategory, WeatherIcon,
+  GroceryItem, HouseholdInfo, HouseholdPhoto, HouseholdWeather, Jot, Member, RoutineDayOverride, RoutineProgress, SitterInfo,
+  PhotoKind, SitterSession, SnapshotChild, StickerCategory, WeatherIcon,
 } from './snapshot'
 import type { Tables } from './database.types'
 
@@ -260,5 +260,16 @@ export function toWeather(row: WeatherColumns | null): HouseholdWeather | null {
     precipChance: row.precip_chance,
     summary: row.summary ?? '',
     icon,
+  }
+}
+
+const PHOTO_KINDS = ['slideshow', 'avatar', 'step'] as const satisfies readonly PhotoKind[]
+
+export function toPhoto(row: Pick<Tables<'photos'>, 'id' | 'storage_path' | 'kind' | 'added_at'>): HouseholdPhoto {
+  return {
+    id: row.id,
+    storagePath: row.storage_path,
+    kind: assertOneOf(row.kind, PHOTO_KINDS, 'photo kind'),
+    addedAt: row.added_at,
   }
 }

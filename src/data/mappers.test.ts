@@ -3,7 +3,7 @@ import type { Tables } from './database.types'
 import {
   toChild, toDiaper, toDose, toFeeding, toGrocery, toHousehold, toJot, toMedicine, toMember,
   toRoutine, toRoutineOverride, toRoutineProgress, toSitterInfo, toSitterSession, toSleep, toSticker,
-  toStickerCategory, toWeather,
+  toPhoto, toStickerCategory, toWeather,
 } from './mappers'
 
 const household = (over: Partial<Tables<'households'>> = {}): Tables<'households'> => ({
@@ -293,6 +293,18 @@ describe('toWeather', () => {
   it('falls back to the cloud icon for an unknown icon, and passes null high/low/precip through', () => {
     const w = toWeather(weatherRow({ icon: 'tornado', high_f: null, low_f: null, precip_chance: null, summary: null }))
     expect(w).toMatchObject({ icon: 'cloud', highF: null, lowF: null, precipChance: null, summary: '' })
+  })
+})
+
+describe('toPhoto', () => {
+  it('maps a photo row', () => {
+    expect(toPhoto({ id: 'p1', storage_path: 'h1/p1.jpg', kind: 'slideshow', added_at: '2026-09-14T17:30:00+00:00' })).toEqual({
+      id: 'p1', storagePath: 'h1/p1.jpg', kind: 'slideshow', addedAt: '2026-09-14T17:30:00+00:00',
+    })
+  })
+
+  it('rejects an unknown kind', () => {
+    expect(() => toPhoto({ id: 'p1', storage_path: 'h1/p1.jpg', kind: 'banner', added_at: '2026-09-14T17:30:00Z' })).toThrow('photo kind')
   })
 })
 

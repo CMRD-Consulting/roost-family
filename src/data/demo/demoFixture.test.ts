@@ -152,6 +152,20 @@ describe('buildDemoSnapshot', () => {
     })
   })
 
+  it('has no photos by default', () => {
+    expect(buildDemoSnapshot(now).photos).toEqual([])
+  })
+
+  it('has a few sample slideshow photos (bundled SVG data URLs) with { photos: true }', () => {
+    const photos = buildDemoSnapshot(now, { photos: true }).photos ?? []
+    expect(photos.length).toBeGreaterThanOrEqual(3)
+    expect(new Set(photos.map((p) => p.id)).size).toBe(photos.length)
+    for (const p of photos) {
+      expect(p.kind).toBe('slideshow')
+      expect(p.storagePath).toMatch(/^data:image\/svg\+xml,/)
+    }
+  })
+
   it('has no active or recent sitter session and loadedAt equal to now', () => {
     const s = buildDemoSnapshot(now)
     expect(s.activeSitterSession).toBeNull()

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { RoostClient } from './supabase'
 import { createSupabaseSettingsApi } from './supabaseSettingsApi'
 import { SettingsError } from './settingsApi'
@@ -442,6 +442,74 @@ describe('createSupabaseSettingsApi', () => {
           ['order', 'created_at', { ascending: true }],
         ],
       }])
+    })
+  })
+
+  describe('photos', () => {
+    const household = 'aaaaaaaa-0000-0000-0000-000000000001'
+
+    function storageClient(result: unknown) {
+      const upload = vi.fn(async () => result)
+      const fromBucket = vi.fn(() => ({ upload }))
+      const { client, calls } = createFakeClient()
+      ;(client as unknown as { storage: unknown }).storage = { from: fromBucket }
+      return { client, calls, upload, fromBucket }
+    }
+
+    it('uploadPhoto uploads the JPEG to <household>/<new id>.jpg without overwriting and returns the id', async () => {
+      const { client, upload, fromBucket } = storageClient({ data: { path: 'x' }, error: null })
+      const image = new Blob(['jpeg'], { type: 'image/jpeg' })
+      const id = await createSupabaseSettingsApi(client).uploadPhoto(household, image)
+      expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
+      expect(fromBucket).toHaveBeenCalledWith('household-photos')
+      expect(upload).toHaveBeenCalledWith(`${household}/${id}.jpg`, image, { contentType: 'image/jpeg', upsert: false })
+    })
+
+    it('uploadPhoto maps storage failures', async () => {
+      const cases: Array<[unknown, string]> = [
+        [{ message: 'new row violates row-level security policy', status: 403, statusCode: '403' }, 'auth'],
+        [{ message: 'The object exceeded the maximum allowed size', status: 413, statusCode: '413' }, 'invalid'],
+        [{ message: 'Failed to fetch', status: undefined }, 'network'],
+        [{ message: 'gateway', status: 502, statusCode: '502' }, 'network'],
+        [{ message: 'odd', status: 409, statusCode: '409' }, 'other'],
+      ]
+      for (const [error, code] of cases) {
+        const { client } = storageClient({ data: null, error })
+        const err = await createSupabaseSettingsApi(client).uploadPhoto(household, new Blob()).catch((e: unknown) => e)
+        expect(err, JSON.stringify(error)).toBeInstanceOf(SettingsError)
+        expect((err as SettingsError).code, JSON.stringify(error)).toBe(code)
+      }
+    })
+
+    it('uploadPhoto maps a thrown request to network', async () => {
+      const { client, upload } = storageClient(null)
+      upload.mockRejectedValueOnce(new TypeError('fetch failed'))
+      const err = await createSupabaseSettingsApi(client).uploadPhoto(household, new Blob()).catch((e: unknown) => e)
+      expect((err as SettingsError).code).toBe('network')
+    })
+
+    it('addPhoto -> add_photo with the kind', async () => {
+      const { client, calls } = createFakeClient()
+      await createSupabaseSettingsApi(client).addPhoto(auth, 'photo-1', 'slideshow')
+      expect(calls).toEqual([
+        { op: 'rpc', name: 'add_photo', args: { p_membership_id: membershipId, p_pin: '1234', p_photo_id: 'photo-1', p_kind: 'slideshow' } },
+      ])
+    })
+
+    it('addPhoto surfaces the 200-photo limit as invalid', async () => {
+      const { client } = createFakeClient({
+        rpc: { add_photo: { error: { message: 'a household can have at most 200 slideshow photos', code: '22023' }, status: 400 } },
+      })
+      const err = await createSupabaseSettingsApi(client).addPhoto(auth, 'photo-1', 'slideshow').catch((e: unknown) => e)
+      expect(err).toMatchObject({ code: 'invalid', message: 'a household can have at most 200 slideshow photos' })
+    })
+
+    it('deletePhoto -> delete_photo', async () => {
+      const { client, calls } = createFakeClient()
+      await createSupabaseSettingsApi(client).deletePhoto(auth, 'photo-1')
+      expect(calls).toEqual([
+        { op: 'rpc', name: 'delete_photo', args: { p_membership_id: membershipId, p_pin: '1234', p_photo_id: 'photo-1' } },
+      ])
     })
   })
 
