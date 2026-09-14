@@ -11,6 +11,8 @@ export type HouseholdStatus = 'idle' | 'loading' | 'ready' | 'error'
 export interface OverlayItem {
   command: LogCommand
   savedAt: string | null
+  /** When the command was applied locally; used as its "now" (e.g. a dose's createdAt) so the view doesn't drift. */
+  appliedAt: string
 }
 
 /** Deep-value equality: overlay items must match commands round-tripped through the offline
@@ -32,11 +34,11 @@ export const useHouseholdStore = defineStore('household', () => {
   /** `snapshot` with every overlay command applied on top, for the UI to render. */
   const view = computed<HouseholdSnapshot | null>(() => {
     if (snapshot.value === null) return null
-    return overlay.value.reduce((s, o) => applyCommand(s, o.command, new Date()), snapshot.value)
+    return overlay.value.reduce((s, o) => applyCommand(s, o.command, new Date(o.appliedAt)), snapshot.value)
   })
 
-  function addOverlay(cmd: LogCommand): void {
-    overlay.value = [...overlay.value, { command: cmd, savedAt: null }]
+  function addOverlay(cmd: LogCommand, appliedAt: Date = new Date()): void {
+    overlay.value = [...overlay.value, { command: cmd, savedAt: null, appliedAt: appliedAt.toISOString() }]
   }
 
   function markSaved(cmd: LogCommand): void {
@@ -49,6 +51,8 @@ export const useHouseholdStore = defineStore('household', () => {
   }
 
   let currentHouseholdId: string | null = null
+  /** The household the overlay belongs to; survives stop() so restarting the same household keeps pending commands. */
+  let overlayHouseholdId: string | null = null
   let currentSource: HouseholdSource | null = null
   let unsubscribe: (() => void) | null = null
   /** Monotonic counter; a load result is applied only if it's still the latest one issued. */
@@ -115,7 +119,8 @@ export const useHouseholdStore = defineStore('household', () => {
     error.value = null
     realtime.value = 'unknown'
     freshAt.value = null
-    overlay.value = []
+    if (overlayHouseholdId !== householdId) overlay.value = []
+    overlayHouseholdId = householdId
     status.value = 'loading'
     await reload()
     // A stop() or a switch to another household during that first load must not subscribe.

@@ -431,5 +431,60 @@ describe('useHouseholdStore', () => {
         vi.useRealTimers()
       }
     })
+
+    it('applies each overlay command with the time it was added, so the view is stable across recomputes', async () => {
+      vi.useFakeTimers()
+      try {
+        vi.setSystemTime(new Date('2026-09-14T19:00:00Z'))
+        const { source } = fakeSource()
+        const store = newStore()
+        await store.start('h1', source)
+        const base = store.snapshot!.doses[0]!
+        const dose: LogCommand = {
+          kind: 'dose.add',
+          householdId: store.snapshot!.household.id,
+          entry: { ...base, id: 'dose-new', createdAt: '' },
+          attribution: { displayId: null, loggedByMembershipId: null, sitterSessionId: null, loggedByName: 'Sam' },
+        }
+        store.addOverlay(dose)
+        expect(store.view?.doses.find((d) => d.id === 'dose-new')?.createdAt).toBe('2026-09-14T19:00:00.000Z')
+
+        vi.setSystemTime(new Date('2026-09-14T19:07:00Z'))
+        store.addOverlay(dinnerCmd(store.snapshot!.household.id, 'Pizza')) // forces the view to recompute
+
+        expect(store.view?.household.dinnerTonight).toBe('Pizza')
+        expect(store.view?.doses.find((d) => d.id === 'dose-new')?.createdAt).toBe('2026-09-14T19:00:00.000Z')
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('addOverlay accepts an explicit time (e.g. when a queued command was enqueued)', async () => {
+      const { source } = fakeSource()
+      const store = newStore()
+      await store.start('h1', source)
+      const householdId = store.snapshot!.household.id
+      const doseId = store.snapshot!.doses[0]!.id
+
+      store.addOverlay({ kind: 'dose.void', householdId, doseId, membershipId: 'm1', pin: '1234', reason: 'x' }, new Date('2026-09-14T18:00:00Z'))
+
+      expect(store.view?.doses.find((d) => d.id === doseId)?.voidedAt).toBe('2026-09-14T18:00:00.000Z')
+    })
+
+    it('keeps the overlay when restarting the same household after stop, and clears it for a different household', async () => {
+      const { source } = fakeSource()
+      const store = newStore()
+      await store.start('h1', source)
+      store.addOverlay(dinnerCmd(store.snapshot!.household.id, 'Pizza'))
+
+      store.stop()
+      await store.start('h1', source)
+      expect(store.overlay).toHaveLength(1)
+      expect(store.view?.household.dinnerTonight).toBe('Pizza')
+
+      store.stop()
+      await store.start('h2', source)
+      expect(store.overlay).toHaveLength(0)
+    })
   })
 })

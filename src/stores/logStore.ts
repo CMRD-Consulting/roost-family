@@ -88,8 +88,10 @@ export const useLogStore = defineStore('log', () => {
     return writer
   }
 
+  /** Read at call time rather than from the household store, whose online flag may not have caught up
+   *  yet when this store's own online listener runs first. */
   function isOffline(): boolean {
-    return householdStore.online === false
+    return typeof navigator !== 'undefined' && navigator.onLine === false
   }
 
   /** True while anything is waiting to be sent, so a new command must line up behind it. */
@@ -162,7 +164,7 @@ export const useLogStore = defineStore('log', () => {
     const working = plainCopy(cmd)
     if (working.kind === 'dose.add') {
       // Without a live connection and realtime feed, this display may be missing another adult's dose (spec §7.4).
-      const mayMissDoses = offline || householdStore.realtime !== 'connected'
+      const mayMissDoses = offline || householdStore.online === false || householdStore.realtime !== 'connected'
       if (mayMissDoses && !opts.confirmOffline) throw new NeedsOfflineDoseConfirmation()
       if (opts.confirmOffline) working.entry.loggedOffline = true
     }
@@ -285,7 +287,7 @@ export const useLogStore = defineStore('log', () => {
       return
     }
     // Queued-but-unsent commands must still show optimistically, even before their first replay.
-    for (const item of queued) householdStore.addOverlay(item.command)
+    for (const item of queued) householdStore.addOverlay(item.command, new Date(item.enqueuedAt))
     syncPendingCount()
 
     await replay()

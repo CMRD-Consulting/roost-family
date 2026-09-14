@@ -532,6 +532,39 @@ describe('useLogStore', () => {
       expect(await queue.count()).toBe(0)
     })
 
+    it("replays on the online event even when its listener runs before the household store's", async () => {
+      setActivePinia(createPinia())
+      const householdStore = useHouseholdStore()
+      const logStore = useLogStore()
+      const writer = createFakeWriter()
+      const queue = createFakeQueue()
+      await logStore.init(writer, queue) // registers its online listener first
+      await householdStore.start(HOUSEHOLD_ID, fakeSource(buildDemoSnapshot(new Date('2026-09-14T19:00:00Z'))))
+      setOnline(false)
+      await logStore.submit(dinnerCmd('Pizza'))
+
+      setOnline(true)
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(writer.calls).toEqual([dinnerCmd('Pizza')])
+      expect(await queue.count()).toBe(0)
+      logStore.stop()
+    })
+
+    it('overlays restored from the queue on init use the time they were enqueued', async () => {
+      const { householdStore, logStore, writer, queue } = await setup()
+      await queue.enqueue(doseCmd('dose-q'))
+      const [item] = await queue.list()
+      ;(item!.command as { entry: { createdAt: string } }).entry.createdAt = ''
+      writer.failAlwaysWith = new LogWriteError('fetch failed', true, null)
+      vi.setSystemTime(Date.now() + 5 * 60_000) // the app restarts later
+
+      await logStore.init(writer, queue)
+
+      expect(householdStore.view?.doses.find((d) => d.id === 'dose-q')?.createdAt).toBe(item!.enqueuedAt)
+      logStore.stop()
+    })
+
     it('re-adds queued commands to the overlay on init so they display after a reload', async () => {
       const { householdStore, logStore, writer, queue } = await setup()
       await queue.enqueue(dinnerCmd('Pizza'))
