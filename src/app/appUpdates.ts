@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { Router } from 'vue-router'
+import { useHouseholdStore } from '@/stores/householdStore'
 import { useModesStore } from '@/stores/modesStore'
 
 /** How often an always-on display asks the server for a new app version (spec §5.8). */
@@ -12,21 +13,28 @@ const SAFE_MOMENT_POLL_MS = 30_000
 /** A second chunk failure within this window doesn't reload again (no reload loops). */
 const CHUNK_RELOAD_COOLDOWN_MS = 60_000
 const CHUNK_RELOAD_KEY = 'roost-chunk-reload-at'
+/** Where the build writes the reload-now flag (spec §5.8); see vite.config.ts. */
+const VERSION_URL = '/version.json'
 
 export interface ReloadMomentInput {
   nightActive: boolean
   msSinceLastTouch: number
   timerRunning: boolean
   route: string
+  /** Set from a critical `version.json` (spec §5.8): reload as soon as no timer is running,
+   *  ignoring Night Mode, idle time and Kids' Corner — a critical fix can't wait for those. */
+  critical?: boolean
 }
 
 /**
  * Pure: may a waiting app update reload the display now? (spec §5.8) Yes while Night Mode is active, or
- * after 5 minutes without a touch outside Kids' Corner. Never while a visual timer is running: losing a
- * child's countdown is worse than running the old version a little longer.
+ * after 5 minutes without a touch outside Kids' Corner, or at once when the deploy is flagged critical.
+ * Never while a visual timer is running: losing a child's countdown is worse than running the old
+ * version a little longer — even a critical fix waits that long.
  */
 export function isSafeReloadMoment(input: ReloadMomentInput): boolean {
   if (input.timerRunning) return false
+  if (input.critical) return true
   if (input.nightActive) return true
   return input.msSinceLastTouch >= IDLE_BEFORE_RELOAD_MS && input.route !== '/corner'
 }
@@ -35,18 +43,64 @@ export const useAppUpdatesStore = defineStore('appUpdates', () => {
   /** True once a new app version is installed and waiting for a safe moment to take over. */
   const waiting = ref(false)
   const timerRunning = ref(false)
+  /** True once a version check finds a newer, critical version.json (spec §5.8). Never cleared: once a
+   *  critical deploy is known, every later reload decision for this session stays maximally eager. */
+  const critical = ref(false)
 
   /** Screens with a visual timer report it here, so an update never reloads mid-countdown. */
   function setTimerRunning(running: boolean): void {
     timerRunning.value = running
   }
 
-  function canReload(input: Omit<ReloadMomentInput, 'timerRunning'>): boolean {
-    return isSafeReloadMoment({ ...input, timerRunning: timerRunning.value })
+  function canReload(input: Omit<ReloadMomentInput, 'timerRunning' | 'critical'>): boolean {
+    return isSafeReloadMoment({ ...input, timerRunning: timerRunning.value, critical: critical.value })
   }
 
-  return { waiting, timerRunning, setTimerRunning, canReload }
+  return { waiting, timerRunning, critical, setTimerRunning, canReload }
 })
+
+export interface VersionInfo {
+  version: string
+  critical: boolean
+}
+
+export type VersionFetcher = () => Promise<VersionInfo | null>
+
+/**
+ * Fetches `version.json` bypassing every cache (spec §5.8: a stale copy would defeat the whole check) —
+ * the service worker must also never precache it (vite.config.ts `globIgnores`). Never throws: any
+ * failure (offline, non-200, malformed body) resolves null so a check is simply skipped, not crashed.
+ */
+export function createVersionFetcher(url: string = VERSION_URL): VersionFetcher {
+  return async () => {
+    try {
+      const res = await fetch(url, { cache: 'no-store' })
+      if (!res.ok) return null
+      const data = (await res.json()) as Partial<VersionInfo> | null
+      if (typeof data?.version !== 'string') return null
+      return { version: data.version, critical: data.critical === true }
+    } catch {
+      return null
+    }
+  }
+}
+
+/**
+ * One version check (spec §5.8, §13): always reconnects Realtime first (in case it dropped and its own
+ * retry hasn't fired yet), then — only when `version.json`'s version differs from the running build —
+ * reports whether the deploy is critical, so the caller can trigger a service-worker update and, if
+ * critical, reload sooner than the usual safe-moment rules allow.
+ */
+export async function checkForUpdate(
+  fetchVersion: VersionFetcher,
+  runningVersion: string,
+  onNewerVersion: (critical: boolean) => void,
+  reconnectRealtime: () => void,
+): Promise<void> {
+  reconnectRealtime()
+  const info = await fetchVersion()
+  if (info !== null && info.version !== runningVersion) onNewerVersion(info.critical)
+}
 
 const CHUNK_ERROR = /Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module|Unable to preload CSS/i
 
@@ -77,38 +131,65 @@ export function recoverFromChunkError(
 
 /**
  * Registers the service worker and applies new versions at a safe moment (spec §5.8): checks for an update
- * every 30 minutes and, once one is waiting, reloads only when `isSafeReloadMoment` allows it.
+ * every 30 minutes and, once one is waiting, reloads only when `isSafeReloadMoment` allows it. The same
+ * 30-minute cadence (and every `online` event) also fetches `version.json` — the only source of the
+ * critical-reload flag — and reconnects Realtime if it had dropped (spec §13).
  */
 export async function startAppUpdates(router: Router): Promise<void> {
   if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return
   const { registerSW } = await import('virtual:pwa-register')
   const store = useAppUpdatesStore()
   const modes = useModesStore()
+  const householdStore = useHouseholdStore()
 
   let lastTouchAt = Date.now()
   window.addEventListener('pointerdown', () => (lastTouchAt = Date.now()), { capture: true, passive: true })
 
+  let registration: ServiceWorkerRegistration | undefined
   let pollTimer: ReturnType<typeof setInterval> | undefined
+  const startSafeMomentPolling = () => {
+    pollTimer ??= setInterval(() => {
+      const safe = store.canReload({
+        nightActive: modes.nightActive,
+        msSinceLastTouch: Date.now() - lastTouchAt,
+        route: router.currentRoute.value.path,
+      })
+      if (safe) void updateSW(true)
+    }, SAFE_MOMENT_POLL_MS)
+  }
+
   const updateSW = registerSW({
     onNeedRefresh() {
       store.waiting = true
-      pollTimer ??= setInterval(() => {
-        const safe = store.canReload({
-          nightActive: modes.nightActive,
-          msSinceLastTouch: Date.now() - lastTouchAt,
-          route: router.currentRoute.value.path,
-        })
-        if (safe) void updateSW(true)
-      }, SAFE_MOMENT_POLL_MS)
+      startSafeMomentPolling()
     },
-    onRegisteredSW(_url, registration) {
-      if (!registration) return
+    onRegisteredSW(_url, reg) {
+      registration = reg
+      if (!reg) return
       setInterval(() => {
-        if (navigator.onLine === false || registration.installing) return
-        registration.update().catch(() => {
+        if (navigator.onLine === false || reg.installing) return
+        reg.update().catch(() => {
           // Offline or the server is down: the next check tries again.
         })
       }, UPDATE_CHECK_MS)
     },
   })
+
+  const fetchVersion = createVersionFetcher()
+  const checkVersion = () =>
+    checkForUpdate(
+      fetchVersion,
+      __APP_VERSION__,
+      (critical) => {
+        if (critical) store.critical = true
+        if (registration && navigator.onLine !== false && !registration.installing) {
+          registration.update().catch(() => {
+            // Offline or the server is down: the next check tries again.
+          })
+        }
+      },
+      () => householdStore.reconnectRealtime(),
+    )
+  setInterval(() => void checkVersion(), UPDATE_CHECK_MS)
+  window.addEventListener('online', () => void checkVersion())
 }

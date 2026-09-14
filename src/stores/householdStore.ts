@@ -193,6 +193,12 @@ export const useHouseholdStore = defineStore('household', () => {
     await loading
     // A stop() or a switch to another household during that first load must not subscribe.
     if (currentHouseholdId !== householdId) return
+    subscribeRealtime(householdId, source)
+    window.addEventListener('online', handleOnline)
+    window.addEventListener('offline', handleOffline)
+  }
+
+  function subscribeRealtime(householdId: string, source: HouseholdSource): void {
     unsubscribe = source.subscribe(
       householdId,
       () => {
@@ -204,8 +210,22 @@ export const useHouseholdStore = defineStore('household', () => {
         else realtimeDownSince.value ??= new Date().toISOString()
       },
     )
-    window.addEventListener('online', handleOnline)
-    window.addEventListener('offline', handleOffline)
+  }
+
+  /**
+   * Reconnects Realtime if it isn't connected (spec §5.8, §13): called on every 30-minute version
+   * check (and on `online`) so a dropped connection doesn't wait indefinitely for its own retry.
+   * A no-op once already connected, before `start()`, after `stop()`, and in demo mode (whose
+   * source reports 'connected' synchronously, so it never satisfies the "not connected" guard).
+   */
+  function reconnectRealtime(): void {
+    if (currentHouseholdId === null || currentSource === null) return
+    if (realtime.value === 'connected') return
+    const householdId = currentHouseholdId
+    const source = currentSource
+    unsubscribe?.()
+    unsubscribe = null
+    subscribeRealtime(householdId, source)
   }
 
   function stop(): void {
@@ -242,6 +262,6 @@ export const useHouseholdStore = defineStore('household', () => {
 
   return {
     snapshot, status, error, online, realtime, realtimeDownSince, realtimeDownMs, start, reload, stop, staleMinutes,
-    overlay, view, addOverlay, markSaved, removeOverlay, fromCache,
+    overlay, view, addOverlay, markSaved, removeOverlay, fromCache, reconnectRealtime,
   }
 })

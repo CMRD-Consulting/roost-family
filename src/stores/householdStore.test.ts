@@ -579,6 +579,82 @@ describe('useHouseholdStore', () => {
     })
   })
 
+  describe('reconnectRealtime', () => {
+    it('unsubscribes and resubscribes when realtime is not connected', async () => {
+      const { source, subscribe, unsubscribe, triggerStatus } = fakeSource()
+      const store = newStore()
+      await store.start('h1', source)
+      triggerStatus('disconnected')
+      subscribe.mockClear()
+
+      store.reconnectRealtime()
+
+      expect(unsubscribe).toHaveBeenCalledTimes(1)
+      expect(subscribe).toHaveBeenCalledTimes(1)
+      expect(subscribe).toHaveBeenCalledWith('h1', expect.any(Function), expect.any(Function))
+    })
+
+    it('is a no-op while realtime status has never reported (unknown counts as not connected, but a fresh subscribe still happens)', async () => {
+      const { source, subscribe, unsubscribe } = fakeSource()
+      const store = newStore()
+      await store.start('h1', source)
+      subscribe.mockClear()
+
+      // realtime is still 'unknown' (onStatus never called) — treated as not connected.
+      store.reconnectRealtime()
+
+      expect(unsubscribe).toHaveBeenCalledTimes(1)
+      expect(subscribe).toHaveBeenCalledTimes(1)
+    })
+
+    it('does nothing when realtime is already connected', async () => {
+      const { source, subscribe, unsubscribe, triggerStatus } = fakeSource()
+      const store = newStore()
+      await store.start('h1', source)
+      triggerStatus('connected')
+      subscribe.mockClear()
+
+      store.reconnectRealtime()
+
+      expect(unsubscribe).not.toHaveBeenCalled()
+      expect(subscribe).not.toHaveBeenCalled()
+    })
+
+    it('does nothing when the store has been stopped', async () => {
+      const { source, subscribe, unsubscribe } = fakeSource()
+      const store = newStore()
+      await store.start('h1', source)
+      store.stop()
+      subscribe.mockClear()
+      unsubscribe.mockClear()
+
+      store.reconnectRealtime()
+
+      expect(unsubscribe).not.toHaveBeenCalled()
+      expect(subscribe).not.toHaveBeenCalled()
+    })
+
+    it('does nothing before start() has ever been called', () => {
+      const store = newStore()
+      expect(() => store.reconnectRealtime()).not.toThrow()
+    })
+
+    it('reconnecting still reloads on the new subscription\'s change callback', async () => {
+      const { source, subscribe, load, triggerStatus } = fakeSource()
+      const store = newStore()
+      await store.start('h1', source)
+      triggerStatus('disconnected')
+      store.reconnectRealtime()
+      load.mockClear()
+
+      // Fire the change callback captured by the *new* subscribe call.
+      const onChange = subscribe.mock.calls.at(-1)?.[1] as () => void
+      onChange()
+
+      await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(1))
+    })
+  })
+
   describe('overlay', () => {
     function dinnerCmd(householdId: string, text: string): LogCommand {
       return { kind: 'dinner.set', householdId, text, previous: null }
