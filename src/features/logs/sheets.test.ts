@@ -385,6 +385,92 @@ describe('log sheets', () => {
     })
   })
 
+  describe('Sitter Mode attribution', () => {
+    const SESSION = 'session-jess'
+    const sitter = (s: HouseholdSnapshot) => {
+      s.household.diaperLogEnabled = true
+      s.activeSitterSession = { id: SESSION, sitterName: 'Jess', startedAt: '2026-09-14T17:00:00.000Z', endedAt: null, summaryShownAt: null }
+    }
+    const SITTER_ATTRIBUTION = { displayId: 'display-1', loggedByMembershipId: null, sitterSessionId: SESSION, loggedByName: 'Jess (sitter)' }
+    const attributionOf = (cmd: LogCommand | undefined) => (cmd && 'attribution' in cmd ? cmd.attribution : null)
+    const expectSitterLine = (w: VueWrapper) => {
+      expect(w.find('[aria-label="Who"]').exists()).toBe(false)
+      const line = w.get('[data-testid="sitter-who"]')
+      expect(line.text()).toBe('Logged by Jess (sitter)')
+      expect(line.classes()).toContain('text-[18px]')
+    }
+
+    it('sleep', async () => {
+      await setup('2026-09-14T19:00:00Z', sitter)
+      const w = mountSheet(SleepSheet)
+      await flushPromises()
+      expectSitterLine(w)
+      await click(button(w, 'Start sleep'))
+      expect(attributionOf(writer.calls[0])).toEqual(SITTER_ATTRIBUTION)
+    })
+
+    it('feeding', async () => {
+      await setup('2026-09-14T19:00:00Z', sitter)
+      const w = mountSheet(FeedingSheet)
+      await flushPromises()
+      await click(radio(w, 'Feeding type', 'Milk'))
+      expectSitterLine(w)
+      await click(button(w, 'Save'))
+      expect(attributionOf(writer.calls[0])).toEqual(SITTER_ATTRIBUTION)
+    })
+
+    it('sticker', async () => {
+      await setup('2026-09-14T19:00:00Z', sitter)
+      const w = mountSheet(StickerSheet)
+      await flushPromises()
+      await click(radio(w, 'Sticker category', 'Teeth'))
+      expectSitterLine(w)
+      await click(button(w, 'Give sticker'))
+      expect(attributionOf(writer.calls[0])).toEqual(SITTER_ATTRIBUTION)
+    })
+
+    it('diaper', async () => {
+      await setup('2026-09-14T19:00:00Z', sitter)
+      const w = mountSheet(DiaperSheet)
+      await flushPromises()
+      await click(radio(w, 'Child', 'Theo'))
+      await click(radio(w, 'Diaper', 'Wet'))
+      expectSitterLine(w)
+      await click(button(w, 'Save'))
+      expect(attributionOf(writer.calls[0])).toEqual(SITTER_ATTRIBUTION)
+    })
+
+    it('says "Sitter" for a sitter without a name', async () => {
+      await setup('2026-09-14T19:00:00Z', (s) => {
+        sitter(s)
+        s.activeSitterSession!.sitterName = null
+      })
+      const w = mountSheet(FeedingSheet)
+      await flushPromises()
+      await click(radio(w, 'Feeding type', 'Milk'))
+      expect(w.get('[data-testid="sitter-who"]').text()).toBe('Logged by Sitter')
+      await click(button(w, 'Save'))
+      expect(attributionOf(writer.calls[0])).toMatchObject({ sitterSessionId: SESSION, loggedByName: 'Sitter' })
+    })
+
+    it('the Who row returns once the session has ended', async () => {
+      await setup('2026-09-14T19:00:00Z', sitter)
+      const w = mountSheet(FeedingSheet)
+      await flushPromises()
+      await click(radio(w, 'Feeding type', 'Milk'))
+      expectSitterLine(w)
+
+      serverSnapshot.activeSitterSession = null
+      await useHouseholdStore().reload()
+      await flushPromises()
+
+      expect(w.find('[data-testid="sitter-who"]').exists()).toBe(false)
+      await click(radio(w, 'Who', 'Sam'))
+      await click(button(w, 'Save'))
+      expect(attributionOf(writer.calls[0])).toEqual({ displayId: 'display-1', loggedByMembershipId: SAM, sitterSessionId: null, loggedByName: 'Sam' })
+    })
+  })
+
   describe('JotSheet', () => {
     it('saves trimmed text attributed to the display', async () => {
       await setup('2026-09-14T19:00:00Z')

@@ -133,6 +133,14 @@ describe('attributionFor', () => {
     })
   })
 
+  it('attributes to the sitter during Sitter Mode, keeping the display and ignoring any adult pick', () => {
+    const session = { id: 's1', sitterName: 'Jess', startedAt: now.toISOString(), endedAt: null, summaryShownAt: null }
+    expect(attributionFor({ displayId: 'd1' }, members[0]!.id, members, session)).toEqual({
+      displayId: 'd1', loggedByMembershipId: null, sitterSessionId: 's1', loggedByName: 'Jess (sitter)',
+    })
+    expect(attributionFor({ displayId: 'd1' }, null, members, null)).toMatchObject({ sitterSessionId: null, loggedByName: null })
+  })
+
   it('leaves the adult empty when nobody was picked or there is no display', () => {
     expect(attributionFor(null, null, members)).toEqual({
       displayId: null, loggedByMembershipId: null, sitterSessionId: null, loggedByName: null,

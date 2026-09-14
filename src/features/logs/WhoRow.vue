@@ -1,10 +1,14 @@
 <script setup lang="ts">
-/** "Who?" row of adult avatars for attribution (spec §6.5, §7.4). Optional except on Medicine. */
-import type { Member } from '@/data/snapshot'
+/**
+ * "Who?" row of adult avatars for attribution (spec §6.5, §7.4). Optional except on Medicine. During Sitter Mode
+ * (`sitter` set) the sitter is who logs, so the row becomes a plain "Logged by Jess (sitter)" line.
+ */
+import type { Member, SitterSession } from '@/data/snapshot'
+import { sitterLabel } from '@/features/sitter/sitterModel'
 import RAvatar from '@/ui/RAvatar.vue'
 import { useRovingRadio } from '@/ui/useRovingRadio'
 
-const props = defineProps<{ members: Member[]; required: boolean }>()
+const props = defineProps<{ members: Member[]; required: boolean; sitter?: SitterSession | null }>()
 const model = defineModel<string | null>({ required: true })
 
 const { optionRefs, tabindexFor, onKeydown } = useRovingRadio(() => props.members.map((m) => m.id), model)
@@ -19,7 +23,8 @@ function pick(member: Member): void {
 </script>
 
 <template>
-  <div class="flex flex-wrap items-center gap-3">
+  <p v-if="sitter" data-testid="sitter-who" class="text-[18px] font-medium text-ink-2">Logged by {{ sitterLabel(sitter) }}</p>
+  <div v-else class="flex flex-wrap items-center gap-3">
     <span class="text-[18px] font-semibold tracking-wide text-ink-3 uppercase">
       Who?<span v-if="required" class="ml-1 normal-case text-orange-deep">(required)</span>
     </span>

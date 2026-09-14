@@ -4,8 +4,9 @@ import { WAKE_WINDOW_LOOKBACK_MS } from '@/domain/sleep'
 import { formatClock, formatDuration, householdDate } from '@/domain/time'
 import type { Feature, Medicine, SleepEntry } from '@/domain/types'
 import type { Attribution } from '@/data/logCommands'
-import type { GroceryItem, HouseholdSnapshot, Member, SnapshotChild } from '@/data/snapshot'
+import type { GroceryItem, HouseholdSnapshot, Member, SitterSession, SnapshotChild } from '@/data/snapshot'
 import type { LogKind } from '@/features/main/mainScreenModel'
+import { sitterAttribution } from '@/features/sitter/sitterModel'
 
 const DAY_MS = 24 * 3_600_000
 
@@ -95,12 +96,17 @@ export function medicineScheduleLabel(medicine: Medicine): string {
   return medicine.maxDosesPer24h === null ? every : `${every} · max ${medicine.maxDosesPer24h}/day`
 }
 
-/** Attribution for a kid log: the display it was logged on and the optional "Who?" adult (spec §6.5). */
+/**
+ * Attribution for a kid log: the display it was logged on and the optional "Who?" adult (spec §6.5). During
+ * Sitter Mode the sitter replaces the adult.
+ */
 export function attributionFor(
   identity: { displayId: string } | null,
   membershipId: string | null,
   members: Member[],
+  sitter: SitterSession | null = null,
 ): Attribution {
+  if (sitter) return { displayId: identity?.displayId ?? null, loggedByMembershipId: null, ...sitterAttribution(sitter) }
   const member = membershipId === null ? undefined : members.find((m) => m.id === membershipId)
   return {
     displayId: identity?.displayId ?? null,

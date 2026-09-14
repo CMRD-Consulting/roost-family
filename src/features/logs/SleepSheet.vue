@@ -149,7 +149,7 @@ async function save(): Promise<void> {
       kind: 'sleep.start',
       householdId,
       entry: { id: newId(), childId: child.value.id, startAt: at.value, endAt: null, type: type.value as 'nap' | 'night' },
-      attribution: attributionFor(identity.value, who.value, view.value.members),
+      attribution: attributionFor(identity.value, who.value, view.value.members, view.value.activeSitterSession ?? null),
     }
   }
   saving.value = true
@@ -194,7 +194,7 @@ async function save(): Promise<void> {
             <SheetLabel>Type</SheetLabel>
             <RChips :model-value="type" :options="TYPE_OPTIONS" label="Sleep type" @update:model-value="onTypeChange" />
           </div>
-          <WhoRow v-model="who" :members="view.members" :required="false" />
+          <WhoRow v-model="who" :members="view.members" :required="false" :sitter="view.activeSitterSession ?? null" />
         </template>
       </template>
 

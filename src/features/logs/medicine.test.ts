@@ -29,11 +29,11 @@ let writer: FakeWriter
 let serverSnapshot: HouseholdSnapshot
 let wrapper: VueWrapper | null = null
 
-async function setup(opts: { realtime?: 'connected' | null; conflict?: boolean } = {}) {
+async function setup(opts: { realtime?: 'connected' | null; conflict?: boolean; sitter?: boolean } = {}) {
   vi.setSystemTime(new Date(NOW))
   pinia = createPinia()
   setActivePinia(pinia)
-  const snapshot = buildDemoSnapshot(new Date(NOW), { conflict: opts.conflict })
+  const snapshot = buildDemoSnapshot(new Date(NOW), { conflict: opts.conflict, sitter: opts.sitter })
   serverSnapshot = snapshot
   const realtime = opts.realtime === undefined ? 'connected' : opts.realtime
   const source: HouseholdSource = {
@@ -239,6 +239,24 @@ describe('medicine', () => {
 
       expect(lastDose().entry).toMatchObject({ medicineId: ACETAMINOPHEN_THEO, warningsConfirmed: [], note: null, loggedByName: 'Sam' })
       expect(lastDose().attribution.loggedByMembershipId).toBe(SAM)
+    })
+
+    it('in Sitter Mode, saves without a Who pick and attributes the dose to the sitter', async () => {
+      await setup({ sitter: true })
+      const w = mountIt(MedicineSheet)
+      await flushPromises()
+
+      await click(radio(w, 'Child', 'Ivy'))
+      await click(radio(w, 'Medicine', "Children's ibuprofen"))
+      expect(w.find('[aria-label="Who"]').exists()).toBe(false)
+      expect(w.get('[data-testid="sitter-who"]').text()).toBe('Logged by Jess (sitter)')
+      await click(button(w, 'Save'))
+
+      expect(lastDose().entry).toMatchObject({ childId: IVY, loggedByName: 'Jess (sitter)' })
+      expect(lastDose().attribution).toEqual({
+        displayId: 'display-1', loggedByMembershipId: null, sitterSessionId: '99999999-0000-0000-0000-000000000001', loggedByName: 'Jess (sitter)',
+      })
+      expect(w.emitted('close')).toHaveLength(1)
     })
 
     it('asks before logging when other adults\' doses can\'t be checked, and logs it as offline', async () => {

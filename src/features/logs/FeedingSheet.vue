@@ -78,7 +78,7 @@ async function save(): Promise<void> {
       amount: amount.value,
       note: note.value.trim() || null,
     },
-    attribution: attributionFor(identity.value, who.value, view.value.members),
+    attribution: attributionFor(identity.value, who.value, view.value.members, view.value.activeSitterSession ?? null),
   })
   if (result) {
     emit('saved', result)
@@ -110,7 +110,7 @@ async function save(): Promise<void> {
           <RTimeStepper :model-value="at" :min="minAt" :max="max" :time-zone="tz" @update:model-value="adjust" />
         </div>
         <RInput v-model="note" label="Note (optional)" :maxlength="200" />
-        <WhoRow v-model="who" :members="view.members" :required="false" />
+        <WhoRow v-model="who" :members="view.members" :required="false" :sitter="view.activeSitterSession ?? null" />
       </template>
 
       <SheetError :message="error" />

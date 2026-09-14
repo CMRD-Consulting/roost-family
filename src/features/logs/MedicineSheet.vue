@@ -93,8 +93,11 @@ watch(
   { immediate: true },
 )
 
+/** During Sitter Mode the sitter is who gave it, so no adult has to be picked. */
+const sitter = computed(() => view.value?.activeSitterSession ?? null)
+const whoChosen = computed(() => who.value !== null || sitter.value !== null)
 const canSave = computed(
-  () => !busy.value && child.value !== null && medicine.value !== null && who.value !== null,
+  () => !busy.value && child.value !== null && medicine.value !== null && whoChosen.value,
 )
 const saveLabel = computed(() => (warnings.value.length > 0 ? 'Confirm and save' : 'Save'))
 watch([saveLabel, childId, medicineId], acknowledgeWarnings)
@@ -117,7 +120,7 @@ async function send(cmd: LogCommand, confirmOffline: boolean): Promise<void> {
 
 async function save(): Promise<void> {
   catchUp()
-  if (!view.value || !child.value || !medicine.value || who.value === null || !canSave.value) return
+  if (!view.value || !child.value || !medicine.value || !whoChosen.value || !canSave.value) return
   if (warningKinds.value !== acknowledgedWarningKinds.value) {
     // Not what the adult was looking at when they tapped: show the new warnings and wait for another tap.
     acknowledgeWarnings()
@@ -125,7 +128,7 @@ async function save(): Promise<void> {
     return
   }
   warningsChanged.value = false
-  const attribution = attributionFor(identity.value, who.value, view.value.members)
+  const attribution = attributionFor(identity.value, who.value, view.value.members, sitter.value)
   await send(
     {
       kind: 'dose.add',
@@ -226,7 +229,7 @@ async function logAnyway(): Promise<void> {
             </ul>
           </div>
 
-          <WhoRow v-model="who" :members="view.members" :required="true" />
+          <WhoRow v-model="who" :members="view.members" :required="true" :sitter="sitter" />
           <RInput v-model="note" label="Note (optional)" placeholder="e.g. 5 ml" :maxlength="200" />
         </template>
       </template>

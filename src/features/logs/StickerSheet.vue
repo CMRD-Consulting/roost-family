@@ -67,7 +67,7 @@ async function save(): Promise<void> {
     kind: 'sticker.add',
     householdId: view.value.household.id,
     entry: { id: newId(), childId: child.value.id, categoryId: categoryId.value, at: at.value },
-    attribution: attributionFor(identity.value, who.value, view.value.members),
+    attribution: attributionFor(identity.value, who.value, view.value.members, view.value.activeSitterSession ?? null),
   })
   if (result) celebration.value = { childName, result }
 }
@@ -101,7 +101,7 @@ function onCelebrationDone(): void {
           <SheetLabel>Time</SheetLabel>
           <RTimeStepper :model-value="at" :min="minAt" :max="max" :time-zone="tz" @update:model-value="adjust" />
         </div>
-        <WhoRow v-model="who" :members="view.members" :required="false" />
+        <WhoRow v-model="who" :members="view.members" :required="false" :sitter="view.activeSitterSession ?? null" />
       </template>
 
       <SheetError :message="error" />
