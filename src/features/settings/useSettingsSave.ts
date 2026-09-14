@@ -16,8 +16,11 @@ export function useSettingsOffline() {
 /**
  * Save state for one Settings form: runs a `SettingsApi` call with the settings session's credentials, shows
  * "Saved" for a few seconds on success, and keeps an adult-worded error on failure. Never saves offline.
+ * After a successful save the household view reloads in the background, so the change shows at once even when
+ * Realtime is slow or down.
  */
 export function useSettingsSave() {
+  const household = useHouseholdStore()
   const session = useSettingsSessionStore()
   const offline = useSettingsOffline()
   const saving = ref(false)
@@ -37,6 +40,8 @@ export function useSettingsSave() {
       await action(await loadSettingsApi(), auth)
       saved.value = true
       savedTimer = setTimeout(() => (saved.value = false), SAVED_TOAST_MS)
+      // Not awaited: "Saved" shows now; a failed reload is retried by the store's own reconnect and refresh.
+      void household.reload().catch(() => {})
       return true
     } catch (e) {
       error.value = settingsErrorMessage(e)
