@@ -76,6 +76,24 @@ async function loadDoseRows(
   return [...byId.values()]
 }
 
+/**
+ * Non-archived medicines, plus any archived medicine referenced by `doseRows` (a dose
+ * for an archived medicine must still be able to show its name and check its limits).
+ */
+async function loadMedicineRows(
+  client: RoostClient,
+  householdId: string,
+  activeMedicines: Tables<'medicines'>[],
+  doseRows: Tables<'dose_entries'>[],
+): Promise<Tables<'medicines'>[]> {
+  const knownIds = new Set(activeMedicines.map((m) => m.id))
+  const missingIds = [...new Set(doseRows.map((d) => d.medicine_id).filter((id) => !knownIds.has(id)))]
+  if (missingIds.length === 0) return activeMedicines
+
+  const archived = unwrap<Tables<'medicines'>[]>(await client.from('medicines').select('*').in('id', missingIds))
+  return [...activeMedicines, ...archived]
+}
+
 export function createSupabaseSource(client: RoostClient): HouseholdSource {
   async function load(householdId: string, now: Date): Promise<HouseholdSnapshot> {
     const householdRow = unwrap<Tables<'households'>>(
@@ -119,11 +137,13 @@ export function createSupabaseSource(client: RoostClient): HouseholdSource {
 
     if (sitterSessionResult.error) throw new Error(sitterSessionResult.error.message)
 
+    const medicineRows = await loadMedicineRows(client, householdId, unwrap(medicineResult), doseRows)
+
     return {
       household,
       members: unwrap(membershipResult).map(toMember),
       children: unwrap(childResult).map((row) => toChild(row, overridesByChild.get(row.id) ?? [])),
-      medicines: unwrap(medicineResult).map(toMedicine),
+      medicines: medicineRows.map(toMedicine),
       doses: doseRows.map(toDose),
       sleeps: unwrap(sleepResult).map(toSleep),
       feedings: unwrap(feedingResult).map(toFeeding),

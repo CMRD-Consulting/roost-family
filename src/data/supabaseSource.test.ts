@@ -359,6 +359,57 @@ describe('createSupabaseSource load', () => {
       expect(snapshot.doses).toHaveLength(1)
     })
   })
+
+  describe('archived medicines', () => {
+    const medicineRow = (over: Record<string, unknown>) => ({
+      id: 'm1', household_id: 'h1', child_id: 'c1', name: 'Infant ibuprofen',
+      min_interval_hours: 6, max_doses_per_24h: 4, archived_at: null, created_at: '2026-01-01T00:00:00Z',
+      ...over,
+    })
+    const doseRow = (over: Record<string, unknown>) => ({
+      id: 'd1', household_id: 'h1', child_id: 'c1', medicine_id: 'm1',
+      at: '2026-09-14T17:00:00Z', note: null, logged_offline: false, warnings_confirmed: [],
+      conflict_acknowledged_at: null, conflict_acknowledged_by: null, voided_at: null,
+      voided_by: null, void_reason: null, display_id: null, logged_by_membership_id: null,
+      sitter_session_id: null, logged_by_name: 'Alex', created_at: '2026-09-14T17:00:00Z',
+      updated_at: '2026-09-14T17:00:00Z',
+      ...over,
+    })
+
+    it('does not issue a second query when no dose references a medicine missing from the active list', async () => {
+      const { client, calls } = createFakeClient({
+        ...baseTableData(),
+        medicines: { data: [medicineRow({})], error: null },
+        dose_entries: { data: [doseRow({ medicine_id: 'm1' })], error: null },
+      })
+      const source = createSupabaseSource(client)
+      const snapshot = await source.load('h1', now)
+
+      expect(snapshot.medicines).toHaveLength(1)
+      expect(calls.filter((c) => c.table === 'medicines')).toHaveLength(1)
+    })
+
+    it('queries by id for an archived medicine referenced by a loaded dose, and merges it in', async () => {
+      const archived = medicineRow({ id: 'm-archived', name: 'Old ibuprofen', archived_at: '2026-06-01T00:00:00Z' })
+      const { client, calls } = createFakeClient({
+        ...baseTableData(),
+        medicines: [
+          { data: [], error: null },
+          { data: [archived], error: null },
+        ],
+        dose_entries: { data: [doseRow({ id: 'd1', medicine_id: 'm-archived' })], error: null },
+      })
+      const source = createSupabaseSource(client)
+      const snapshot = await source.load('h1', now)
+
+      expect(snapshot.medicines).toEqual([
+        { id: 'm-archived', childId: 'c1', name: 'Old ibuprofen', minIntervalHours: 6, maxDosesPer24h: 4 },
+      ])
+      const medicineCalls = calls.filter((c) => c.table === 'medicines')
+      expect(medicineCalls).toHaveLength(2)
+      expect(medicineCalls[1]?.ops).toEqual(['select:*', 'in:id=m-archived'])
+    })
+  })
 })
 
 describe('createSupabaseSource subscribe', () => {
