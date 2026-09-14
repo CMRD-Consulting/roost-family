@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
+import { resetTodayEventsForTests } from '@/data/calendarApi'
 import { getDemoSnapshot, mutateDemo, resetDemoForTests } from '@/data/demo/demoHousehold'
 import type { LogCommand } from '@/data/logCommands'
 import { LogWriteError } from '@/data/logWriter'
@@ -86,6 +87,7 @@ describe('MainScreen (demo source)', () => {
     // The demo household is a lazily-built singleton keyed off the URL at first access;
     // reset it so each test's own ?manyKids/?conflict params (set after this hook runs) take effect.
     resetDemoForTests()
+    resetTodayEventsForTests()
     // modesStore persists Nap Mode to localStorage; without this a nap left on by one test would
     // leak into the next (which creates a fresh Pinia, but not fresh localStorage).
     localStorage.clear()
@@ -117,6 +119,18 @@ describe('MainScreen (demo source)', () => {
     expect(wrapper.findAll('[data-log-kind]')).toHaveLength(6)
     expect(wrapper.find('[data-testid="conflict"]').exists()).toBe(false)
     expect(text).not.toContain('Offline')
+    wrapper.unmount()
+  })
+
+  it('shows today\'s calendar with avatars and a leave-by (demo events)', async () => {
+    const wrapper = await mountMain()
+    const panel = wrapper.get('[data-testid="today-panel"]')
+    expect(panel.get('h2').text()).toBe('Today')
+    const titles = panel.findAll('[data-testid="today-event-title"]').map((t) => t.text())
+    expect(titles[0]).toBe('Library books due')
+    expect(titles).toContain('Swim lesson')
+    expect(panel.get('[data-testid="today-event-leave"]').text()).toMatch(/^Leave in \d+ min$/)
+    expect(wrapper.text()).not.toContain('Calendar arrives')
     wrapper.unmount()
   })
 
@@ -507,7 +521,7 @@ describe('MainScreen (demo source)', () => {
       expect(pill.classes()).toContain('text-[22px]')
       expect(wrapper.find('[data-testid="care-info"]').exists()).toBe(true)
       expect(wrapper.find('[data-testid="dinner-line"]').exists()).toBe(false)
-      expect(wrapper.text()).not.toContain('Calendar arrives')
+      expect(wrapper.find('[data-testid="today-panel"]').exists()).toBe(false)
       expect(wrapper.findAll('[data-log-kind]').map((b) => b.attributes('data-log-kind'))).toEqual(['sleep', 'feeding', 'medicine', 'sticker'])
       expect(wrapper.find('button[aria-label="Settings"]').exists()).toBe(false)
       expect(wrapper.find('button[aria-label="Sitter Mode"]').exists()).toBe(false)

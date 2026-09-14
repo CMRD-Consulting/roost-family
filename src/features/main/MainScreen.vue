@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useNow } from '@/composables/useNow'
+import { useTodayEvents } from '@/data/calendarApi'
 import { weatherToShow } from '@/data/weatherApi'
 import DiaperSheet from '@/features/logs/DiaperSheet.vue'
 import DinnerSheet from '@/features/logs/DinnerSheet.vue'
@@ -37,6 +38,7 @@ import KidCard from './KidCard.vue'
 import KidCardCompact from './KidCardCompact.vue'
 import LogRow from './LogRow.vue'
 import MedicineZone from './MedicineZone.vue'
+import TodayPanel from './TodayPanel.vue'
 import WeatherLine from './WeatherLine.vue'
 import { buildMainScreenModel, savedInfoLabel, type LogKind } from './mainScreenModel'
 import { useHouseholdSession } from './useHouseholdSession'
@@ -148,6 +150,15 @@ const sitterPill = computed(() => {
   return name ? `Sitter Mode · ${name}` : 'Sitter Mode'
 })
 const careInfo = computed(() => (store.view && model.value?.sitterActive ? careInfoModel(store.view, now.value) : null))
+
+// Today's calendar (spec §7.2): refreshed every 5 minutes, kept in memory only. A sitter doesn't see the calendar,
+// so nothing is requested during Sitter Mode.
+const today = useTodayEvents({
+  householdId: () => store.view?.household.id ?? null,
+  timeZone: () => store.view?.household.timeZone ?? null,
+  online: () => !offline.value,
+  enabled: () => !(model.value?.sitterActive ?? false),
+})
 const summary = computed(() => {
   const view = store.view
   const id = summarySessionId.value
@@ -450,12 +461,20 @@ const SETTINGS_BUTTON = {
             </button>
           </section>
           <CareInfoPanel v-if="careInfo" :model="careInfo" />
-          <section v-else class="flex min-h-0 flex-1 flex-col gap-3 rounded-[var(--radius-card)] bg-surface px-[26px] py-[22px]">
-            <h2 class="text-[16px] font-semibold uppercase tracking-[0.1em] text-ink-3">Today</h2>
-            <p class="text-[18px] text-ink-3">Calendar arrives in Phase 4</p>
-            <div class="flex-1" />
-            <p v-if="staleMinutes > STALE_AFTER_MIN" class="text-[16px] text-ink-3">Updated {{ staleMinutes }} min ago</p>
-          </section>
+          <TodayPanel
+            v-else-if="store.view"
+            :events="today.result.value"
+            :failed="today.failed.value"
+            :time-zone="store.view.household.timeZone"
+            :leave-by-buffer-min="store.view.household.leaveByBufferMin"
+            :members="store.view.members"
+            :children="store.view.children"
+            :now="now"
+          >
+            <template #footer>
+              <p v-if="staleMinutes > STALE_AFTER_MIN" class="shrink-0 text-[16px] text-ink-3">Updated {{ staleMinutes }} min ago</p>
+            </template>
+          </TodayPanel>
         </div>
       </div>
 

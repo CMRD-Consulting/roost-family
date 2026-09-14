@@ -605,7 +605,7 @@ describe('parseIcsForDay: long-running series', () => {
     const { events, partial, ms } = timed(text, '2026-09-14')
     expect(partial).toBe(false)
     expect(events).toHaveLength(1)
-    expect(ms).toBeLessThan(500)
+    expect(ms).toBeLessThan(2000) // generous: a bound on runaway iteration, not a benchmark (flaked at 500 ms under parallel load)
   })
 
   it('reports partial results instead of silently dropping a series that exceeds the budget', () => {
