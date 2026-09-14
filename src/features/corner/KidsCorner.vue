@@ -6,7 +6,7 @@
  * out (history back, a stray navigation) is cancelled, except the display being removed or unregistered.
  * Night and Nap Mode apply here as on the main screen (§7.7).
  */
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, useId, watch } from 'vue'
 import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { useAppUpdatesStore } from '@/app/appUpdates'
 import { useNow } from '@/composables/useNow'
@@ -93,6 +93,26 @@ const TABS: { id: Tab; label: string; paths: string[] }[] = [
   { id: 'stickers', label: 'Stickers', paths: ['M12 2.5l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4 6.1 20.5l1.2-6.5L2.5 9.4l6.6-.9z'] },
 ]
 
+// Section tabs (WAI-ARIA tabs pattern): only the selected tab is in the tab order; arrow keys, Home and End
+// move to another tab and select it.
+const uid = useId()
+const PANEL_ID = `${uid}-panel`
+const tabId = (id: Tab) => `${uid}-tab-${id}`
+
+function onTabKeydown(e: KeyboardEvent, index: number): void {
+  const last = TABS.length - 1
+  const target =
+    e.key === 'ArrowRight' ? (index === last ? 0 : index + 1)
+    : e.key === 'ArrowLeft' ? (index === 0 ? last : index - 1)
+    : e.key === 'Home' ? 0
+    : e.key === 'End' ? last
+    : null
+  if (target === null) return
+  e.preventDefault()
+  tab.value = TABS[target]!.id
+  document.getElementById(tabId(TABS[target]!.id))?.focus()
+}
+
 // Night and Nap Mode (spec §7.7), as on the main screen.
 const nightClock = computed(() => (view.value ? formatClock(now.value, view.value.household.timeZone) : ''))
 const nightDate = computed(() => (view.value ? formatDateLabel(now.value, view.value.household.timeZone) : ''))
@@ -164,30 +184,34 @@ useNightPeekTaps()
       <CornerChildPicker v-else-if="child === null" :children="children" @pick="pick" />
 
       <div v-else class="grid h-full grid-rows-[minmax(0,1fr)_120px]">
-        <div class="min-h-0">
+        <!-- One panel for whichever section is shown, labelled by its tab (WAI-ARIA tabs pattern). -->
+        <div :id="PANEL_ID" role="tabpanel" :aria-labelledby="tabId(tab)" class="min-h-0">
           <PictureSchedule v-if="tab === 'schedule'" :model="schedule" @complete="completeStep" />
           <VisualTimer v-else-if="tab === 'timer'" :timer="timer" />
           <StickerChart v-else-if="stickerGrid" :grid="stickerGrid" />
         </div>
 
-        <nav role="tablist" aria-label="Kids' Corner" class="flex items-center justify-center gap-5 bg-corner-bar">
+        <div role="tablist" aria-label="Kids' Corner sections" class="flex items-center justify-center gap-5 bg-corner-bar">
           <button
-            v-for="t in TABS"
+            v-for="(t, i) in TABS"
+            :id="tabId(t.id)"
             :key="t.id"
             type="button"
             role="tab"
-            :aria-label="t.label"
             :aria-selected="tab === t.id"
+            :aria-controls="PANEL_ID"
+            :tabindex="tab === t.id ? 0 : -1"
             class="flex size-[88px] flex-col items-center justify-center gap-0.5 rounded-[24px] text-ink-2 focus-visible:outline-4 focus-visible:outline-offset-2 focus-visible:outline-ink-2"
             :class="tab === t.id ? 'bg-corner-tile' : 'bg-transparent'"
             @click="tab = t.id"
+            @keydown="onTabKeydown($event, i)"
           >
             <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path v-for="d in t.paths" :key="d" :d="d" />
             </svg>
-            <span class="text-[18px] font-medium leading-none" aria-hidden="true">{{ t.label }}</span>
+            <span class="text-[18px] font-medium leading-none">{{ t.label }}</span>
           </button>
-        </nav>
+        </div>
 
         <button
           v-if="children.length > 1"

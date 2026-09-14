@@ -97,7 +97,11 @@ async function tapDots(w: VueWrapper, order: number[]) {
   await flushPromises()
 }
 
-const tab = (w: VueWrapper, name: string) => w.get(`[role="tab"][aria-label="${name}"]`)
+const tab = (w: VueWrapper, name: string) => {
+  const found = w.findAll('[role="tab"]').find((t) => t.text() === name)
+  if (!found) throw new Error(`No tab "${name}"`)
+  return found
+}
 
 describe("Kids' Corner (demo source)", () => {
   beforeEach(() => {
@@ -233,6 +237,48 @@ describe("Kids' Corner (demo source)", () => {
     })
   })
 
+  describe('section tabs', () => {
+    it('are a tablist whose tabs control one tabpanel, labelled by the selected tab', async () => {
+      const wrapper = await mountAt('/corner')
+      const list = wrapper.get('[role="tablist"]')
+      expect(list.element.tagName).not.toBe('NAV')
+      expect(list.attributes('aria-label')).toBe("Kids' Corner sections")
+      const tabs = list.findAll('[role="tab"]')
+      expect(tabs.map((t) => t.text())).toEqual(['Schedule', 'Timer', 'Stickers'])
+      const panel = wrapper.get('[role="tabpanel"]')
+      for (const t of tabs) expect(t.attributes('aria-controls')).toBe(panel.attributes('id'))
+      expect(tabs.map((t) => t.attributes('aria-selected'))).toEqual(['true', 'false', 'false'])
+      expect(tabs.map((t) => t.attributes('tabindex'))).toEqual(['0', '-1', '-1'])
+      expect(panel.attributes('aria-labelledby')).toBe(tabs[0]!.attributes('id'))
+      expect(panel.find('[data-testid="picture-schedule"]').exists()).toBe(true)
+
+      await tabs[2]!.trigger('click')
+      expect(wrapper.get('[role="tabpanel"]').attributes('aria-labelledby')).toBe(tabs[2]!.attributes('id'))
+      expect(wrapper.get('[role="tabpanel"]').find('[data-testid="sticker-chart"]').exists()).toBe(true)
+      expect(tabs.map((t) => t.attributes('tabindex'))).toEqual(['-1', '-1', '0'])
+      wrapper.unmount()
+    })
+
+    it('arrow keys, Home and End move between tabs, selecting and focusing them', async () => {
+      const wrapper = await mountAt('/corner')
+      const tabs = () => wrapper.findAll('[role="tab"]')
+      await tabs()[0]!.trigger('keydown', { key: 'ArrowRight' })
+      expect(tabs()[1]!.attributes('aria-selected')).toBe('true')
+      expect(document.activeElement).toBe(tabs()[1]!.element)
+
+      await tabs()[1]!.trigger('keydown', { key: 'End' })
+      expect(tabs()[2]!.attributes('aria-selected')).toBe('true')
+      await tabs()[2]!.trigger('keydown', { key: 'ArrowRight' })
+      expect(tabs()[0]!.attributes('aria-selected')).toBe('true')
+      await tabs()[0]!.trigger('keydown', { key: 'ArrowLeft' })
+      expect(tabs()[2]!.attributes('aria-selected')).toBe('true')
+      await tabs()[2]!.trigger('keydown', { key: 'Home' })
+      expect(tabs()[0]!.attributes('aria-selected')).toBe('true')
+      expect(document.activeElement).toBe(tabs()[0]!.element)
+      wrapper.unmount()
+    })
+  })
+
   describe('visual timer', () => {
     it('starts with a tap, chimes at zero and resets after 5 seconds', async () => {
       const wrapper = await mountAt('/corner')
@@ -279,13 +325,31 @@ describe("Kids' Corner (demo source)", () => {
       const wrapper = await mountAt('/corner')
       await tab(wrapper, 'Stickers').trigger('click')
       const rows = wrapper.findAll('[data-testid="sticker-row"]')
-      expect(rows.map((r) => r.attributes('aria-label'))).toEqual(['Potty', 'Teeth', 'Tried a new food'])
+      expect(rows.map((r) => r.get('th').text())).toEqual(['Potty', 'Teeth', 'Tried a new food'])
       const potty = rows[0]!.findAll('[data-testid="sticker-cell"]')
       expect(potty).toHaveLength(7)
       expect(potty[0]!.findAll('[data-testid="sticker"]')).toHaveLength(1)
       expect(potty[0]!.attributes('data-today')).toBe('true')
       expect(potty[1]!.attributes('data-today')).toBeUndefined()
       expect(wrapper.find('[data-testid="sticker-chart"] button').exists()).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('is a real table: day column headers, category row headers, and a spoken count in each cell', async () => {
+      const wrapper = await mountAt('/corner')
+      await tab(wrapper, 'Stickers').trigger('click')
+      const table = wrapper.get('[data-testid="sticker-chart"] table')
+      expect(table.find('caption').text()).toBe('Sticker chart')
+      const columnHeaders = table.findAll('thead th[scope="col"]')
+      expect(columnHeaders.map((h) => h.text())).toEqual(['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'])
+      expect(table.findAll('tbody tr')).toHaveLength(3)
+      expect(table.findAll('tbody th[scope="row"]').map((h) => h.text())).toEqual(['Potty', 'Teeth', 'Tried a new food'])
+      const firstRowCells = table.findAll('tbody tr')[0]!.findAll('td')
+      expect(firstRowCells).toHaveLength(7)
+      expect(firstRowCells[0]!.text()).toBe('1 sticker')
+      expect(firstRowCells[1]!.text()).toBe('0 stickers')
+      // No ARIA table roles layered over the native table.
+      expect(wrapper.find('[data-testid="sticker-chart"] [role]').exists()).toBe(false)
       wrapper.unmount()
     })
 

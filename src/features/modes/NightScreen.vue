@@ -4,6 +4,8 @@
  * `peek()` (via the parent's `modes.peek()`), which shows the dimmed main screen for 60 s.
  * With photos (Phase 3c) this will crossfade a slideshow; for now it's the clock alone.
  */
+import { NIGHT_CLOCK_ALPHA, NIGHT_DATE_ALPHA, NIGHT_GRADIENT, nightText } from './nightColors'
+
 defineProps<{ clock: string; date: string }>()
 const emit = defineEmits<{ peek: [] }>()
 </script>
@@ -19,16 +21,13 @@ const emit = defineEmits<{ peek: [] }>()
     @keydown.enter.prevent="emit('peek')"
     @keydown.space.prevent="emit('peek')"
   >
-    <div
-      class="absolute inset-0"
-      style="background: radial-gradient(ellipse at 30% 40%, #3a2a24 0%, #1a1412 55%, #0e0b0a 100%)"
-      aria-hidden="true"
-    />
+    <div data-testid="night-gradient" class="absolute inset-0" :style="{ background: NIGHT_GRADIENT }" aria-hidden="true" />
     <div class="relative flex h-full flex-col items-center justify-center gap-3">
-      <p class="text-[64px] font-medium leading-none tabular-nums" style="color: rgba(233, 223, 209, 0.55)">
+      <p class="text-[64px] font-medium leading-none tabular-nums" :style="{ color: nightText(NIGHT_CLOCK_ALPHA) }">
         {{ clock }}
       </p>
-      <p class="text-[18px]" style="color: rgba(233, 223, 209, 0.35)">{{ date }}</p>
+      <!-- Dim, but at least 3:1 against the gradient (see nightColors.ts). -->
+      <p data-testid="night-date" class="text-[18px]" :style="{ color: nightText(NIGHT_DATE_ALPHA) }">{{ date }}</p>
     </div>
   </div>
 </template>
