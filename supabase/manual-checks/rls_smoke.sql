@@ -1943,7 +1943,7 @@ select pg_temp.expect_error('display deletes a selection directly',
 reset role;
 select pg_temp.expect('table privileges: authenticated select only, anon nothing, service_role select only',
   not has_table_privilege('authenticated', 'public.calendar_connections', 'insert, update, delete, truncate, references, trigger')
-  and has_table_privilege('authenticated', 'public.calendar_selections', 'select')
+  and has_any_column_privilege('authenticated', 'public.calendar_selections', 'select')
   and not has_table_privilege('authenticated', 'public.calendar_selections', 'insert, update, delete, truncate, references, trigger')
   and not has_table_privilege('anon', 'public.calendar_connections', 'select, insert, update, delete, truncate, references, trigger')
   and not has_table_privilege('anon', 'public.calendar_selections', 'select, insert, update, delete, truncate, references, trigger')
@@ -2235,6 +2235,101 @@ select pg_temp.expect('composite household foreign keys on every reference', (
   where c.contype = 'f' and array_length(c.conkey, 1) = 2
     and c.conrelid in ('public.calendar_connections'::regclass, 'public.calendar_selections'::regclass)) = 4);
 
+
+-- ─── Calendar access hardening (migration 9) ─────────────────────────────
+\echo '[93] Calendar labels never contain URLs'
+set local role service_role;
+select pg_temp.expect_error('a label containing an https URL',
+  $q$select public.svc_create_calendar_connection(pg_temp.v('household_f'), pg_temp.v('membership_f'), 'ics', 'Feed https://calendar.test/x.ics', 'https://calendar.test/x.ics')$q$, '23514');
+select pg_temp.expect_error('a label containing a webcal URL, in any case',
+  $q$select public.svc_create_calendar_connection(pg_temp.v('household_f'), pg_temp.v('membership_f'), 'ics', 'WEBCAL://calendar.test/x.ics', 'https://calendar.test/x.ics')$q$, '23514');
+reset role;
+select pg_temp.expect('the label check constraint exists', exists (
+  select 1 from pg_constraint where conrelid = 'public.calendar_connections'::regclass and conname = 'calendar_connections_label_no_url'));
+
+\echo '[94] Calendars belong to active owners and adults of live households only'
+-- Rows written directly (as postgres) stand in for connections that slipped past the checks: a caregiver's, a former
+-- member's, and one in a deleted household.
+insert into public.calendar_connections (household_id, membership_id, provider, label, vault_secret_id)
+values (:'household_f', :'membership_g', 'google', 'Gale', private.store_calendar_secret('refresh-g', 'roost_calendar_google'))
+returning id as conn_g \gset
+insert into public.calendar_selections (household_id, connection_id, external_calendar_id, name)
+values (:'household_f', :'conn_g', 'g-cal-1', 'Gale') returning id as sel_g \gset
+insert into public.calendar_connections (household_id, membership_id, provider, label, vault_secret_id)
+values (:'household_f', :'membership_h', 'google', 'Former', private.store_calendar_secret('refresh-h', 'roost_calendar_google'))
+returning id as conn_h \gset
+select h.id as household_a3, m.id as membership_a3 from public.households h join public.memberships m on m.household_id = h.id
+where h.name = 'A3' \gset
+select public.svc_create_calendar_connection(:'household_a3', :'membership_a3', 'ics', 'A3 family', 'https://calendar.test/a3.ics') as conn_a \gset
+select set_config('smoke.conn_g', :'conn_g', true), set_config('smoke.sel_g', :'sel_g', true),
+       set_config('smoke.conn_h', :'conn_h', true), set_config('smoke.conn_a', :'conn_a', true);
+set local role service_role;
+select pg_temp.expect('no secret is handed out for a caregiver''s or a former member''s connection',
+  public.svc_calendar_secret(:'conn_g') is null and public.svc_calendar_secret(:'conn_h') is null);
+select pg_temp.expect_error('rotate a caregiver''s secret', $q$select public.svc_update_calendar_secret(pg_temp.v('conn_g'), 'x')$q$, '42501');
+select pg_temp.expect_error('rotate a former member''s secret', $q$select public.svc_update_calendar_secret(pg_temp.v('conn_h'), 'x')$q$, '42501');
+select pg_temp.expect_error('add a calendar to a caregiver''s connection',
+  $q$select public.svc_add_calendar_selection(pg_temp.v('conn_g'), 'g-cal-2', 'X', null, null, null)$q$, '42501');
+select pg_temp.expect_error('add a calendar to a former member''s connection',
+  $q$select public.svc_add_calendar_selection(pg_temp.v('conn_h'), 'h-cal-1', 'X', null, null, null)$q$, '42501');
+reset role;
+update public.households set deleted_at = now() where id = :'household_a3';
+set local role service_role;
+select pg_temp.expect_error('add a calendar in a deleted household',
+  $q$select public.svc_add_calendar_selection(pg_temp.v('conn_a'), 'a-cal-1', 'X', null, null, null)$q$, '42501');
+select pg_temp.expect_error('rotate a secret in a deleted household', $q$select public.svc_update_calendar_secret(pg_temp.v('conn_a'), 'x')$q$, '42501');
+reset role;
+update public.households set deleted_at = null where id = :'household_a3';
+set local role authenticated;
+select set_config('request.jwt.claims', :'G', true);
+select pg_temp.expect_error('a caregiver sets a selection of their own connection',
+  $q$select public.set_calendar_selection(pg_temp.v('sel_g'), false, null, null)$q$, '42501');
+reset role;
+
+\echo '[95] A role change away from owner or adult disconnects the member''s calendars and deletes their secrets'
+insert into auth.users (id, instance_id, aud, role, email, raw_app_meta_data, raw_user_meta_data, is_anonymous, created_at, updated_at)
+values ('00000000-0000-0000-0000-000000000015', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'r@roost.test', '{}', '{}', false, now(), now());
+insert into public.memberships (user_id, household_id, role, display_name, color)
+values ('00000000-0000-0000-0000-000000000015', :'household_f', 'adult', 'Robin', '#2F86A6') returning id as membership_r \gset
+set local role service_role;
+select public.svc_create_calendar_connection(:'household_f', :'membership_r', 'microsoft', 'Robin', 'refresh-r') as conn_r \gset
+select public.svc_add_calendar_selection(:'conn_r', 'r-cal-1', 'Robin', false, null, null) as sel_r \gset
+reset role;
+select vault_secret_id as secret_r from public.calendar_connections where id = :'conn_r' \gset
+update public.memberships set role = role where id in (:'membership_r', :'membership_f');
+select pg_temp.expect('an unchanged owner or adult role keeps the connections', exists (select 1 from public.calendar_connections where id = :'conn_r')
+  and exists (select 1 from public.calendar_connections where id = :'conn_f2'));
+update public.memberships set role = 'caregiver' where id = :'membership_r';
+select pg_temp.expect('becoming a caregiver removes the connection, its selections and its Vault secret',
+  not exists (select 1 from public.calendar_connections where membership_id = :'membership_r')
+  and not exists (select 1 from public.calendar_selections where id = :'sel_r')
+  and not exists (select 1 from vault.secrets where id = :'secret_r'));
+select pg_temp.expect('other members'' calendars untouched', exists (select 1 from public.calendar_connections where id = :'conn_f2'));
+
+\echo '[96] Membership checks lock the membership row, so a concurrent removal or role change waits and then cleans up'
+select pg_temp.expect('create_calendar_connection and require_calendar_assignee take a share lock on the membership', (
+  select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'private' and p.proname in ('create_calendar_connection', 'require_calendar_assignee')
+    and p.prosrc ~* 'for share of m') = 2
+  and (select provolatile from pg_proc where oid = 'private.require_calendar_assignee(uuid, uuid, uuid, boolean)'::regprocedure) = 'v');
+
+\echo '[97] calendar_selections.external_calendar_id is server-only'
+set local role authenticated;
+select set_config('request.jwt.claims', :'F', true);
+select pg_temp.expect_error('member cannot select * from calendar_selections (it includes external_calendar_id)',
+  $q$select * from public.calendar_selections$q$, '42501');
+select pg_temp.expect_error('member cannot select external_calendar_id',
+  $q$select external_calendar_id from public.calendar_selections$q$, '42501');
+select pg_temp.expect('member selects an explicit column list', (
+  select count(*) from (select id, connection_id, name, visible, gone, assigned_membership_id, assigned_child_id from public.calendar_selections) s) >= 1);
+select set_config('request.jwt.claims', :'J', true);
+select pg_temp.expect_error('display cannot select external_calendar_id',
+  $q$select external_calendar_id from public.calendar_selections$q$, '42501');
+reset role;
+select pg_temp.expect('column privileges: authenticated selects every selection column but external_calendar_id', (
+  select bool_and(has_column_privilege('authenticated', 'public.calendar_selections', a.attname, 'select') = (a.attname <> 'external_calendar_id'))
+  from pg_attribute a where a.attrelid = 'public.calendar_selections'::regclass and a.attnum > 0 and not a.attisdropped)
+  and has_table_privilege('service_role', 'public.calendar_selections', 'select'));
 \o
 \echo 'ALL RLS SMOKE CHECKS PASSED'
 rollback;

@@ -10,8 +10,9 @@
  * Tables and columns intentionally not exported:
  *   - member_pins (pin_hash), display_claims (token_hash), member_invites (token_hash), take_list_links (token_hash):
  *     credentials, and useless outside Roost.
- *   - calendar_connections: vault_secret_id points at the OAuth tokens / ICS URL in Vault; its label can contain the
- *     subscription URL. Selections keep the calendar names and who each one is assigned to.
+ *   - calendar_connections: vault_secret_id points at the OAuth tokens / ICS URL in Vault. Labels never contain a URL
+ *     (a check constraint), but are excluded too, as defence in depth. Selections keep the calendar names and who each
+ *     one is assigned to.
  *   - calendar_selections.external_calendar_id and connection_id: provider identifiers (often an email address).
  *   - household_weather: a cache of public forecast data.
  *   - child_households: the export is of one household, so the mapping adds nothing.
