@@ -131,6 +131,7 @@ export type Database = {
           display_id: string | null
           logged_by_membership_id: string | null
           sitter_session_id: string | null
+          logged_by_name: string | null
           created_at: string
           updated_at: string
         }
@@ -143,6 +144,7 @@ export type Database = {
           display_id?: string | null
           logged_by_membership_id?: string | null
           sitter_session_id?: string | null
+          logged_by_name?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -155,6 +157,7 @@ export type Database = {
           display_id?: string | null
           logged_by_membership_id?: string | null
           sitter_session_id?: string | null
+          logged_by_name?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -167,11 +170,11 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "diaper_entries_display_id_fkey"
-            columns: ["display_id"]
+            foreignKeyName: "diaper_entries_display_id_household_id_fkey"
+            columns: ["display_id", "household_id"]
             isOneToOne: false
             referencedRelation: "displays"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "household_id"]
           },
           {
             foreignKeyName: "diaper_entries_household_id_fkey"
@@ -181,18 +184,18 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "diaper_entries_logged_by_membership_id_fkey"
-            columns: ["logged_by_membership_id"]
+            foreignKeyName: "diaper_entries_logged_by_membership_id_household_id_fkey"
+            columns: ["logged_by_membership_id", "household_id"]
             isOneToOne: false
             referencedRelation: "memberships"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "household_id"]
           },
           {
-            foreignKeyName: "diaper_entries_sitter_session_id_fkey"
-            columns: ["sitter_session_id"]
+            foreignKeyName: "diaper_entries_sitter_session_id_household_id_fkey"
+            columns: ["sitter_session_id", "household_id"]
             isOneToOne: false
             referencedRelation: "sitter_sessions"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "household_id"]
           },
         ]
       }
@@ -278,6 +281,7 @@ export type Database = {
           display_id: string | null
           logged_by_membership_id: string | null
           sitter_session_id: string | null
+          logged_by_name: string | null
           created_at: string
           updated_at: string
         }
@@ -298,6 +302,7 @@ export type Database = {
           display_id?: string | null
           logged_by_membership_id?: string | null
           sitter_session_id?: string | null
+          logged_by_name?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -318,6 +323,7 @@ export type Database = {
           display_id?: string | null
           logged_by_membership_id?: string | null
           sitter_session_id?: string | null
+          logged_by_name?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -330,18 +336,18 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "dose_entries_conflict_acknowledged_by_fkey"
-            columns: ["conflict_acknowledged_by"]
+            foreignKeyName: "dose_entries_conflict_acknowledged_by_household_id_fkey"
+            columns: ["conflict_acknowledged_by", "household_id"]
             isOneToOne: false
             referencedRelation: "memberships"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "household_id"]
           },
           {
-            foreignKeyName: "dose_entries_display_id_fkey"
-            columns: ["display_id"]
+            foreignKeyName: "dose_entries_display_id_household_id_fkey"
+            columns: ["display_id", "household_id"]
             isOneToOne: false
             referencedRelation: "displays"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "household_id"]
           },
           {
             foreignKeyName: "dose_entries_household_id_fkey"
@@ -351,47 +357,50 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "dose_entries_logged_by_membership_id_fkey"
-            columns: ["logged_by_membership_id"]
+            foreignKeyName: "dose_entries_logged_by_membership_id_household_id_fkey"
+            columns: ["logged_by_membership_id", "household_id"]
             isOneToOne: false
             referencedRelation: "memberships"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "household_id"]
           },
           {
-            foreignKeyName: "dose_entries_medicine_id_fkey"
-            columns: ["medicine_id"]
+            foreignKeyName: "dose_entries_medicine_id_child_id_fkey"
+            columns: ["medicine_id", "child_id"]
             isOneToOne: false
             referencedRelation: "medicines"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "child_id"]
           },
           {
-            foreignKeyName: "dose_entries_sitter_session_id_fkey"
-            columns: ["sitter_session_id"]
+            foreignKeyName: "dose_entries_sitter_session_id_household_id_fkey"
+            columns: ["sitter_session_id", "household_id"]
             isOneToOne: false
             referencedRelation: "sitter_sessions"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "household_id"]
           },
           {
-            foreignKeyName: "dose_entries_voided_by_fkey"
-            columns: ["voided_by"]
+            foreignKeyName: "dose_entries_voided_by_household_id_fkey"
+            columns: ["voided_by", "household_id"]
             isOneToOne: false
             referencedRelation: "memberships"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "household_id"]
           },
         ]
       }
       feature_overrides: {
         Row: {
+          id: string
           child_id: string
           feature: string
           enabled: boolean
         }
         Insert: {
+          id?: string
           child_id: string
           feature: string
           enabled: boolean
         }
         Update: {
+          id?: string
           child_id?: string
           feature?: string
           enabled?: boolean
@@ -418,6 +427,7 @@ export type Database = {
           display_id: string | null
           logged_by_membership_id: string | null
           sitter_session_id: string | null
+          logged_by_name: string | null
           created_at: string
           updated_at: string
         }
@@ -432,6 +442,7 @@ export type Database = {
           display_id?: string | null
           logged_by_membership_id?: string | null
           sitter_session_id?: string | null
+          logged_by_name?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -446,6 +457,7 @@ export type Database = {
           display_id?: string | null
           logged_by_membership_id?: string | null
           sitter_session_id?: string | null
+          logged_by_name?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -458,11 +470,11 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "feeding_entries_display_id_fkey"
-            columns: ["display_id"]
+            foreignKeyName: "feeding_entries_display_id_household_id_fkey"
+            columns: ["display_id", "household_id"]
             isOneToOne: false
             referencedRelation: "displays"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "household_id"]
           },
           {
             foreignKeyName: "feeding_entries_household_id_fkey"
@@ -472,18 +484,18 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "feeding_entries_logged_by_membership_id_fkey"
-            columns: ["logged_by_membership_id"]
+            foreignKeyName: "feeding_entries_logged_by_membership_id_household_id_fkey"
+            columns: ["logged_by_membership_id", "household_id"]
             isOneToOne: false
             referencedRelation: "memberships"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "household_id"]
           },
           {
-            foreignKeyName: "feeding_entries_sitter_session_id_fkey"
-            columns: ["sitter_session_id"]
+            foreignKeyName: "feeding_entries_sitter_session_id_household_id_fkey"
+            columns: ["sitter_session_id", "household_id"]
             isOneToOne: false
             referencedRelation: "sitter_sessions"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "household_id"]
           },
         ]
       }
@@ -514,11 +526,11 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "grocery_items_display_id_fkey"
-            columns: ["display_id"]
+            foreignKeyName: "grocery_items_display_id_household_id_fkey"
+            columns: ["display_id", "household_id"]
             isOneToOne: false
             referencedRelation: "displays"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "household_id"]
           },
           {
             foreignKeyName: "grocery_items_household_id_fkey"
@@ -642,11 +654,11 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "jots_display_id_fkey"
-            columns: ["display_id"]
+            foreignKeyName: "jots_display_id_household_id_fkey"
+            columns: ["display_id", "household_id"]
             isOneToOne: false
             referencedRelation: "displays"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "household_id"]
           },
           {
             foreignKeyName: "jots_household_id_fkey"
@@ -806,18 +818,21 @@ export type Database = {
       }
       routine_day_overrides: {
         Row: {
+          id: string
           household_id: string
           child_id: string
           day: string
           routine_id: string
         }
         Insert: {
+          id?: string
           household_id: string
           child_id: string
           day: string
           routine_id: string
         }
         Update: {
+          id?: string
           household_id?: string
           child_id?: string
           day?: string
@@ -839,16 +854,17 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "routine_day_overrides_routine_id_fkey"
-            columns: ["routine_id"]
+            foreignKeyName: "routine_day_overrides_routine_id_child_id_fkey"
+            columns: ["routine_id", "child_id"]
             isOneToOne: false
             referencedRelation: "routines"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "child_id"]
           },
         ]
       }
       routine_progress: {
         Row: {
+          id: string
           household_id: string
           child_id: string
           routine_id: string
@@ -856,6 +872,7 @@ export type Database = {
           completed_step_indexes: number[]
         }
         Insert: {
+          id?: string
           household_id: string
           child_id: string
           routine_id: string
@@ -863,6 +880,7 @@ export type Database = {
           completed_step_indexes?: number[]
         }
         Update: {
+          id?: string
           household_id?: string
           child_id?: string
           routine_id?: string
@@ -885,11 +903,11 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "routine_progress_routine_id_fkey"
-            columns: ["routine_id"]
+            foreignKeyName: "routine_progress_routine_id_child_id_fkey"
+            columns: ["routine_id", "child_id"]
             isOneToOne: false
             referencedRelation: "routines"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "child_id"]
           },
         ]
       }
@@ -972,11 +990,11 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "settings_audit_membership_id_fkey"
-            columns: ["membership_id"]
+            foreignKeyName: "settings_audit_membership_id_household_id_fkey"
+            columns: ["membership_id", "household_id"]
             isOneToOne: false
             referencedRelation: "memberships"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "household_id"]
           },
         ]
       }
@@ -1010,11 +1028,11 @@ export type Database = {
         }
         Relationships: [
           {
-            foreignKeyName: "sitter_sessions_display_id_fkey"
-            columns: ["display_id"]
+            foreignKeyName: "sitter_sessions_display_id_household_id_fkey"
+            columns: ["display_id", "household_id"]
             isOneToOne: false
             referencedRelation: "displays"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "household_id"]
           },
           {
             foreignKeyName: "sitter_sessions_household_id_fkey"
@@ -1036,6 +1054,7 @@ export type Database = {
           display_id: string | null
           logged_by_membership_id: string | null
           sitter_session_id: string | null
+          logged_by_name: string | null
           created_at: string
           updated_at: string
         }
@@ -1049,6 +1068,7 @@ export type Database = {
           display_id?: string | null
           logged_by_membership_id?: string | null
           sitter_session_id?: string | null
+          logged_by_name?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -1062,6 +1082,7 @@ export type Database = {
           display_id?: string | null
           logged_by_membership_id?: string | null
           sitter_session_id?: string | null
+          logged_by_name?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -1074,11 +1095,11 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "sleep_entries_display_id_fkey"
-            columns: ["display_id"]
+            foreignKeyName: "sleep_entries_display_id_household_id_fkey"
+            columns: ["display_id", "household_id"]
             isOneToOne: false
             referencedRelation: "displays"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "household_id"]
           },
           {
             foreignKeyName: "sleep_entries_household_id_fkey"
@@ -1088,18 +1109,18 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "sleep_entries_logged_by_membership_id_fkey"
-            columns: ["logged_by_membership_id"]
+            foreignKeyName: "sleep_entries_logged_by_membership_id_household_id_fkey"
+            columns: ["logged_by_membership_id", "household_id"]
             isOneToOne: false
             referencedRelation: "memberships"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "household_id"]
           },
           {
-            foreignKeyName: "sleep_entries_sitter_session_id_fkey"
-            columns: ["sitter_session_id"]
+            foreignKeyName: "sleep_entries_sitter_session_id_household_id_fkey"
+            columns: ["sitter_session_id", "household_id"]
             isOneToOne: false
             referencedRelation: "sitter_sessions"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "household_id"]
           },
         ]
       }
@@ -1148,6 +1169,7 @@ export type Database = {
           display_id: string | null
           logged_by_membership_id: string | null
           sitter_session_id: string | null
+          logged_by_name: string | null
           created_at: string
           updated_at: string
         }
@@ -1160,6 +1182,7 @@ export type Database = {
           display_id?: string | null
           logged_by_membership_id?: string | null
           sitter_session_id?: string | null
+          logged_by_name?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -1172,16 +1195,17 @@ export type Database = {
           display_id?: string | null
           logged_by_membership_id?: string | null
           sitter_session_id?: string | null
+          logged_by_name?: string | null
           created_at?: string
           updated_at?: string
         }
         Relationships: [
           {
-            foreignKeyName: "sticker_entries_category_id_fkey"
-            columns: ["category_id"]
+            foreignKeyName: "sticker_entries_category_id_household_id_fkey"
+            columns: ["category_id", "household_id"]
             isOneToOne: false
             referencedRelation: "sticker_categories"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "household_id"]
           },
           {
             foreignKeyName: "sticker_entries_child_id_fkey"
@@ -1191,11 +1215,11 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "sticker_entries_display_id_fkey"
-            columns: ["display_id"]
+            foreignKeyName: "sticker_entries_display_id_household_id_fkey"
+            columns: ["display_id", "household_id"]
             isOneToOne: false
             referencedRelation: "displays"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "household_id"]
           },
           {
             foreignKeyName: "sticker_entries_household_id_fkey"
@@ -1205,18 +1229,18 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "sticker_entries_logged_by_membership_id_fkey"
-            columns: ["logged_by_membership_id"]
+            foreignKeyName: "sticker_entries_logged_by_membership_id_household_id_fkey"
+            columns: ["logged_by_membership_id", "household_id"]
             isOneToOne: false
             referencedRelation: "memberships"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "household_id"]
           },
           {
-            foreignKeyName: "sticker_entries_sitter_session_id_fkey"
-            columns: ["sitter_session_id"]
+            foreignKeyName: "sticker_entries_sitter_session_id_household_id_fkey"
+            columns: ["sitter_session_id", "household_id"]
             isOneToOne: false
             referencedRelation: "sitter_sessions"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "household_id"]
           },
         ]
       }
@@ -1260,6 +1284,14 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      acknowledge_dose_conflict: {
+        Args: {
+          p_dose_id: string
+          p_membership_id: string
+          p_pin: string
+        }
+        Returns: undefined
+      }
       add_child: {
         Args: {
           p_household_id: string
@@ -1268,12 +1300,6 @@ export type Database = {
           p_color: string
         }
         Returns: string
-      }
-      child_in_my_household: {
-        Args: {
-          p_child_id: string
-        }
-        Returns: boolean
       }
       claim_display: {
         Args: {
@@ -1301,18 +1327,6 @@ export type Database = {
         Args: Record<PropertyKey, never>
         Returns: undefined
       }
-      is_household_member: {
-        Args: {
-          p_household_id: string
-        }
-        Returns: boolean
-      }
-      is_household_owner: {
-        Args: {
-          p_household_id: string
-        }
-        Returns: boolean
-      }
       my_display: {
         Args: Record<PropertyKey, never>
         Returns: {
@@ -1321,10 +1335,6 @@ export type Database = {
           out_name: string
           out_revoked: boolean
         }[]
-      }
-      my_household_ids: {
-        Args: Record<PropertyKey, never>
-        Returns: string[]
       }
       record_consent: {
         Args: {
@@ -1343,13 +1353,16 @@ export type Database = {
           out_claim_token: string
         }[]
       }
-      require_adult: {
-        Args: Record<PropertyKey, never>
-        Returns: string
-      }
       revoke_display: {
         Args: {
           p_display_id: string
+        }
+        Returns: undefined
+      }
+      set_dinner_tonight: {
+        Args: {
+          p_household_id: string
+          p_text: string
         }
         Returns: undefined
       }
@@ -1366,6 +1379,15 @@ export type Database = {
           p_pin: string
         }
         Returns: boolean
+      }
+      void_dose: {
+        Args: {
+          p_dose_id: string
+          p_membership_id: string
+          p_pin: string
+          p_reason: string
+        }
+        Returns: undefined
       }
     }
     Enums: {
