@@ -1,52 +1,77 @@
--- ─── Grants: nothing for anon; column-limited updates on households ─────
-revoke all on all tables in schema public from anon;
-revoke all on all functions in schema public from anon, public;
+-- ─── Private helpers ─────────────────────────────────────────────────────
+-- Helpers live outside the API-exposed public schema. Policies call them as the querying role,
+-- so authenticated needs usage and execute; nothing else does.
+create schema private;
+revoke all on schema private from public;
+grant usage on schema private to authenticated;
 
-revoke insert, update, delete on public.households from authenticated;
-grant update (
-  name, time_zone, zip, lat, lon, default_night_sleep_start, default_night_sleep_end,
-  night_mode_start, night_mode_end, leave_by_buffer_min, diaper_log_enabled, dinner_tonight, sitter_info
-) on public.households to authenticated;
-
--- ─── Helper functions ────────────────────────────────────────────────────
-create function public.my_household_ids() returns setof uuid
+-- Households the caller belongs to, as an adult member or through an active display.
+-- Soft-deleted households are excluded, which closes every policy and RPC over them.
+create function private.my_household_ids() returns setof uuid
 language sql stable security definer set search_path = '' as $$
   select m.household_id from public.memberships m
+  join public.households h on h.id = m.household_id and h.deleted_at is null
   where m.user_id = auth.uid() and m.left_at is null
   union
   select d.household_id from public.displays d
+  join public.households h on h.id = d.household_id and h.deleted_at is null
   where d.auth_user_id = auth.uid() and d.revoked_at is null
 $$;
 
-create function public.is_household_member(p_household_id uuid) returns boolean
+create function private.is_household_member(p_household_id uuid) returns boolean
 language sql stable security definer set search_path = '' as $$
-  select exists (select 1 from public.my_household_ids() as h (household_id) where h.household_id = p_household_id)
+  select exists (select 1 from private.my_household_ids() as h (household_id) where h.household_id = p_household_id)
 $$;
 
-create function public.is_household_owner(p_household_id uuid) returns boolean
+create function private.is_household_owner(p_household_id uuid) returns boolean
 language sql stable security definer set search_path = '' as $$
   select exists (
     select 1 from public.memberships m
+    join public.households h on h.id = m.household_id and h.deleted_at is null
     where m.user_id = auth.uid() and m.household_id = p_household_id and m.role = 'owner' and m.left_at is null
   )
 $$;
 
-create function public.child_in_my_household(p_child_id uuid) returns boolean
+create function private.child_in_my_household(p_child_id uuid) returns boolean
 language sql stable security definer set search_path = '' as $$
   select exists (
     select 1 from public.child_households ch
-    where ch.child_id = p_child_id and public.is_household_member(ch.household_id)
+    where ch.child_id = p_child_id and private.is_household_member(ch.household_id)
   )
 $$;
 
-create function public.require_adult() returns uuid
+-- A real adult sign-in: not anonymous, and not a device credential bound to a display.
+create function private.require_adult() returns uuid
 language plpgsql stable security definer set search_path = '' as $$
 begin
-  if auth.uid() is null or coalesce((auth.jwt() ->> 'is_anonymous')::boolean, false) then
+  if auth.uid() is null
+     or coalesce((auth.jwt() ->> 'is_anonymous')::boolean, false)
+     or exists (select 1 from public.displays d where d.auth_user_id = auth.uid()) then
     raise exception 'adult sign-in required' using errcode = '42501';
   end if;
   return auth.uid();
 end $$;
+
+-- True when the membership is active and the PIN matches. Does not check the caller; callers must
+-- first establish that the membership belongs to a household the caller is a member of.
+create function private.pin_ok(p_membership_id uuid, p_pin text) returns boolean
+language sql stable security definer set search_path = '' as $$
+  select exists (
+    select 1 from public.member_pins p
+    join public.memberships m on m.id = p.membership_id and m.left_at is null
+    where p.membership_id = p_membership_id
+      and p_pin ~ '^\d{4}$'
+      and p.pin_hash = extensions.crypt(p_pin, p.pin_hash)
+  )
+$$;
+
+revoke execute on all functions in schema private from public;
+grant execute on function
+  private.my_household_ids(), private.is_household_member(uuid), private.is_household_owner(uuid),
+  private.child_in_my_household(uuid), private.require_adult()
+to authenticated;
+-- private.pin_ok is deliberately not granted: it is only called from security-definer RPCs,
+-- and on its own it would be a PIN oracle for any membership id.
 
 -- ─── Enable RLS everywhere ───────────────────────────────────────────────
 do $$
@@ -56,69 +81,97 @@ begin
     execute format('alter table public.%I enable row level security', t);
   end loop;
 end $$;
--- Tables with RLS on and no policies (app_config, invite_codes, member_pins, display_claims)
--- are reachable only through the security-definer functions below.
+
+-- ─── Table privileges for authenticated ──────────────────────────────────
+-- Secrets and config: reachable only through security-definer functions.
+revoke all on public.app_config, public.invite_codes, public.member_pins, public.display_claims from authenticated;
+
+-- Written only by RPCs.
+revoke insert, update, delete on
+  public.memberships, public.consent_records, public.displays, public.child_households
+from authenticated;
+
+-- Configuration (spec §7.3): read directly, written later through PIN-checked RPCs.
+revoke insert, update, delete on
+  public.households, public.children, public.medicines, public.feature_overrides,
+  public.sticker_categories, public.routines, public.routine_day_overrides, public.photos,
+  public.take_list_links
+from authenticated;
+
+-- Doses are append-only: insert here, void and acknowledge through RPCs (spec §11.4).
+revoke update, delete on public.dose_entries from authenticated;
+
+-- The settings audit trail is append-only.
+revoke update, delete on public.settings_audit from authenticated;
 
 -- ─── Policies ────────────────────────────────────────────────────────────
+-- Tables with RLS on and no policies (app_config, invite_codes, member_pins, display_claims)
+-- are reachable only through the security-definer functions below.
 create policy households_select on public.households for select to authenticated
-  using (public.is_household_member(id));
-create policy households_update on public.households for update to authenticated
-  using (public.is_household_member(id)) with check (public.is_household_member(id));
+  using (private.is_household_member(id));
 
 create policy memberships_select on public.memberships for select to authenticated
-  using (public.is_household_member(household_id));
+  using (private.is_household_member(household_id));
 
 create policy consent_select_own on public.consent_records for select to authenticated
   using (user_id = auth.uid());
 
 create policy displays_select on public.displays for select to authenticated
-  using (public.is_household_member(household_id));
+  using (private.is_household_member(household_id));
 
 create policy children_select on public.children for select to authenticated
-  using (public.child_in_my_household(id));
-create policy children_update on public.children for update to authenticated
-  using (public.child_in_my_household(id)) with check (public.child_in_my_household(id));
+  using (private.child_in_my_household(id));
 
 create policy child_households_select on public.child_households for select to authenticated
-  using (public.is_household_member(household_id));
+  using (private.is_household_member(household_id));
 
-create policy feature_overrides_all on public.feature_overrides for all to authenticated
-  using (public.child_in_my_household(child_id)) with check (public.child_in_my_household(child_id));
+create policy feature_overrides_select on public.feature_overrides for select to authenticated
+  using (private.child_in_my_household(child_id));
 
--- Household-scoped tables: members (adults and displays) can read and write.
+-- Configuration tables: members read; writes are revoked above.
 do $$
 declare t text;
 begin
   foreach t in array array[
-    'sitter_sessions', 'sleep_entries', 'feeding_entries', 'medicines', 'sticker_categories',
-    'sticker_entries', 'diaper_entries', 'routines', 'routine_progress', 'routine_day_overrides',
-    'jots', 'grocery_items', 'take_list_links', 'photos'
+    'medicines', 'sticker_categories', 'routines', 'routine_day_overrides', 'take_list_links', 'photos'
+  ] loop
+    execute format(
+      'create policy %I on public.%I for select to authenticated
+         using (private.is_household_member(household_id))',
+      t || '_select', t);
+  end loop;
+end $$;
+
+-- Logs and lists: members (adults and displays) can read and write.
+do $$
+declare t text;
+begin
+  foreach t in array array[
+    'sitter_sessions', 'sleep_entries', 'feeding_entries', 'sticker_entries', 'diaper_entries',
+    'routine_progress', 'jots', 'grocery_items'
   ] loop
     execute format(
       'create policy %I on public.%I for all to authenticated
-         using (public.is_household_member(household_id))
-         with check (public.is_household_member(household_id))',
+         using (private.is_household_member(household_id))
+         with check (private.is_household_member(household_id))',
       t || '_member_all', t);
   end loop;
 end $$;
 
--- Doses are never deleted (spec §11.4): select, insert, update only.
 create policy dose_entries_select on public.dose_entries for select to authenticated
-  using (public.is_household_member(household_id));
+  using (private.is_household_member(household_id));
 create policy dose_entries_insert on public.dose_entries for insert to authenticated
-  with check (public.is_household_member(household_id));
-create policy dose_entries_update on public.dose_entries for update to authenticated
-  using (public.is_household_member(household_id)) with check (public.is_household_member(household_id));
+  with check (private.is_household_member(household_id));
 
 create policy settings_audit_select on public.settings_audit for select to authenticated
-  using (public.is_household_member(household_id));
+  using (private.is_household_member(household_id));
 create policy settings_audit_insert on public.settings_audit for insert to authenticated
-  with check (public.is_household_member(household_id));
+  with check (private.is_household_member(household_id));
 
 -- ─── RPC: consent and household creation ─────────────────────────────────
 create function public.record_consent(p_policy_version text, p_health_data_consent boolean) returns void
 language plpgsql security definer set search_path = '' as $$
-declare v_user uuid := public.require_adult();
+declare v_user uuid := private.require_adult();
 begin
   if not p_health_data_consent then
     raise exception 'health data consent is required' using errcode = '22023';
@@ -133,7 +186,7 @@ create function public.create_household(
 ) returns uuid
 language plpgsql security definer set search_path = '' as $$
 declare
-  v_user uuid := public.require_adult();
+  v_user uuid := private.require_adult();
   v_household uuid;
   v_invites_required boolean;
 begin
@@ -142,6 +195,16 @@ begin
   end if;
   if not exists (select 1 from pg_catalog.pg_timezone_names tz where tz.name = p_time_zone) then
     raise exception 'unknown time zone %', p_time_zone using errcode = '22023';
+  end if;
+
+  -- Serialize this user's household creation so the ownership limit holds under concurrency.
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('roost.create_household:' || v_user::text, 0));
+  if (
+    select count(*) from public.memberships m
+    join public.households h on h.id = m.household_id and h.deleted_at is null
+    where m.user_id = v_user and m.role = 'owner' and m.left_at is null
+  ) >= 3 then
+    raise exception 'a user can own at most 3 households' using errcode = '22023';
   end if;
 
   select coalesce((c.value #>> '{}')::boolean, true) into v_invites_required
@@ -181,9 +244,12 @@ create function public.add_child(p_household_id uuid, p_name text, p_birthday da
 language plpgsql security definer set search_path = '' as $$
 declare v_child uuid;
 begin
-  if not public.is_household_member(p_household_id) then
+  perform private.require_adult();
+  if not private.is_household_member(p_household_id) then
     raise exception 'not a member of this household' using errcode = '42501';
   end if;
+  -- Lock the household so concurrent calls cannot both pass the limit check.
+  perform 1 from public.households where id = p_household_id for update;
   if (select count(*) from public.child_households ch where ch.household_id = p_household_id) >= 8 then
     raise exception 'a household can have at most 8 children' using errcode = '22023';
   end if;
@@ -192,10 +258,25 @@ begin
   return v_child;
 end $$;
 
+-- ─── RPC: household lists ────────────────────────────────────────────────
+-- Tonight's dinner is edited with a long-press on the main screen (spec §7.2), so any member can set it.
+create function public.set_dinner_tonight(p_household_id uuid, p_text text) returns void
+language plpgsql security definer set search_path = '' as $$
+declare v_text text := nullif(btrim(p_text), '');
+begin
+  if not private.is_household_member(p_household_id) then
+    raise exception 'not a member of this household' using errcode = '42501';
+  end if;
+  if char_length(v_text) > 80 then
+    raise exception 'dinner must be at most 80 characters' using errcode = '22023';
+  end if;
+  update public.households set dinner_tonight = v_text where id = p_household_id;
+end $$;
+
 -- ─── RPC: PINs ───────────────────────────────────────────────────────────
 create function public.set_my_pin(p_household_id uuid, p_pin text) returns void
 language plpgsql security definer set search_path = '' as $$
-declare v_user uuid := public.require_adult();
+declare v_user uuid := private.require_adult();
 begin
   if p_pin !~ '^\d{4}$' then
     raise exception 'PIN must be 4 digits' using errcode = '22023';
@@ -216,13 +297,65 @@ declare v_household uuid;
 begin
   select m.household_id into v_household from public.memberships m
   where m.id = p_membership_id and m.left_at is null;
-  if v_household is null or not public.is_household_member(v_household) then
+  if v_household is null or not private.is_household_member(v_household) then
     return false;
   end if;
-  return exists (
-    select 1 from public.member_pins p
-    where p.membership_id = p_membership_id and p.pin_hash = extensions.crypt(p_pin, p.pin_hash)
-  );
+  return private.pin_ok(p_membership_id, p_pin);
+end $$;
+
+-- ─── RPC: doses ──────────────────────────────────────────────────────────
+-- Both RPCs need an adult's PIN (spec §7.3). The caller (adult or display) must be a member of the
+-- dose's household, and the PIN's membership must belong to that same household.
+create function public.void_dose(p_dose_id uuid, p_membership_id uuid, p_pin text, p_reason text) returns void
+language plpgsql security definer set search_path = '' as $$
+declare
+  v_household uuid;
+  v_voided_at timestamptz;
+  v_reason text := btrim(p_reason);
+begin
+  select d.household_id, d.voided_at into v_household, v_voided_at
+  from public.dose_entries d where d.id = p_dose_id
+  for update;
+  if v_household is null or not private.is_household_member(v_household) then
+    raise exception 'dose not found' using errcode = '42501';
+  end if;
+  if not exists (
+    select 1 from public.memberships m
+    where m.id = p_membership_id and m.household_id = v_household and m.left_at is null
+  ) or not private.pin_ok(p_membership_id, p_pin) then
+    raise exception 'incorrect PIN' using errcode = '42501';
+  end if;
+  if v_voided_at is not null then
+    raise exception 'dose is already voided' using errcode = '22023';
+  end if;
+  if v_reason is null or char_length(v_reason) not between 1 and 200 then
+    raise exception 'a void reason of 1 to 200 characters is required' using errcode = '22023';
+  end if;
+  update public.dose_entries
+  set voided_at = now(), voided_by = p_membership_id, void_reason = v_reason
+  where id = p_dose_id;
+end $$;
+
+-- Idempotent: a dose already acknowledged keeps its first acknowledgement.
+create function public.acknowledge_dose_conflict(p_dose_id uuid, p_membership_id uuid, p_pin text) returns void
+language plpgsql security definer set search_path = '' as $$
+declare v_household uuid;
+begin
+  select d.household_id into v_household
+  from public.dose_entries d where d.id = p_dose_id
+  for update;
+  if v_household is null or not private.is_household_member(v_household) then
+    raise exception 'dose not found' using errcode = '42501';
+  end if;
+  if not exists (
+    select 1 from public.memberships m
+    where m.id = p_membership_id and m.household_id = v_household and m.left_at is null
+  ) or not private.pin_ok(p_membership_id, p_pin) then
+    raise exception 'incorrect PIN' using errcode = '42501';
+  end if;
+  update public.dose_entries
+  set conflict_acknowledged_at = now(), conflict_acknowledged_by = p_membership_id
+  where id = p_dose_id and conflict_acknowledged_at is null;
 end $$;
 
 -- ─── RPC: displays ───────────────────────────────────────────────────────
@@ -233,10 +366,12 @@ declare
   v_display uuid;
   v_token text := encode(extensions.gen_random_bytes(24), 'hex');
 begin
-  perform public.require_adult();
-  if not public.is_household_owner(p_household_id) then
+  perform private.require_adult();
+  if not private.is_household_owner(p_household_id) then
     raise exception 'only an owner can add a display' using errcode = '42501';
   end if;
+  -- Lock the household so concurrent calls cannot both pass the limit check.
+  perform 1 from public.households where id = p_household_id for update;
   if (
     select count(*) from public.displays d
     where d.household_id = p_household_id and d.revoked_at is null
@@ -262,6 +397,13 @@ declare
 begin
   if auth.uid() is null or not coalesce((auth.jwt() ->> 'is_anonymous')::boolean, false) then
     raise exception 'a display must claim with a device session' using errcode = '42501';
+  end if;
+
+  -- A device whose display was revoked may join again: release its old binding first.
+  update public.displays set auth_user_id = null
+  where auth_user_id = auth.uid() and revoked_at is not null;
+  if exists (select 1 from public.displays d where d.auth_user_id = auth.uid()) then
+    raise exception 'this device is already registered as an active display' using errcode = '22023';
   end if;
 
   select c.display_id into v_display
@@ -298,23 +440,41 @@ create function public.revoke_display(p_display_id uuid) returns void
 language plpgsql security definer set search_path = '' as $$
 declare v_household uuid;
 begin
-  perform public.require_adult();
+  perform private.require_adult();
   select d.household_id into v_household from public.displays d where d.id = p_display_id;
-  if v_household is null or not public.is_household_owner(v_household) then
+  if v_household is null or not private.is_household_owner(v_household) then
     raise exception 'only an owner can remove a display' using errcode = '42501';
   end if;
   update public.displays set revoked_at = now() where id = p_display_id and revoked_at is null;
   delete from public.display_claims where display_id = p_display_id;
 end $$;
 
--- ─── Execute grants ──────────────────────────────────────────────────────
+-- ─── Final grants ────────────────────────────────────────────────────────
+-- Runs last so it covers every table and function above. anon gets nothing; authenticated gets
+-- only the table privileges left above (minus truncate/references/trigger) and the RPCs below.
+revoke all on all tables in schema public from anon;
+revoke all on all sequences in schema public from anon;
+revoke execute on all functions in schema public from public, anon, authenticated;
+revoke truncate, references, trigger on all tables in schema public from authenticated;
+do $$
+begin
+  -- MAINTAIN (vacuum, analyze, lock table, ...) exists from Postgres 17.
+  if current_setting('server_version_num')::int >= 170000 then
+    execute 'revoke maintain on all tables in schema public from authenticated';
+  end if;
+end $$;
+
 grant execute on function
-  public.my_household_ids(), public.is_household_member(uuid), public.is_household_owner(uuid),
-  public.child_in_my_household(uuid), public.require_adult(),
   public.record_consent(text, boolean),
   public.create_household(text, text, text, double precision, double precision, text, text, text),
   public.add_child(uuid, text, date, text),
+  public.set_dinner_tonight(uuid, text),
   public.set_my_pin(uuid, text), public.verify_pin(uuid, text),
+  public.void_dose(uuid, uuid, text, text), public.acknowledge_dose_conflict(uuid, uuid, text),
   public.register_display(uuid, text), public.claim_display(text), public.my_display(),
   public.display_heartbeat(), public.revoke_display(uuid)
 to authenticated;
+
+alter default privileges in schema public revoke all on tables from anon;
+alter default privileges in schema public revoke all on sequences from anon;
+alter default privileges in schema public revoke execute on functions from public, anon;
