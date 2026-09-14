@@ -145,18 +145,28 @@ describe('MainScreen (demo source)', () => {
     wrapper.unmount()
   })
 
-  it('renders the conflict banner and medicine zone before kid cards when compact with a conflict', async () => {
-    window.history.replaceState({}, '', '/home?conflict&manyKids')
+  // Safety zones must never scroll below the fold on a 1024x768 tablet: they come before the kid cards in every layout.
+  it.each([
+    ['regular layout with a conflict', '/home?conflict', 'kid-card', true],
+    ['regular layout, medicine only', '/home', 'kid-card', false],
+    ['compact layout with a conflict', '/home?conflict&manyKids', 'kid-card-compact', true],
+    ['compact layout, medicine only', '/home?manyKids', 'kid-card-compact', false],
+  ])('renders the conflict banner and medicine zone before the kid cards (%s)', async (_name, url, cardTestId, conflict) => {
+    window.history.replaceState({}, '', url)
     const wrapper = await mountMain()
     const html = wrapper.html()
     const conflictIndex = html.indexOf('data-testid="conflict"')
     const medicineIndex = html.indexOf('data-testid="medicine-line"')
-    const firstKidCardIndex = html.indexOf('data-testid="kid-card-compact"')
-    expect(conflictIndex).toBeGreaterThan(-1)
+    const firstKidCardIndex = html.indexOf(`data-testid="${cardTestId}"`)
     expect(medicineIndex).toBeGreaterThan(-1)
     expect(firstKidCardIndex).toBeGreaterThan(-1)
-    expect(conflictIndex).toBeLessThan(firstKidCardIndex)
     expect(medicineIndex).toBeLessThan(firstKidCardIndex)
+    if (conflict) {
+      expect(conflictIndex).toBeGreaterThan(-1)
+      expect(conflictIndex).toBeLessThan(medicineIndex)
+    } else {
+      expect(conflictIndex).toBe(-1)
+    }
     wrapper.unmount()
   })
 

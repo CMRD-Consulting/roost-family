@@ -242,27 +242,17 @@ const MODE_BUTTONS = [
 
       <div class="grid min-h-0 grid-cols-[minmax(0,1fr)_300px] gap-6 min-[1100px]:grid-cols-[minmax(0,1fr)_340px]">
         <div class="flex min-h-0 min-w-0 flex-col gap-3 overflow-y-auto">
-          <!-- Safety-critical zones (conflict alert, medicine) must be visible without scrolling. With
-               a compact roster (5+ kids) and an unacknowledged conflict, the kid grid is the one thing
-               allowed to scroll below the fold, so it goes last. -->
-          <template v-if="model.layout === 'compact' && model.conflicts.length > 0">
-            <ConflictBanner :conflicts="model.conflicts" @acknowledge="acknowledgingDoseId = $event" />
-            <MedicineZone :lines="model.medicine" />
-            <div class="grid shrink-0 grid-cols-2 gap-2.5 min-[1300px]:grid-cols-3">
-              <KidCardCompact v-for="card in model.kidCards" :key="card.childId" :card="card" @fix-sleep="fixingSleepChildId = $event" />
-            </div>
-          </template>
-          <template v-else>
-            <!-- 3 columns only when wide enough for a 24 px status line without truncation. -->
-            <div v-if="model.layout === 'compact'" class="grid shrink-0 grid-cols-2 gap-2.5 min-[1300px]:grid-cols-3">
-              <KidCardCompact v-for="card in model.kidCards" :key="card.childId" :card="card" @fix-sleep="fixingSleepChildId = $event" />
-            </div>
-            <div v-else class="grid shrink-0 grid-cols-2 gap-3">
-              <KidCard v-for="card in model.kidCards" :key="card.childId" :card="card" @fix-sleep="fixingSleepChildId = $event" />
-            </div>
-            <ConflictBanner :conflicts="model.conflicts" @acknowledge="acknowledgingDoseId = $event" />
-            <MedicineZone :lines="model.medicine" />
-          </template>
+          <!-- Safety-critical zones (dose conflict alert, medicine) come first in every layout, so they are
+               visible without scrolling even on a 1024x768 tablet; the kid cards below scroll if needed. -->
+          <ConflictBanner :conflicts="model.conflicts" @acknowledge="acknowledgingDoseId = $event" />
+          <MedicineZone :lines="model.medicine" />
+          <!-- 3 columns only when wide enough for a 24 px status line without truncation. -->
+          <div v-if="model.layout === 'compact'" class="grid shrink-0 grid-cols-2 gap-2.5 min-[1300px]:grid-cols-3">
+            <KidCardCompact v-for="card in model.kidCards" :key="card.childId" :card="card" @fix-sleep="fixingSleepChildId = $event" />
+          </div>
+          <div v-else class="grid shrink-0 grid-cols-2 gap-3">
+            <KidCard v-for="card in model.kidCards" :key="card.childId" :card="card" @fix-sleep="fixingSleepChildId = $event" />
+          </div>
         </div>
 
         <div class="flex min-h-0 flex-col gap-3">
