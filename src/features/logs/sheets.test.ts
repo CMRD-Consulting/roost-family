@@ -343,6 +343,48 @@ describe('log sheets', () => {
     })
   })
 
+  describe('StickerSheet and the undo window', () => {
+    async function giveSticker() {
+      await setup('2026-09-14T19:00:00Z')
+      const w = mountSheet(StickerSheet)
+      await flushPromises()
+      await click(radio(w, 'Sticker category', 'Teeth'))
+      await click(button(w, 'Give sticker'))
+      return w
+    }
+
+    it('the undo window restarts with a full 10 seconds when the celebration ends on its own', async () => {
+      const w = await giveSticker()
+      const logStore = useLogStore()
+      expect(logStore.lastAction?.command.kind).toBe('sticker.add')
+
+      vi.advanceTimersByTime(1_800)
+      await flushPromises()
+      expect(w.find('[data-testid="sticker-celebration"]').exists()).toBe(false)
+
+      vi.advanceTimersByTime(9_900)
+      expect(logStore.lastAction?.command.kind).toBe('sticker.add')
+      vi.advanceTimersByTime(100)
+      expect(logStore.lastAction).toBeNull()
+    })
+
+    it('a tap dismisses the celebration without undoing, and the full undo window starts then', async () => {
+      const w = await giveSticker()
+      const logStore = useLogStore()
+      vi.advanceTimersByTime(500)
+
+      await click(w.get('[data-testid="sticker-celebration"]'))
+      expect(w.find('[data-testid="sticker-celebration"]').exists()).toBe(false)
+      expect(w.emitted('close')).toHaveLength(1)
+      expect(writer.calls.map((c) => c.kind)).toEqual(['sticker.add']) // nothing undone
+
+      vi.advanceTimersByTime(9_900)
+      expect(logStore.lastAction?.command.kind).toBe('sticker.add')
+      vi.advanceTimersByTime(100)
+      expect(logStore.lastAction).toBeNull()
+    })
+  })
+
   describe('JotSheet', () => {
     it('saves trimmed text attributed to the display', async () => {
       await setup('2026-09-14T19:00:00Z')

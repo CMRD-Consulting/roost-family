@@ -768,6 +768,23 @@ describe('useLogStore', () => {
       expect(logStore.lastAction).toBeNull()
     })
 
+    it('extendUndo restarts the undo window with a full 10 seconds, and does nothing when there is no action', async () => {
+      const { logStore, writer, queue } = await setup()
+      await logStore.init(writer, queue)
+      logStore.extendUndo()
+      expect(logStore.lastAction).toBeNull()
+
+      await logStore.submit(dinnerCmd('Pizza'))
+      await vi.advanceTimersByTimeAsync(6_000)
+      logStore.extendUndo()
+      expect(logStore.lastAction?.expiresAt).toBe(Date.now() + 10_000)
+
+      await vi.advanceTimersByTimeAsync(9_900)
+      expect(logStore.lastAction).not.toBeNull()
+      await vi.advanceTimersByTimeAsync(100)
+      expect(logStore.lastAction).toBeNull()
+    })
+
     it('voiding the just-logged dose clears the undo slot instead of offering the void for undo', async () => {
       const { logStore, writer, queue } = await setup()
       await logStore.init(writer, queue)

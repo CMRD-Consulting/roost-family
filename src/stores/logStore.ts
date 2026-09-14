@@ -90,10 +90,25 @@ export const useLogStore = defineStore('log', () => {
       return
     }
     lastAction.value = { command, expiresAt: Date.now() + UNDO_WINDOW_MS, queueKey }
+    startUndoTimer()
+  }
+
+  function startUndoTimer(): void {
+    clearUndoTimer()
     undoTimer = setTimeout(() => {
       lastAction.value = null
       undoTimer = null
     }, UNDO_WINDOW_MS)
+  }
+
+  /**
+   * Gives the current undo slot a fresh, full window from now. For saves whose "Saved" toast was hidden at
+   * first (e.g. behind the sticker celebration), so the adult still gets the whole 10 seconds to undo.
+   */
+  function extendUndo(): void {
+    if (lastAction.value === null) return
+    lastAction.value = { ...lastAction.value, expiresAt: Date.now() + UNDO_WINDOW_MS }
+    startUndoTimer()
   }
 
   function syncPendingCount(): void {
@@ -389,5 +404,5 @@ export const useLogStore = defineStore('log', () => {
     return requireWriter().verifyPin(membershipId, pin)
   }
 
-  return { lastAction, pendingCount, failures, init, stop, submit, undo, undoDose, isDoseUnsent, replay, verifyPin }
+  return { lastAction, pendingCount, failures, init, stop, submit, undo, extendUndo, undoDose, isDoseUnsent, replay, verifyPin }
 })

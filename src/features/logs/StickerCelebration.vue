@@ -1,5 +1,9 @@
 <script setup lang="ts">
-/** Full-screen sticker celebration (spec §7.4): pop animation + chime; dismisses on tap or after 1.8 s. */
+/**
+ * Full-screen sticker celebration (spec §7.4): pop animation + chime; dismisses on tap or after 1.8 s.
+ * It covers the "Saved" toast, so a dismissing tap never reaches Undo (it dismisses on `click`, after the
+ * pointer is up, so no click lands on what's underneath); the sheet restarts the undo window when it ends.
+ */
 import { onBeforeUnmount, onMounted } from 'vue'
 import { playChime } from '@/ui/sound'
 

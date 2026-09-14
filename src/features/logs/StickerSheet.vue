@@ -2,6 +2,7 @@
 /** Give a sticker (spec §7.4): category, time, optional "Who?"; saving plays the celebration before closing. */
 import { computed, ref, watch } from 'vue'
 import { newId } from '@/data/logCommands'
+import { useLogStore } from '@/stores/logStore'
 import RButton from '@/ui/RButton.vue'
 import RChips from '@/ui/RChips.vue'
 import RSheet from '@/ui/RSheet.vue'
@@ -21,6 +22,7 @@ const emit = defineEmits<{ close: []; saved: [result: SaveResult] }>()
 const LOOKBACK_MS = 12 * 3_600_000
 
 const { view, identity, busy, error, submit, clearError } = useLogSheet()
+const logStore = useLogStore()
 
 const { now, at, max, adjust, reset: resetTime, catchUp } = useSheetTime(() => minAt.value)
 const childId = ref<string | null>(null)
@@ -74,6 +76,8 @@ function onCelebrationDone(): void {
   const done = celebration.value
   celebration.value = null
   if (!done) return
+  // The celebration covered the "Saved" toast: give the adult a full undo window from now.
+  logStore.extendUndo()
   emit('saved', done.result)
   emit('close')
 }
