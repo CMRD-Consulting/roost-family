@@ -12,6 +12,8 @@ const deviceCache = vi.hoisted(() => ({
 vi.mock('@/data/supabase', () => ({ displayClient: {} }))
 vi.mock('./displaySession', () => ({ loadDisplayState }))
 vi.mock('@/data/deviceCache', () => ({ createDeviceCache: () => deviceCache }))
+const offlineQueue = vi.hoisted(() => ({ clear: vi.fn() }))
+vi.mock('@/data/offlineQueue', () => ({ createOfflineQueue: () => offlineQueue }))
 
 const REGISTERED = { kind: 'registered', identity: { displayId: 'd1', householdId: 'h1', name: 'Kitchen' } } as const
 
@@ -21,6 +23,7 @@ beforeEach(() => {
   deviceCache.loadIdentity.mockReset().mockResolvedValue(null)
   deviceCache.saveIdentity.mockReset().mockResolvedValue(undefined)
   deviceCache.clear.mockReset().mockResolvedValue(undefined)
+  offlineQueue.clear.mockReset().mockResolvedValue(undefined)
 })
 afterEach(() => vi.useRealTimers())
 
@@ -163,6 +166,36 @@ describe('displayStore', () => {
 
     await store.refresh()
     expect(deviceCache.clear).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['revoked', 'unregistered'] as const)('clears the offline queue when the display is %s', async (kind) => {
+    loadDisplayState.mockResolvedValue({ kind })
+    const store = useDisplayStore()
+
+    await store.refresh()
+    // Pending logs belong to a household this tablet no longer has access to; they must never replay.
+    await vi.waitFor(() => expect(offlineQueue.clear).toHaveBeenCalledTimes(1))
+  })
+
+  it('keeps the offline queue while registered or offline', async () => {
+    loadDisplayState.mockResolvedValueOnce(REGISTERED).mockRejectedValueOnce(new Error('Failed to fetch'))
+    const store = useDisplayStore()
+
+    await store.refresh()
+    await store.refresh()
+    await vi.dynamicImportSettled()
+    expect(offlineQueue.clear).not.toHaveBeenCalled()
+  })
+
+  it('a failure clearing the offline queue does not break the refresh', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    offlineQueue.clear.mockRejectedValue(new Error('IndexedDB unavailable'))
+    loadDisplayState.mockResolvedValue({ kind: 'revoked' })
+    const store = useDisplayStore()
+
+    expect(await store.refresh()).toEqual({ kind: 'revoked' })
+    await vi.waitFor(() => expect(warn).toHaveBeenCalled())
+    warn.mockRestore()
   })
 
   it('in demo mode reports the demo display as registered without reading Supabase', async () => {

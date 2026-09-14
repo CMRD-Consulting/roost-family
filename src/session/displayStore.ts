@@ -15,6 +15,16 @@ export const CACHE_READ_BUDGET_MS = 1_000
 // Demo mode never persists to the device cache (spec: no household data written to disk in demo).
 const deviceCache = createDeviceCache()
 
+/** Loaded lazily: IndexedDB for the queue is only touched when there's something to clear. */
+async function clearOfflineQueue(): Promise<void> {
+  try {
+    const { createOfflineQueue } = await import('@/data/offlineQueue')
+    await createOfflineQueue().clear()
+  } catch (e) {
+    console.warn("Couldn't clear the offline queue", e)
+  }
+}
+
 export const useDisplayStore = defineStore('display', () => {
   const state = ref<DisplayStoreState | null>(null)
   /** The last state read successfully; survives going offline so a registered tablet keeps its identity. */
@@ -54,8 +64,12 @@ export const useDisplayStore = defineStore('display', () => {
       state.value = next
       if (!isDemo) {
         if (next.kind === 'registered') void deviceCache.saveIdentity(next.identity)
-        // Revoked or unregistered: this tablet no longer owns whatever household data was cached.
-        else void deviceCache.clear()
+        // Revoked or unregistered: this tablet no longer owns whatever household data was cached, and its
+        // pending logs must never replay into a household it has lost access to.
+        else {
+          void deviceCache.clear()
+          void clearOfflineQueue()
+        }
       }
     } catch {
       state.value = { kind: 'offline' }
