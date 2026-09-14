@@ -185,7 +185,8 @@ const MODE_BUTTONS = [
 </script>
 
 <template>
-  <main class="relative h-dvh overflow-hidden bg-app text-ink">
+  <!-- Focusable so a closing sheet whose opener has gone can return focus here. -->
+  <main tabindex="-1" class="relative h-dvh overflow-hidden bg-app text-ink outline-none">
     <!-- Rows: header, zones, the undo toast's own fixed-height row (so it never covers the medicine zone
          or a dose alert), and the log row. -->
     <div v-if="model" class="main-grid grid h-full grid-rows-[auto_minmax(0,1fr)_60px_auto] gap-4 px-10 pb-8 pt-9">

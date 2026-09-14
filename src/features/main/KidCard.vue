@@ -15,7 +15,7 @@ const emit = defineEmits<{ fixSleep: [childId: string] }>()
   >
     <header class="flex min-w-0 items-center justify-between gap-3">
       <div class="flex min-w-0 items-center gap-3">
-        <RAvatar :name="card.name" :color="card.color" :size="56" />
+        <RAvatar :name="card.name" :color="card.color" :size="56" decorative />
         <span class="truncate text-[24px] font-medium leading-tight">{{ card.name }}</span>
       </div>
       <span class="shrink-0 text-[18px] text-ink-3">{{ card.ageLabel }}</span>

@@ -207,6 +207,14 @@ describe('RPinPad', () => {
     expect(w.emitted('verified')).toEqual([[{ membershipId: 'm1', pin: '1234' }]])
   })
 
+  it('hides the avatars from assistive technology, since each button already has the name', async () => {
+    const w = mount(RPinPad, { props: { members, verify: async () => true } })
+    expect(w.findAll('[role="img"]')).toHaveLength(0)
+    expect(w.findAll('ul button span.rounded-full').every((a) => a.attributes('aria-hidden') === 'true')).toBe(true)
+    await w.findAll('ul button')[0]!.trigger('click')
+    expect(w.findAll('[role="img"]')).toHaveLength(0)
+  })
+
   it('lists adults as plain named buttons, not a radiogroup', () => {
     const w = mount(RPinPad, { props: { members, verify: async () => true } })
     expect(w.find('[role="radiogroup"]').exists()).toBe(false)
@@ -313,6 +321,25 @@ describe('RSheet', () => {
     w.unmount()
     expect(document.activeElement).toBe(opener)
     opener.remove()
+  })
+
+  it('when the opener is gone by the time the sheet closes, focus goes to the main landmark', async () => {
+    const main = document.createElement('main')
+    const opener = document.createElement('button')
+    main.appendChild(opener)
+    document.body.appendChild(main)
+    opener.focus()
+
+    const w = mount(RSheet, { props: { title: 'Undo dose', open: true }, attachTo: document.body })
+    await flushPromises()
+    opener.remove() // e.g. the Undo toast's button disappeared when the undo window ran out
+    await w.setProps({ open: false })
+    await flushPromises()
+
+    expect(document.activeElement).toBe(main)
+    expect(main.getAttribute('tabindex')).toBe('-1')
+    w.unmount()
+    main.remove()
   })
 
   it('closes when the close button is tapped', async () => {

@@ -19,7 +19,7 @@ const status = computed(() => props.card.sleep?.label ?? props.card.nowNext?.now
     :style="{ borderLeftColor: card.color }"
     @click="card.sleep?.kind === 'stale' && emit('fixSleep', card.childId)"
   >
-    <RAvatar :name="card.name" :color="card.color" :size="40" />
+    <RAvatar :name="card.name" :color="card.color" :size="40" decorative />
     <div class="flex min-w-0 flex-col">
       <span class="truncate text-[20px] font-semibold leading-tight">{{ card.name }}</span>
       <span

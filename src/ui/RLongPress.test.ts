@@ -124,4 +124,40 @@ describe('RLongPress', () => {
     vi.advanceTimersByTime(600)
     expect(w.emitted('complete')).toHaveLength(1)
   })
+  it('treats a click with no pointer press behind it (keyboard or assistive technology) as a completed hold', async () => {
+    const w = mountPress()
+    w.element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 0 }))
+    expect(w.emitted('complete')).toHaveLength(1)
+  })
+
+  it('keeps the toddler guard for touch: a quick tap, or a cancelled press, does not complete via its click', async () => {
+    const w = mountPress()
+    await fire(w, 'pointerdown', down)
+    vi.advanceTimersByTime(100)
+    await fire(w, 'pointerup', { pointerId: 1 })
+    w.element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }))
+    expect(w.emitted('complete')).toBeUndefined()
+
+    // Press, drift away (cancelled), stay down past 800 ms, release: the click still follows the pointer.
+    await fire(w, 'pointerdown', down)
+    await fire(w, 'pointermove', { pointerId: 1, clientX: 40, clientY: 40 })
+    vi.advanceTimersByTime(900)
+    await fire(w, 'pointerup', { pointerId: 1 })
+    w.element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 0 }))
+    expect(w.emitted('complete')).toBeUndefined()
+
+    // Long after any pointer activity, an assistive click works again.
+    vi.advanceTimersByTime(800)
+    w.element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 0 }))
+    expect(w.emitted('complete')).toHaveLength(1)
+  })
+
+  it('a completed hold is not completed a second time by the click that follows it', async () => {
+    const w = mountPress()
+    await fire(w, 'pointerdown', down)
+    vi.advanceTimersByTime(600)
+    await fire(w, 'pointerup', { pointerId: 1 })
+    w.element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }))
+    expect(w.emitted('complete')).toHaveLength(1)
+  })
 })

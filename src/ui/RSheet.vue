@@ -1,7 +1,8 @@
 <script setup lang="ts">
 /**
  * Modal sheet frame for log sheets (spec §7.4). Bottom-anchored. The panel takes focus on open and
- * traps Tab/Shift+Tab inside itself; focus returns to the opener on close or unmount. Escape (handled on
+ * traps Tab/Shift+Tab inside itself; focus returns to the opener on close or unmount (or to the main landmark
+ * when the opener is gone). Escape (handled on
  * the panel, so only the topmost of stacked sheets reacts) and a tap on the scrim both close it.
  */
 import { nextTick, useId, useTemplateRef, watch, onBeforeUnmount } from 'vue'
@@ -23,9 +24,22 @@ const FOCUSABLE = [
 
 let opener: HTMLElement | null = null
 
+/**
+ * Returns focus to the opener. If the opener has gone (e.g. the Undo toast's button once the undo window ran
+ * out), focus moves to the page's main landmark instead of being dropped on <body>.
+ */
 function restoreFocus(): void {
-  opener?.focus?.()
+  const target = opener
   opener = null
+  if (!target || target === document.body) return
+  if (target.isConnected) {
+    target.focus?.()
+    return
+  }
+  const fallback = document.querySelector<HTMLElement>('main h1, main') ?? null
+  if (!fallback) return
+  if (!fallback.hasAttribute('tabindex')) fallback.setAttribute('tabindex', '-1')
+  fallback.focus()
 }
 
 function trapTab(e: KeyboardEvent): void {

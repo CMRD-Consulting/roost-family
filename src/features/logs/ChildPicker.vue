@@ -28,7 +28,7 @@ const { optionRefs, tabindexFor, onKeydown } = useRovingRadio(() => props.childr
       @click="model = child.id"
       @keydown="onKeydown($event, i)"
     >
-      <RAvatar :name="child.name" :color="child.color" :size="72" />
+      <RAvatar :name="child.name" :color="child.color" :size="72" decorative />
       <span class="text-[22px] font-medium text-ink">{{ child.name }}</span>
     </button>
   </div>

@@ -89,7 +89,7 @@ async function press(key: string): Promise<void> {
           class="flex flex-col items-center gap-2 rounded-[var(--radius-control)] p-2"
           @click="pick(member)"
         >
-          <RAvatar :name="member.displayName" :color="member.color" :size="96" aria-hidden="true" />
+          <RAvatar :name="member.displayName" :color="member.color" :size="96" decorative />
           <span class="text-[22px] font-medium text-ink">{{ member.displayName }}</span>
         </button>
       </li>
@@ -101,7 +101,7 @@ async function press(key: string): Promise<void> {
         class="flex min-h-[60px] items-center gap-2 rounded-full bg-surface-2 py-1 pr-4 pl-1"
         @click="backToWho"
       >
-        <RAvatar :name="selected.displayName" :color="selected.color" :size="44" aria-hidden="true" />
+        <RAvatar :name="selected.displayName" :color="selected.color" :size="44" decorative />
         <span class="text-[18px] text-ink-3">Not you?</span>
       </button>
 

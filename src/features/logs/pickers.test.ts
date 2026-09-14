@@ -87,3 +87,19 @@ describe('WhoRow', () => {
     w.unmount()
   })
 })
+
+describe('avatars inside picker options', () => {
+  it('are decorative, so each option is named by its visible text only', () => {
+    const picker = mountModel(ChildPicker, null, { children })
+    const who = mountModel(WhoRow, null, { members, required: false })
+    for (const w of [picker, who]) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      for (const option of radios(w) as any[]) {
+        expect(option.find('[role="img"]').exists()).toBe(false)
+        expect(option.find('[aria-label]').exists()).toBe(false)
+        expect(option.get('span.rounded-full').attributes('aria-hidden')).toBe('true')
+      }
+      w.unmount()
+    }
+  })
+})

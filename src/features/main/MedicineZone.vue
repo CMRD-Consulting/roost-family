@@ -13,7 +13,7 @@ defineProps<{ lines: MedicineLineModel[] }>()
       data-testid="medicine-line"
       class="flex min-w-0 items-center gap-4"
     >
-      <RAvatar :name="line.childName" :color="line.childColor" :size="40" />
+      <RAvatar :name="line.childName" :color="line.childColor" :size="40" decorative />
       <div class="flex min-w-0 flex-col">
         <p class="flex min-w-0 flex-wrap items-baseline gap-x-3">
           <span class="text-[22px] font-medium">{{ line.childName }} · {{ line.medicineName }}</span>

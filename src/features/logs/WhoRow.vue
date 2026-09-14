@@ -37,7 +37,7 @@ function pick(member: Member): void {
         @click="pick(member)"
         @keydown="onKeydown($event, i)"
       >
-        <RAvatar :name="member.displayName" :color="member.color" :size="44" />
+        <RAvatar :name="member.displayName" :color="member.color" :size="44" decorative />
         <span class="text-[19px] font-medium text-ink">{{ member.displayName }}</span>
       </button>
     </div>
