@@ -29,14 +29,14 @@ export type LogCommand =
   | { kind: 'dose.acknowledge'; householdId: string; doseId: string; membershipId: string; pin: string }
   | { kind: 'dinner.set'; householdId: string; text: string | null; previous: string | null }
   | {
-      kind: 'routine.complete'
+      /** Marks one routine step done (or not done). Only that step changes, so two displays never overwrite each other. */
+      kind: 'routine.step'
       householdId: string
       childId: string
       routineId: string
       day: HouseholdDate
-      /** Full new array of completed step indexes, sorted and unique. */
-      completed: number[]
-      previous: number[]
+      stepIndex: number
+      done: boolean
     }
 
 /** Commands that need a live connection (PIN checks happen on the server). */

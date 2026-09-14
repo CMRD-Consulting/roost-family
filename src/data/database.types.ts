@@ -1371,6 +1371,16 @@ export type Database = {
         Args: { p_household_id: string; p_pin: string }
         Returns: undefined
       }
+      set_routine_step: {
+        Args: {
+          p_child_id: string
+          p_day: string
+          p_done: boolean
+          p_routine_id: string
+          p_step_index: number
+        }
+        Returns: number[]
+      }
       setup_household: {
         Args: {
           p_color: string

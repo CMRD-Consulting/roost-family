@@ -78,16 +78,19 @@ export function applyCommand(snapshot: HouseholdSnapshot, cmd: LogCommand, now: 
     case 'dinner.set':
       return { ...snapshot, household: { ...snapshot.household, dinnerTonight: cmd.text } }
 
-    case 'routine.complete': {
-      const index = snapshot.routineProgress.findIndex(
-        (p) => p.childId === cmd.childId && p.routineId === cmd.routineId && p.day === cmd.day,
-      )
+    case 'routine.step': {
+      const matches = (p: { childId: string; routineId: string; day: string }) =>
+        p.childId === cmd.childId && p.routineId === cmd.routineId && p.day === cmd.day
+      const index = snapshot.routineProgress.findIndex(matches)
+      const before = index === -1 ? [] : snapshot.routineProgress[index]!.completed
+      const without = before.filter((i) => i !== cmd.stepIndex)
+      const completed = cmd.done ? [...without, cmd.stepIndex].sort((a, b) => a - b) : without
       if (index === -1) {
-        const row = { childId: cmd.childId, routineId: cmd.routineId, day: cmd.day, completed: cmd.completed }
+        const row = { childId: cmd.childId, routineId: cmd.routineId, day: cmd.day, completed }
         return { ...snapshot, routineProgress: [...snapshot.routineProgress, row] }
       }
       const copy = snapshot.routineProgress.slice()
-      copy[index] = { ...copy[index]!, completed: cmd.completed }
+      copy[index] = { ...copy[index]!, completed }
       return { ...snapshot, routineProgress: copy }
     }
   }

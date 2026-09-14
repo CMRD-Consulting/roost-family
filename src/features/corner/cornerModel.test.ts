@@ -75,16 +75,16 @@ describe('scheduleModel', () => {
 })
 
 describe('completeCurrent', () => {
-  it('adds the current step to the completed steps, sorted, with the previous array for undo', () => {
+  it('marks just the current step done', () => {
     const model = scheduleModel(demo(), IVY, now)!
     expect(completeCurrent(model)).toEqual({
-      kind: 'routine.complete',
+      kind: 'routine.step',
       householdId: 'aaaaaaaa-0000-0000-0000-000000000001',
       childId: IVY,
       routineId: HOME_DAY,
       day: '2026-09-14',
-      completed: [0, 1, 2, 5],
-      previous: [0, 1, 2],
+      stepIndex: 5,
+      done: true,
     })
   })
 

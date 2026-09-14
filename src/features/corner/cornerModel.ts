@@ -10,7 +10,7 @@ import type { HouseholdDate, HourMinute } from '@/domain/types'
 import type { LogCommand } from '@/data/logCommands'
 import type { HouseholdSnapshot, SnapshotChild } from '@/data/snapshot'
 
-export type RoutineCompleteCommand = Extract<LogCommand, { kind: 'routine.complete' }>
+export type RoutineStepCommand = Extract<LogCommand, { kind: 'routine.step' }>
 
 export interface ScheduleStep {
   index: number
@@ -95,18 +95,17 @@ export function scheduleModel(snapshot: HouseholdSnapshot, childId: string, now:
   }
 }
 
-/** The `routine.complete` command that marks the current step done, or null when no step is current. */
-export function completeCurrent(model: ScheduleModel): RoutineCompleteCommand | null {
+/** The `routine.step` command that marks the current step done, or null when no step is current. */
+export function completeCurrent(model: ScheduleModel): RoutineStepCommand | null {
   if (model.currentIndex === null) return null
-  const completed = [...new Set([...model.completed, model.currentIndex])].sort((a, b) => a - b)
   return {
-    kind: 'routine.complete',
+    kind: 'routine.step',
     householdId: model.householdId,
     childId: model.childId,
     routineId: model.routineId,
     day: model.day,
-    completed,
-    previous: [...model.completed],
+    stepIndex: model.currentIndex,
+    done: true,
   }
 }
 

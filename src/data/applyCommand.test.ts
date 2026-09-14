@@ -217,47 +217,51 @@ describe('applyCommand', () => {
     })
   })
 
-  describe('routine.complete', () => {
+  describe('routine.step', () => {
     const routine = base.routines[0]!
     const existing = base.routineProgress.find((p) => p.childId === ivy.id && p.routineId === routine.id)!
+    const step = (stepIndex: number, done: boolean, over: Partial<Extract<LogCommand, { kind: 'routine.step' }>> = {}): LogCommand => ({
+      kind: 'routine.step', householdId: base.household.id, childId: ivy.id, routineId: routine.id,
+      day: existing.day, stepIndex, done, ...over,
+    })
+    const completedAfter = (next: typeof base, childId = ivy.id, routineId = routine.id, day = existing.day) =>
+      next.routineProgress.find((p) => p.childId === childId && p.routineId === routineId && p.day === day)?.completed
 
-    it('replaces the completed array for an existing row (matched by childId/routineId/day)', () => {
-      const cmd: LogCommand = {
-        kind: 'routine.complete', householdId: base.household.id, childId: ivy.id, routineId: routine.id,
-        day: existing.day, completed: [0, 1, 2, 3], previous: existing.completed,
-      }
-      const next = applyCommand(base, cmd, now)
-      expect(next.routineProgress.find((p) => p.childId === ivy.id && p.routineId === routine.id && p.day === existing.day)?.completed).toEqual([0, 1, 2, 3])
-      // No new row added, no other rows touched.
+    it('adds the step to an existing row, keeping the array sorted (matched by childId/routineId/day)', () => {
+      expect(existing.completed).toEqual([0, 1, 2])
+      const next = applyCommand(applyCommand(base, step(5, true), now), step(3, true), now)
+      expect(completedAfter(next)).toEqual([0, 1, 2, 3, 5])
+      // No new row added.
       expect(next.routineProgress.length).toBe(base.routineProgress.length)
     })
 
+    it('removes the step when done is false', () => {
+      expect(completedAfter(applyCommand(base, step(1, false), now))).toEqual([0, 2])
+    })
+
     it('adds a new row when none exists yet for (childId, routineId, day)', () => {
-      const cmd: LogCommand = {
-        kind: 'routine.complete', householdId: base.household.id, childId: theo.id, routineId: 'routine-new',
-        day: '2026-09-20', completed: [0], previous: [],
-      }
-      const next = applyCommand(base, cmd, now)
+      const next = applyCommand(base, step(0, true, { childId: theo.id, routineId: 'routine-new', day: '2026-09-20' }), now)
       expect(next.routineProgress).toContainEqual({ childId: theo.id, routineId: 'routine-new', day: '2026-09-20', completed: [0] })
       expect(next.routineProgress.length).toBe(base.routineProgress.length + 1)
     })
 
-    it('is idempotent', () => {
-      const cmd: LogCommand = {
-        kind: 'routine.complete', householdId: base.household.id, childId: ivy.id, routineId: routine.id,
-        day: existing.day, completed: [0, 1, 2, 3], previous: existing.completed,
-      }
-      expectIdempotent(base, cmd)
+    it('applied on top of a newer server row, keeps the other display\'s steps', () => {
+      const server = { ...base, routineProgress: base.routineProgress.map((p) => (p === existing ? { ...p, completed: [0, 1, 2, 4] } : p)) }
+      expect(completedAfter(applyCommand(server, step(3, true), now))).toEqual([0, 1, 2, 3, 4])
+    })
+
+    it('is idempotent, both ways', () => {
+      expectIdempotent(base, step(3, true))
+      expectIdempotent(base, step(1, false))
+      expect(completedAfter(applyCommand(base, step(1, true), now))).toEqual([0, 1, 2])
+      expect(completedAfter(applyCommand(base, step(7, false), now))).toEqual([0, 1, 2])
     })
 
     it('does not mutate the input snapshot', () => {
-      const cmd: LogCommand = {
-        kind: 'routine.complete', householdId: base.household.id, childId: ivy.id, routineId: routine.id,
-        day: existing.day, completed: [0, 1, 2, 3], previous: existing.completed,
-      }
-      const next = applyCommand(base, cmd, now)
+      const next = applyCommand(base, step(3, true), now)
       expect(next).not.toBe(base)
-      expect(base.routineProgress.find((p) => p.childId === ivy.id && p.routineId === routine.id)?.completed).toEqual(existing.completed)
+      expect(completedAfter(base)).toEqual(existing.completed)
+      expect(existing.completed).toEqual([0, 1, 2])
     })
   })
 })

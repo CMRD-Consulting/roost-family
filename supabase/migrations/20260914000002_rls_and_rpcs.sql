@@ -358,6 +358,48 @@ begin
   update public.households set dinner_tonight = v_text where id = p_household_id;
 end $$;
 
+-- ─── RPC: routine progress ───────────────────────────────────────────────
+-- Kids' Corner marks one step done (or not done) at a time (spec §7.5). The change is applied to the stored
+-- array inside one upsert, which locks the row, so two displays finishing different steps at once both keep
+-- their step (a client-side "write the whole array" would lose one). Returns the new array, sorted.
+create function public.set_routine_step(p_child_id uuid, p_routine_id uuid, p_day date, p_step_index int, p_done boolean)
+returns int[]
+language plpgsql security definer set search_path = '' as $$
+declare
+  v_household uuid;
+  v_step_count int;
+  v_completed int[];
+begin
+  if p_child_id is null or not private.child_in_my_household(p_child_id) then
+    raise exception 'child not found' using errcode = '42501';
+  end if;
+  select jsonb_array_length(r.steps) into v_step_count
+  from public.routines r where r.id = p_routine_id and r.child_id = p_child_id;
+  if v_step_count is null then
+    raise exception 'routine not found for this child' using errcode = '22023';
+  end if;
+  if p_day is null or p_done is null then
+    raise exception 'day and done are required' using errcode = '22023';
+  end if;
+  if p_step_index is null or p_step_index < 0 or p_step_index >= v_step_count then
+    raise exception 'step index out of range' using errcode = '22023';
+  end if;
+  select ch.household_id into v_household from public.child_households ch where ch.child_id = p_child_id;
+
+  insert into public.routine_progress as rp (household_id, child_id, routine_id, day, completed_step_indexes)
+  values (v_household, p_child_id, p_routine_id, p_day, case when p_done then array[p_step_index] else '{}'::int[] end)
+  on conflict (child_id, routine_id, day) do update
+  set completed_step_indexes = case
+    when not p_done then array_remove(rp.completed_step_indexes, p_step_index)
+    when p_step_index = any (rp.completed_step_indexes) then rp.completed_step_indexes
+    else array(select i from unnest(array_append(rp.completed_step_indexes, p_step_index)) as u (i) order by i)
+  end
+  returning rp.completed_step_indexes into v_completed;
+  return v_completed;
+end $$;
+revoke execute on function public.set_routine_step(uuid, uuid, date, int, boolean) from public, anon;
+grant execute on function public.set_routine_step(uuid, uuid, date, int, boolean) to authenticated;
+
 -- ─── RPC: PINs ───────────────────────────────────────────────────────────
 create function public.set_my_pin(p_household_id uuid, p_pin text) returns void
 language plpgsql security definer set search_path = '' as $$
@@ -549,6 +591,7 @@ grant execute on function
   public.add_child(uuid, text, date, text),
   public.setup_household(text, text, text, double precision, double precision, text, text, text, jsonb, text),
   public.set_dinner_tonight(uuid, text),
+  public.set_routine_step(uuid, uuid, date, int, boolean),
   public.set_my_pin(uuid, text), public.verify_pin(uuid, text),
   public.void_dose(uuid, uuid, text, text), public.acknowledge_dose_conflict(uuid, uuid, text),
   public.register_display(uuid, text), public.claim_display(text), public.my_display(),

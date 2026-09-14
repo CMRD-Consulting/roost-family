@@ -145,6 +145,47 @@ select pg_temp.expect_error('routine progress with B routine',
   $q$insert into public.routine_progress (household_id, child_id, routine_id, day)
      values (pg_temp.v('household_a'), pg_temp.v('kid_a'), pg_temp.v('routine_b'), current_date)$q$, '23503');
 
+\echo '[08b] set_routine_step: members set and unset steps without losing each other''s updates'
+reset role;
+update public.routines set steps = '[{"label":"Teeth"},{"label":"Shoes"}]' where id = :'routine_a';
+update public.routines set steps = '[{"label":"Bath"}]' where id = :'routine_b';
+set local role authenticated;
+select set_config('request.jwt.claims', :'A', true);
+select pg_temp.expect('A sets step 0', public.set_routine_step(pg_temp.v('kid_a'), pg_temp.v('routine_a'), '2026-09-14', 0, true) = '{0}'::int[]);
+-- Two separate calls (e.g. two tablets): the second must add to the first, not overwrite it.
+select set_config('request.jwt.claims', :'D', true);
+select pg_temp.expect('display sets step 1', public.set_routine_step(pg_temp.v('kid_a'), pg_temp.v('routine_a'), '2026-09-14', 1, true) = '{0,1}'::int[]);
+select pg_temp.expect('setting a done step again is a no-op', public.set_routine_step(pg_temp.v('kid_a'), pg_temp.v('routine_a'), '2026-09-14', 0, true) = '{0,1}'::int[]);
+select pg_temp.expect('stored array is {0,1}', (select completed_step_indexes from public.routine_progress
+  where child_id = pg_temp.v('kid_a') and routine_id = pg_temp.v('routine_a') and day = '2026-09-14') = '{0,1}'::int[]);
+select pg_temp.expect('stored row is in A household', (select household_id from public.routine_progress
+  where child_id = pg_temp.v('kid_a') and routine_id = pg_temp.v('routine_a') and day = '2026-09-14') = pg_temp.v('household_a'));
+select set_config('request.jwt.claims', :'A', true);
+select pg_temp.expect('A unsets step 0', public.set_routine_step(pg_temp.v('kid_a'), pg_temp.v('routine_a'), '2026-09-14', 0, false) = '{1}'::int[]);
+select pg_temp.expect('unsetting a step that is not done is a no-op', public.set_routine_step(pg_temp.v('kid_a'), pg_temp.v('routine_a'), '2026-09-14', 0, false) = '{1}'::int[]);
+select pg_temp.expect('set 1 again then 0 keeps the array sorted', public.set_routine_step(pg_temp.v('kid_a'), pg_temp.v('routine_a'), '2026-09-14', 0, true) = '{0,1}'::int[]);
+select pg_temp.expect('unsetting on a new day creates an empty row', public.set_routine_step(pg_temp.v('kid_a'), pg_temp.v('routine_a'), '2026-09-15', 1, false) = '{}'::int[]);
+select pg_temp.expect_error('step index past the last step',
+  $q$select public.set_routine_step(pg_temp.v('kid_a'), pg_temp.v('routine_a'), '2026-09-14', 2, true)$q$, '22023');
+select pg_temp.expect_error('negative step index',
+  $q$select public.set_routine_step(pg_temp.v('kid_a'), pg_temp.v('routine_a'), '2026-09-14', -1, true)$q$, '22023');
+select pg_temp.expect_error('routine of another child',
+  $q$select public.set_routine_step(pg_temp.v('kid_a'), pg_temp.v('routine_b'), '2026-09-14', 0, true)$q$, '22023');
+select set_config('request.jwt.claims', :'B', true);
+select pg_temp.expect_error('other household sets a step',
+  $q$select public.set_routine_step(pg_temp.v('kid_a'), pg_temp.v('routine_a'), '2026-09-14', 0, true)$q$, '42501');
+select pg_temp.expect_error('other household unsets a step',
+  $q$select public.set_routine_step(pg_temp.v('kid_a'), pg_temp.v('routine_a'), '2026-09-14', 1, false)$q$, '42501');
+reset role;
+select pg_temp.expect('row still {0,1}', (select completed_step_indexes from public.routine_progress
+  where child_id = :'kid_a' and routine_id = :'routine_a' and day = '2026-09-14') = '{0,1}'::int[]);
+select pg_temp.expect('anon cannot execute set_routine_step',
+  not has_function_privilege('anon', 'public.set_routine_step(uuid, uuid, date, int, boolean)', 'execute'));
+select pg_temp.expect('authenticated can execute set_routine_step',
+  has_function_privilege('authenticated', 'public.set_routine_step(uuid, uuid, date, int, boolean)', 'execute'));
+set local role authenticated;
+select set_config('request.jwt.claims', :'A', true);
+
 \echo '[09] Cross-household membership attribution rejected'
 select pg_temp.expect_error('sleep entry logged by B membership',
   $q$insert into public.sleep_entries (household_id, child_id, start_at, type, logged_by_membership_id)

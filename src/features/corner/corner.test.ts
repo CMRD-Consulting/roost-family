@@ -160,7 +160,7 @@ describe("Kids' Corner (demo source)", () => {
       await settle()
 
       expect(submit).toHaveBeenCalledWith(
-        expect.objectContaining({ kind: 'routine.complete', childId: IVY, routineId: 'routine-ivy-homeday', completed: [0, 1, 2, 5], previous: [0, 1, 2] }),
+        expect.objectContaining({ kind: 'routine.step', childId: IVY, routineId: 'routine-ivy-homeday', day: '2026-09-14', stepIndex: 5, done: true }),
       )
       expect(sound.playChime).toHaveBeenCalledTimes(1)
       expect(wrapper.find('button[aria-label="Done with Books"]').exists()).toBe(true)
