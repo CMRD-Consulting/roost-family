@@ -1321,6 +1321,24 @@ export type Database = {
         }
         Returns: string
       }
+      add_child_pin: {
+        Args: {
+          p_birthday: string
+          p_color: string
+          p_membership_id: string
+          p_name: string
+          p_pin: string
+        }
+        Returns: string
+      }
+      archive_medicine: {
+        Args: { p_medicine_id: string; p_membership_id: string; p_pin: string }
+        Returns: undefined
+      }
+      archive_sticker_category: {
+        Args: { p_category_id: string; p_membership_id: string; p_pin: string }
+        Returns: undefined
+      }
       claim_display: {
         Args: { p_token: string }
         Returns: {
@@ -1340,6 +1358,19 @@ export type Database = {
           p_zip: string
         }
         Returns: string
+      }
+      delete_old_entries: {
+        Args: {
+          p_before: string
+          p_membership_id: string
+          p_pin: string
+          p_table: string
+        }
+        Returns: number
+      }
+      delete_routine: {
+        Args: { p_membership_id: string; p_pin: string; p_routine_id: string }
+        Returns: undefined
       }
       display_heartbeat: { Args: never; Returns: boolean }
       end_sitter_session: {
@@ -1375,8 +1406,32 @@ export type Database = {
         Args: { p_household_id: string; p_text: string }
         Returns: undefined
       }
+      set_feature_override: {
+        Args: {
+          p_child_id: string
+          p_enabled: boolean
+          p_feature: string
+          p_membership_id: string
+          p_pin: string
+        }
+        Returns: undefined
+      }
+      set_my_color: {
+        Args: { p_color: string; p_membership_id: string; p_pin: string }
+        Returns: undefined
+      }
       set_my_pin: {
         Args: { p_household_id: string; p_pin: string }
+        Returns: undefined
+      }
+      set_routine_day_override: {
+        Args: {
+          p_child_id: string
+          p_day: string
+          p_membership_id: string
+          p_pin: string
+          p_routine_id: string
+        }
         Returns: undefined
       }
       set_routine_step: {
@@ -1388,6 +1443,13 @@ export type Database = {
           p_step_index: number
         }
         Returns: number[]
+      }
+      settings_verify: {
+        Args: { p_membership_id: string; p_pin: string }
+        Returns: {
+          out_display_name: string
+          out_role: string
+        }[]
       }
       setup_household: {
         Args: {
@@ -1411,6 +1473,76 @@ export type Database = {
           p_membership_id: string
           p_pin: string
           p_sitter_name?: string
+        }
+        Returns: string
+      }
+      update_child: {
+        Args: {
+          p_allergies: string
+          p_birthday: string
+          p_child_id: string
+          p_color: string
+          p_food_rules: string
+          p_membership_id: string
+          p_name: string
+          p_night_end: string
+          p_night_start: string
+          p_pin: string
+        }
+        Returns: undefined
+      }
+      update_household_settings: {
+        Args: {
+          p_default_night_end: string
+          p_default_night_start: string
+          p_diaper_log_enabled: boolean
+          p_leave_by_buffer_min: number
+          p_membership_id: string
+          p_name: string
+          p_night_mode_end: string
+          p_night_mode_start: string
+          p_pin: string
+          p_time_zone: string
+          p_zip: string
+        }
+        Returns: undefined
+      }
+      update_sitter_info: {
+        Args: { p_info: Json; p_membership_id: string; p_pin: string }
+        Returns: undefined
+      }
+      upsert_medicine: {
+        Args: {
+          p_child_id: string
+          p_max_doses_per_24h: number
+          p_medicine_id: string
+          p_membership_id: string
+          p_min_interval_hours: number
+          p_name: string
+          p_pin: string
+        }
+        Returns: string
+      }
+      upsert_routine: {
+        Args: {
+          p_child_id: string
+          p_membership_id: string
+          p_name: string
+          p_pin: string
+          p_routine_id: string
+          p_steps: Json
+          p_weekdays: number[]
+        }
+        Returns: string
+      }
+      upsert_sticker_category: {
+        Args: {
+          p_category_id: string
+          p_icon_key: string
+          p_membership_id: string
+          p_name: string
+          p_pin: string
+          p_sort_order: number
         }
         Returns: string
       }

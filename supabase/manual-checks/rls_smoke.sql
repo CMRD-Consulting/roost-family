@@ -633,6 +633,327 @@ select pg_temp.expect('authenticated can select sitter_sessions',
 select pg_temp.expect('sitter_sessions has no member write policy', not exists (
   select 1 from pg_policies where schemaname = 'public' and tablename = 'sitter_sessions' and cmd <> 'SELECT'));
 
+-- ─── Settings: PIN-checked configuration RPCs ────────────────────────────
+-- F owns household F (PIN 2468) and G is its caregiver (PIN 3333). B owns household B (PIN 1111) and E is B's display.
+-- True when the newest audit row in the household matches (target null = any target). Runs as the current role.
+create function pg_temp.audited(p_household uuid, p_membership uuid, p_section text, p_action text, p_target uuid)
+returns boolean
+language sql stable as $$
+  select coalesce((
+    select a.membership_id = p_membership and a.change ->> 'section' = p_section and a.change ->> 'action' = p_action
+       and (p_target is null or a.change ->> 'target_id' = p_target::text)
+    from public.settings_audit a where a.household_id = p_household order by a.id desc limit 1), false)
+$$;
+grant execute on all functions in schema pg_temp to authenticated;
+set local role authenticated;
+
+\echo '[41] settings_verify returns the role for the right PIN and rejects wrong PINs, caregivers and other households'
+select set_config('request.jwt.claims', :'F', true);
+select pg_temp.expect('F verifies as owner', (
+  select out_role = 'owner' and out_display_name = 'Frankie' from public.settings_verify(pg_temp.v('membership_f'), '2468')));
+select pg_temp.expect_error('verify with a wrong PIN',
+  $q$select * from public.settings_verify(pg_temp.v('membership_f'), '0000')$q$, '42501');
+select pg_temp.expect_error('verify with a malformed PIN',
+  $q$select * from public.settings_verify(pg_temp.v('membership_f'), '24680')$q$, '42501');
+select pg_temp.expect_error('verify as a caregiver',
+  $q$select * from public.settings_verify(pg_temp.v('membership_g'), '3333')$q$, '42501');
+select pg_temp.expect_error('verify with another household''s membership and PIN',
+  $q$select * from public.settings_verify(pg_temp.v('membership_b'), '1111')$q$, '42501');
+select set_config('request.jwt.claims', :'B', true);
+select pg_temp.expect_error('non-member verifies with F''s PIN',
+  $q$select * from public.settings_verify(pg_temp.v('membership_f'), '2468')$q$, '42501');
+select set_config('request.jwt.claims', :'E', true);
+select pg_temp.expect('a display verifies with its household adult''s PIN', (
+  select out_role = 'owner' from public.settings_verify(pg_temp.v('membership_b'), '1111')));
+
+\echo '[42] update_household_settings saves every field, audits, and rejects bad PINs and input'
+select set_config('request.jwt.claims', :'F', true);
+select public.update_household_settings(:'membership_f', '2468', '  F home ', '', 'America/Los_Angeles', 15,
+  '19:00', '06:30', '21:00', '06:15', true);
+select pg_temp.expect('household settings stored', (
+  select name = 'F home' and zip is null and time_zone = 'America/Los_Angeles' and leave_by_buffer_min = 15
+     and default_night_sleep_start = '19:00' and default_night_sleep_end = '06:30'
+     and night_mode_start = '21:00' and night_mode_end = '06:15' and diaper_log_enabled
+  from public.households where id = pg_temp.v('household_f')));
+select pg_temp.expect('household update audited', pg_temp.audited(pg_temp.v('household_f'), pg_temp.v('membership_f'), 'household', 'update', pg_temp.v('household_f')));
+select pg_temp.expect_error('household with a wrong PIN',
+  $q$select public.update_household_settings(pg_temp.v('membership_f'), '1111', 'X', '80202', 'America/Denver', 20, '18:00', '05:00', '20:00', '06:00', false)$q$, '42501');
+select pg_temp.expect_error('household as a caregiver',
+  $q$select public.update_household_settings(pg_temp.v('membership_g'), '3333', 'X', '80202', 'America/Denver', 20, '18:00', '05:00', '20:00', '06:00', false)$q$, '42501');
+select pg_temp.expect_error('household with a bad ZIP',
+  $q$select public.update_household_settings(pg_temp.v('membership_f'), '2468', 'X', '8020', 'America/Denver', 20, '18:00', '05:00', '20:00', '06:00', false)$q$, '22023');
+select pg_temp.expect_error('household with an unknown time zone',
+  $q$select public.update_household_settings(pg_temp.v('membership_f'), '2468', 'X', '80202', 'Mars/Base', 20, '18:00', '05:00', '20:00', '06:00', false)$q$, '22023');
+select pg_temp.expect_error('household with a 121-minute buffer',
+  $q$select public.update_household_settings(pg_temp.v('membership_f'), '2468', 'X', '80202', 'America/Denver', 121, '18:00', '05:00', '20:00', '06:00', false)$q$, '22023');
+select pg_temp.expect_error('household with a blank name',
+  $q$select public.update_household_settings(pg_temp.v('membership_f'), '2468', '   ', '80202', 'America/Denver', 20, '18:00', '05:00', '20:00', '06:00', false)$q$, '22023');
+select pg_temp.expect_error('household with a missing Night Mode time',
+  $q$select public.update_household_settings(pg_temp.v('membership_f'), '2468', 'X', '80202', 'America/Denver', 20, '18:00', '05:00', null, '06:00', false)$q$, '22023');
+select set_config('request.jwt.claims', :'B', true);
+select pg_temp.expect_error('non-member updates F household with F''s PIN',
+  $q$select public.update_household_settings(pg_temp.v('membership_f'), '2468', 'X', '80202', 'America/Denver', 20, '18:00', '05:00', '20:00', '06:00', false)$q$, '42501');
+select set_config('request.jwt.claims', :'F', true);
+select pg_temp.expect('rejected updates left F household unchanged', (
+  select name = 'F home' from public.households where id = pg_temp.v('household_f')));
+
+\echo '[43] update_sitter_info keeps known string keys only'
+select public.update_sitter_info(:'membership_f', '2468',
+  '{"napInstructions":"  Crib  ","bedtime":"","pediatrician":null,"whereThings":"Hall closet"}');
+select pg_temp.expect('sitter info trimmed and blanks dropped', (
+  select sitter_info = '{"napInstructions":"Crib","whereThings":"Hall closet"}'::jsonb
+  from public.households where id = pg_temp.v('household_f')));
+select pg_temp.expect('sitter info audited', pg_temp.audited(pg_temp.v('household_f'), pg_temp.v('membership_f'), 'sitter_info', 'update', null));
+select pg_temp.expect_error('sitter info with an unknown key',
+  $q$select public.update_sitter_info(pg_temp.v('membership_f'), '2468', '{"wifiPassword":"x"}')$q$, '22023');
+select pg_temp.expect_error('sitter info with a non-string value',
+  $q$select public.update_sitter_info(pg_temp.v('membership_f'), '2468', '{"bedtime":7}')$q$, '22023');
+select pg_temp.expect_error('sitter info over 1000 characters',
+  $q$select public.update_sitter_info(pg_temp.v('membership_f'), '2468', jsonb_build_object('address', repeat('x', 1001)))$q$, '22023');
+select pg_temp.expect_error('sitter info that is not an object',
+  $q$select public.update_sitter_info(pg_temp.v('membership_f'), '2468', '["x"]')$q$, '22023');
+select pg_temp.expect_error('sitter info with a wrong PIN',
+  $q$select public.update_sitter_info(pg_temp.v('membership_f'), '0000', '{}')$q$, '42501');
+select set_config('request.jwt.claims', :'B', true);
+select pg_temp.expect_error('non-member updates F sitter info',
+  $q$select public.update_sitter_info(pg_temp.v('membership_f'), '2468', '{}')$q$, '42501');
+select set_config('request.jwt.claims', :'F', true);
+
+\echo '[44] add_child_pin adds children up to the limit of 8'
+select public.add_child_pin(:'membership_f', '2468', ' Juno ', '2024-02-02', '#2F86A6') as kid_f3 \gset
+select set_config('smoke.kid_f3', :'kid_f3', true);
+select pg_temp.expect('child added to F', (
+  select c.name = 'Juno' and ch.household_id = pg_temp.v('household_f')
+  from public.children c join public.child_households ch on ch.child_id = c.id where c.id = pg_temp.v('kid_f3')));
+select pg_temp.expect('child add audited', pg_temp.audited(pg_temp.v('household_f'), pg_temp.v('membership_f'), 'children', 'add', pg_temp.v('kid_f3')));
+select pg_temp.expect_error('add child with a bad color',
+  $q$select public.add_child_pin(pg_temp.v('membership_f'), '2468', 'Kid', '2024-01-01', 'red')$q$, '22023');
+select pg_temp.expect_error('add child with a future birthday',
+  $q$select public.add_child_pin(pg_temp.v('membership_f'), '2468', 'Kid', current_date + 30, '#2F86A6')$q$, '22023');
+select pg_temp.expect_error('add child with a wrong PIN',
+  $q$select public.add_child_pin(pg_temp.v('membership_f'), '0000', 'Kid', '2024-01-01', '#2F86A6')$q$, '42501');
+select public.add_child_pin(:'membership_f', '2468', 'Kid ' || i, '2024-01-01', '#2F86A6') from generate_series(4, 8) as i;
+select pg_temp.expect('F has 8 children', (select count(*) from public.child_households where household_id = pg_temp.v('household_f')) = 8);
+select pg_temp.expect_error('ninth child',
+  $q$select public.add_child_pin(pg_temp.v('membership_f'), '2468', 'Kid 9', '2024-01-01', '#2F86A6')$q$, '22023');
+select set_config('request.jwt.claims', :'B', true);
+select pg_temp.expect_error('non-member adds a child to F',
+  $q$select public.add_child_pin(pg_temp.v('membership_f'), '2468', 'Kid', '2024-01-01', '#2F86A6')$q$, '42501');
+select set_config('request.jwt.claims', :'F', true);
+
+\echo '[45] update_child saves fields and requires both night-sleep times or neither'
+select public.update_child(:'membership_f', '2468', :'kid_f3', 'Juniper', '2024-02-03', '#8A56AC', ' Eggs ', null, '19:30', '06:00');
+select pg_temp.expect('child updated', (
+  select name = 'Juniper' and birthday = '2024-02-03' and color = '#8A56AC' and allergies = 'Eggs' and food_rules = ''
+     and night_sleep_start = '19:30' and night_sleep_end = '06:00'
+  from public.children where id = pg_temp.v('kid_f3')));
+select pg_temp.expect('child update audited', pg_temp.audited(pg_temp.v('household_f'), pg_temp.v('membership_f'), 'children', 'update', pg_temp.v('kid_f3')));
+select public.update_child(:'membership_f', '2468', :'kid_f3', 'Juniper', '2024-02-03', '#8A56AC', '', '', null, null);
+select pg_temp.expect('night window cleared', (select night_sleep_start is null and night_sleep_end is null from public.children where id = pg_temp.v('kid_f3')));
+select pg_temp.expect_error('update child with only a night start',
+  $q$select public.update_child(pg_temp.v('membership_f'), '2468', pg_temp.v('kid_f3'), 'Juniper', '2024-02-03', '#8A56AC', '', '', '19:00', null)$q$, '22023');
+select pg_temp.expect_error('update child with a 41-character name',
+  $q$select public.update_child(pg_temp.v('membership_f'), '2468', pg_temp.v('kid_f3'), repeat('x', 41), '2024-02-03', '#8A56AC', '', '', null, null)$q$, '22023');
+select pg_temp.expect_error('update another household''s child',
+  $q$select public.update_child(pg_temp.v('membership_f'), '2468', pg_temp.v('kid_b'), 'Hacked', '2023-01-01', '#8A56AC', '', '', null, null)$q$, '42501');
+select pg_temp.expect_error('update child with a wrong PIN',
+  $q$select public.update_child(pg_temp.v('membership_f'), '0000', pg_temp.v('kid_f3'), 'Juniper', '2024-02-03', '#8A56AC', '', '', null, null)$q$, '42501');
+
+\echo '[46] set_feature_override sets, changes and clears an override'
+select public.set_feature_override(:'membership_f', '2468', :'kid_f3', 'kidsCorner', false);
+select pg_temp.expect('override off', (select not enabled from public.feature_overrides where child_id = pg_temp.v('kid_f3') and feature = 'kidsCorner'));
+select public.set_feature_override(:'membership_f', '2468', :'kid_f3', 'kidsCorner', true);
+select pg_temp.expect('override on', (select enabled from public.feature_overrides where child_id = pg_temp.v('kid_f3') and feature = 'kidsCorner'));
+select pg_temp.expect('override audited', pg_temp.audited(pg_temp.v('household_f'), pg_temp.v('membership_f'), 'children', 'feature_override', pg_temp.v('kid_f3')));
+select public.set_feature_override(:'membership_f', '2468', :'kid_f3', 'kidsCorner', null);
+select pg_temp.expect('override cleared', not exists (select 1 from public.feature_overrides where child_id = pg_temp.v('kid_f3')));
+select pg_temp.expect_error('override an unknown feature',
+  $q$select public.set_feature_override(pg_temp.v('membership_f'), '2468', pg_temp.v('kid_f3'), 'teleport', true)$q$, '22023');
+select pg_temp.expect_error('override another household''s child',
+  $q$select public.set_feature_override(pg_temp.v('membership_f'), '2468', pg_temp.v('kid_b'), 'feeding', true)$q$, '42501');
+select pg_temp.expect_error('override with a wrong PIN',
+  $q$select public.set_feature_override(pg_temp.v('membership_f'), '0000', pg_temp.v('kid_f3'), 'feeding', true)$q$, '42501');
+
+\echo '[47] upsert_routine validates and normalizes steps'
+select public.upsert_routine(:'membership_f', '2468', null, :'kid_f3', ' Morning ', '{5,1,1,3}',
+  '[{"iconKey":"teeth","label":" Brush teeth ","time":"07:05"},{"label":"Shoes","photoId":null,"iconKey":null,"time":null}]') as routine_f \gset
+select set_config('smoke.routine_f', :'routine_f', true);
+select pg_temp.expect('routine created normalized', (
+  select name = 'Morning' and weekdays = '{1,3,5}'::smallint[] and household_id = pg_temp.v('household_f')
+     and steps = '[{"iconKey":"teeth","photoId":null,"label":"Brush teeth","time":"07:05"},{"iconKey":null,"photoId":null,"label":"Shoes","time":null}]'::jsonb
+  from public.routines where id = pg_temp.v('routine_f')));
+select pg_temp.expect('routine add audited', pg_temp.audited(pg_temp.v('household_f'), pg_temp.v('membership_f'), 'routines', 'add', pg_temp.v('routine_f')));
+select pg_temp.expect('routine update returns the same id',
+  public.upsert_routine(pg_temp.v('membership_f'), '2468', pg_temp.v('routine_f'), pg_temp.v('kid_f3'), 'Weekday', '{1,2,3,4,5}', '[]') = pg_temp.v('routine_f'));
+select pg_temp.expect('routine updated', (select name = 'Weekday' and steps = '[]'::jsonb from public.routines where id = pg_temp.v('routine_f')));
+select pg_temp.expect('routine update audited', pg_temp.audited(pg_temp.v('household_f'), pg_temp.v('membership_f'), 'routines', 'update', pg_temp.v('routine_f')));
+select pg_temp.expect_error('routine with 21 steps',
+  $q$select public.upsert_routine(pg_temp.v('membership_f'), '2468', null, pg_temp.v('kid_f3'), 'Long', '{}',
+     (select jsonb_agg(jsonb_build_object('label', 'Step ' || i)) from generate_series(1, 21) i))$q$, '22023');
+select pg_temp.expect_error('routine step with a bad time',
+  $q$select public.upsert_routine(pg_temp.v('membership_f'), '2468', null, pg_temp.v('kid_f3'), 'R', '{}', '[{"label":"A","time":"24:00"}]')$q$, '22023');
+select pg_temp.expect_error('routine step with an unknown key',
+  $q$select public.upsert_routine(pg_temp.v('membership_f'), '2468', null, pg_temp.v('kid_f3'), 'R', '{}', '[{"label":"A","url":"x"}]')$q$, '22023');
+select pg_temp.expect_error('routine step with a 41-character label',
+  $q$select public.upsert_routine(pg_temp.v('membership_f'), '2468', null, pg_temp.v('kid_f3'), 'R', '{}', jsonb_build_array(jsonb_build_object('label', repeat('x', 41))))$q$, '22023');
+select pg_temp.expect_error('routine step without a label',
+  $q$select public.upsert_routine(pg_temp.v('membership_f'), '2468', null, pg_temp.v('kid_f3'), 'R', '{}', '[{"iconKey":"teeth"}]')$q$, '22023');
+select pg_temp.expect_error('routine step with an unknown photo',
+  $q$select public.upsert_routine(pg_temp.v('membership_f'), '2468', null, pg_temp.v('kid_f3'), 'R', '{}', '[{"label":"A","photoId":"00000000-0000-0000-0000-000000000001"}]')$q$, '22023');
+select pg_temp.expect_error('routine with weekday 7',
+  $q$select public.upsert_routine(pg_temp.v('membership_f'), '2468', null, pg_temp.v('kid_f3'), 'R', '{7}', '[]')$q$, '22023');
+select pg_temp.expect_error('routine moved to another child',
+  $q$select public.upsert_routine(pg_temp.v('membership_f'), '2468', pg_temp.v('routine_f'), pg_temp.v('kid_f'), 'R', '{}', '[]')$q$, '22023');
+select pg_temp.expect_error('update another household''s routine',
+  $q$select public.upsert_routine(pg_temp.v('membership_f'), '2468', pg_temp.v('routine_b'), pg_temp.v('kid_f3'), 'R', '{}', '[]')$q$, '42501');
+select pg_temp.expect_error('routine for another household''s child',
+  $q$select public.upsert_routine(pg_temp.v('membership_f'), '2468', null, pg_temp.v('kid_b'), 'R', '{}', '[]')$q$, '42501');
+select pg_temp.expect_error('routine with a wrong PIN',
+  $q$select public.upsert_routine(pg_temp.v('membership_f'), '0000', null, pg_temp.v('kid_f3'), 'R', '{}', '[]')$q$, '42501');
+
+\echo '[48] set_routine_day_override sets, changes and clears today''s routine'
+select public.upsert_routine(:'membership_f', '2468', null, :'kid_f3', 'Sick day', '{}', '[{"label":"Rest"}]') as routine_f2 \gset
+select set_config('smoke.routine_f2', :'routine_f2', true);
+select public.set_routine_day_override(:'membership_f', '2468', :'kid_f3', '2026-09-14', :'routine_f');
+select public.set_routine_day_override(:'membership_f', '2468', :'kid_f3', '2026-09-14', :'routine_f2');
+select pg_temp.expect('override points at the second routine', (
+  select routine_id = pg_temp.v('routine_f2') and household_id = pg_temp.v('household_f')
+  from public.routine_day_overrides where child_id = pg_temp.v('kid_f3') and day = '2026-09-14'));
+select pg_temp.expect('day override audited', pg_temp.audited(pg_temp.v('household_f'), pg_temp.v('membership_f'), 'routines', 'day_override', pg_temp.v('kid_f3')));
+select public.set_routine_day_override(:'membership_f', '2468', :'kid_f3', '2026-09-14', null);
+select pg_temp.expect('override cleared', not exists (select 1 from public.routine_day_overrides where child_id = pg_temp.v('kid_f3')));
+select pg_temp.expect_error('override with another child''s routine',
+  $q$select public.set_routine_day_override(pg_temp.v('membership_f'), '2468', pg_temp.v('kid_f'), '2026-09-14', pg_temp.v('routine_f'))$q$, '22023');
+select pg_temp.expect_error('override with a wrong PIN',
+  $q$select public.set_routine_day_override(pg_temp.v('membership_f'), '0000', pg_temp.v('kid_f3'), '2026-09-14', null)$q$, '42501');
+
+\echo '[49] delete_routine removes the routine with its progress and overrides'
+select public.set_routine_day_override(:'membership_f', '2468', :'kid_f3', '2026-09-15', :'routine_f2');
+select public.set_routine_step(:'kid_f3', :'routine_f2', '2026-09-15', 0, true);
+select pg_temp.expect_error('delete another household''s routine',
+  $q$select public.delete_routine(pg_temp.v('membership_f'), '2468', pg_temp.v('routine_b'))$q$, '42501');
+select pg_temp.expect_error('delete routine with a wrong PIN',
+  $q$select public.delete_routine(pg_temp.v('membership_f'), '0000', pg_temp.v('routine_f2'))$q$, '42501');
+select public.delete_routine(:'membership_f', '2468', :'routine_f2');
+select pg_temp.expect('routine, progress and override gone', not exists (select 1 from public.routines where id = pg_temp.v('routine_f2'))
+  and not exists (select 1 from public.routine_progress where routine_id = pg_temp.v('routine_f2'))
+  and not exists (select 1 from public.routine_day_overrides where routine_id = pg_temp.v('routine_f2')));
+select pg_temp.expect('routine delete audited', pg_temp.audited(pg_temp.v('household_f'), pg_temp.v('membership_f'), 'routines', 'delete', pg_temp.v('routine_f2')));
+
+\echo '[50] upsert_medicine and archive_medicine'
+select public.upsert_medicine(:'membership_f', '2468', null, :'kid_f3', ' Ibuprofen ', 6, 4) as medicine_f3 \gset
+select set_config('smoke.medicine_f3', :'medicine_f3', true);
+select pg_temp.expect('medicine created', (
+  select name = 'Ibuprofen' and min_interval_hours = 6 and max_doses_per_24h = 4 and child_id = pg_temp.v('kid_f3')
+  from public.medicines where id = pg_temp.v('medicine_f3')));
+select pg_temp.expect('medicine add audited', pg_temp.audited(pg_temp.v('household_f'), pg_temp.v('membership_f'), 'medicines', 'add', pg_temp.v('medicine_f3')));
+select public.upsert_medicine(:'membership_f', '2468', :'medicine_f3', :'kid_f3', 'Ibuprofen', 7.5, null);
+select pg_temp.expect('medicine updated', (
+  select min_interval_hours = 7.5 and max_doses_per_24h is null from public.medicines where id = pg_temp.v('medicine_f3')));
+select pg_temp.expect_error('medicine moved to another child',
+  $q$select public.upsert_medicine(pg_temp.v('membership_f'), '2468', pg_temp.v('medicine_f3'), pg_temp.v('kid_f'), 'Ibuprofen', 6, 4)$q$, '22023');
+select pg_temp.expect_error('medicine with a zero interval',
+  $q$select public.upsert_medicine(pg_temp.v('membership_f'), '2468', null, pg_temp.v('kid_f3'), 'X', 0, null)$q$, '22023');
+select pg_temp.expect_error('medicine with a 72.05-hour interval',
+  $q$select public.upsert_medicine(pg_temp.v('membership_f'), '2468', null, pg_temp.v('kid_f3'), 'X', 72.05, null)$q$, '22023');
+select pg_temp.expect_error('medicine with 25 max doses',
+  $q$select public.upsert_medicine(pg_temp.v('membership_f'), '2468', null, pg_temp.v('kid_f3'), 'X', 6, 25)$q$, '22023');
+select pg_temp.expect_error('medicine for another household''s child',
+  $q$select public.upsert_medicine(pg_temp.v('membership_f'), '2468', null, pg_temp.v('kid_b'), 'X', 6, 4)$q$, '42501');
+select set_config('request.jwt.claims', :'B', true);
+select pg_temp.expect_error('update another household''s medicine',
+  $q$select public.upsert_medicine(pg_temp.v('membership_b'), '1111', pg_temp.v('medicine_f3'), pg_temp.v('kid_b'), 'X', 6, 4)$q$, '42501');
+select set_config('request.jwt.claims', :'F', true);
+select pg_temp.expect_error('medicine with a wrong PIN',
+  $q$select public.upsert_medicine(pg_temp.v('membership_f'), '0000', null, pg_temp.v('kid_f3'), 'X', 6, 4)$q$, '42501');
+select public.archive_medicine(:'membership_f', '2468', :'medicine_f3');
+select pg_temp.expect('medicine archived', (select archived_at is not null from public.medicines where id = pg_temp.v('medicine_f3')));
+select pg_temp.expect('medicine archive audited', pg_temp.audited(pg_temp.v('household_f'), pg_temp.v('membership_f'), 'medicines', 'archive', pg_temp.v('medicine_f3')));
+select pg_temp.expect_error('edit an archived medicine',
+  $q$select public.upsert_medicine(pg_temp.v('membership_f'), '2468', pg_temp.v('medicine_f3'), pg_temp.v('kid_f3'), 'Ibuprofen', 6, 4)$q$, '22023');
+select set_config('request.jwt.claims', :'B', true);
+select pg_temp.expect_error('non-member archives F medicine',
+  $q$select public.archive_medicine(pg_temp.v('membership_b'), '1111', pg_temp.v('medicine_f'))$q$, '42501');
+select set_config('request.jwt.claims', :'F', true);
+
+\echo '[51] upsert_sticker_category and archive_sticker_category'
+select public.upsert_sticker_category(:'membership_f', '2468', null, ' Shared ', 'star', null) as category_f \gset
+select set_config('smoke.category_f', :'category_f', true);
+select pg_temp.expect('category appended', (
+  select name = 'Shared' and icon_key = 'star' and sort_order = 3 from public.sticker_categories where id = pg_temp.v('category_f')));
+select pg_temp.expect('category add audited', pg_temp.audited(pg_temp.v('household_f'), pg_temp.v('membership_f'), 'stickers', 'add', pg_temp.v('category_f')));
+select public.upsert_sticker_category(:'membership_f', '2468', :'category_f', 'Sharing', 'heart', 0);
+select pg_temp.expect('category updated', (
+  select name = 'Sharing' and icon_key = 'heart' and sort_order = 0 from public.sticker_categories where id = pg_temp.v('category_f')));
+select pg_temp.expect_error('category with a bad icon key',
+  $q$select public.upsert_sticker_category(pg_temp.v('membership_f'), '2468', null, 'X', 'Bad Icon!', null)$q$, '22023');
+select pg_temp.expect_error('category with a 31-character name',
+  $q$select public.upsert_sticker_category(pg_temp.v('membership_f'), '2468', null, repeat('x', 31), 'star', null)$q$, '22023');
+select pg_temp.expect_error('update another household''s category',
+  $q$select public.upsert_sticker_category(pg_temp.v('membership_f'), '2468', pg_temp.v('category_b'), 'X', 'star', null)$q$, '42501');
+select pg_temp.expect_error('archive another household''s category',
+  $q$select public.archive_sticker_category(pg_temp.v('membership_f'), '2468', pg_temp.v('category_b'))$q$, '42501');
+select pg_temp.expect_error('category with a wrong PIN',
+  $q$select public.upsert_sticker_category(pg_temp.v('membership_f'), '0000', null, 'X', 'star', null)$q$, '42501');
+select public.archive_sticker_category(:'membership_f', '2468', :'category_f');
+select pg_temp.expect('category archived', (select archived_at is not null from public.sticker_categories where id = pg_temp.v('category_f')));
+select pg_temp.expect('category archive audited', pg_temp.audited(pg_temp.v('household_f'), pg_temp.v('membership_f'), 'stickers', 'archive', pg_temp.v('category_f')));
+
+\echo '[52] set_my_color changes only the PIN adult''s color'
+select public.set_my_color(:'membership_f', '2468', '#982A5D');
+select pg_temp.expect('color changed', (select color = '#982A5D' from public.memberships where id = pg_temp.v('membership_f')));
+select pg_temp.expect('color audited', pg_temp.audited(pg_temp.v('household_f'), pg_temp.v('membership_f'), 'my_account', 'color', pg_temp.v('membership_f')));
+select pg_temp.expect_error('bad color',
+  $q$select public.set_my_color(pg_temp.v('membership_f'), '2468', '#98 2A5D')$q$, '22023');
+select pg_temp.expect_error('color with a wrong PIN',
+  $q$select public.set_my_color(pg_temp.v('membership_f'), '0000', '#000000')$q$, '42501');
+
+\echo '[53] delete_old_entries deletes only logs older than 2 years, never doses'
+insert into public.sleep_entries (household_id, child_id, start_at, type) values
+  (:'household_f', :'kid_f3', now() - interval '3 years', 'nap'),
+  (:'household_f', :'kid_f3', now() - interval '1 year', 'nap');
+insert into public.jots (household_id, text, created_at) values (:'household_f', 'Old jot', now() - interval '30 months');
+select set_config('request.jwt.claims', :'B', true);
+insert into public.jots (household_id, text, created_at) values (:'household_b', 'Old B jot', now() - interval '30 months');
+select set_config('request.jwt.claims', :'F', true);
+select pg_temp.expect('one old sleep entry deleted',
+  public.delete_old_entries(pg_temp.v('membership_f'), '2468', 'sleep_entries', now() - interval '2 years') = 1);
+select pg_temp.expect('recent sleep entry kept', (select count(*) from public.sleep_entries where child_id = pg_temp.v('kid_f3')) = 1);
+select pg_temp.expect('delete old audited', pg_temp.audited(pg_temp.v('household_f'), pg_temp.v('membership_f'), 'logs', 'delete_old', null));
+select pg_temp.expect('old F jot deleted',
+  public.delete_old_entries(pg_temp.v('membership_f'), '2468', 'jots', now() - interval '2 years') = 1);
+select pg_temp.expect_error('delete old doses',
+  $q$select public.delete_old_entries(pg_temp.v('membership_f'), '2468', 'dose_entries', now() - interval '3 years')$q$, '22023');
+select pg_temp.expect_error('delete logs newer than 2 years',
+  $q$select public.delete_old_entries(pg_temp.v('membership_f'), '2468', 'sleep_entries', now() - interval '23 months')$q$, '22023');
+select pg_temp.expect_error('delete old logs with a wrong PIN',
+  $q$select public.delete_old_entries(pg_temp.v('membership_f'), '0000', 'jots', now() - interval '3 years')$q$, '42501');
+select set_config('request.jwt.claims', :'B', true);
+select pg_temp.expect('B''s old jot untouched', (select count(*) from public.jots where text = 'Old B jot') = 1);
+select pg_temp.expect_error('non-member deletes F logs',
+  $q$select public.delete_old_entries(pg_temp.v('membership_f'), '2468', 'jots', now() - interval '3 years')$q$, '42501');
+
+\echo '[54] Settings RPC privileges'
+reset role;
+select pg_temp.expect('anon cannot execute any settings RPC', not exists (
+  select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public' and p.proname in (
+    'settings_verify', 'update_household_settings', 'update_sitter_info', 'add_child_pin', 'update_child',
+    'set_feature_override', 'upsert_routine', 'delete_routine', 'set_routine_day_override', 'upsert_medicine',
+    'archive_medicine', 'upsert_sticker_category', 'archive_sticker_category', 'set_my_color', 'delete_old_entries')
+    and has_function_privilege('anon', p.oid, 'execute')));
+select pg_temp.expect('authenticated can execute all 15 settings RPCs', (
+  select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public' and p.proname in (
+    'settings_verify', 'update_household_settings', 'update_sitter_info', 'add_child_pin', 'update_child',
+    'set_feature_override', 'upsert_routine', 'delete_routine', 'set_routine_day_override', 'upsert_medicine',
+    'archive_medicine', 'upsert_sticker_category', 'archive_sticker_category', 'set_my_color', 'delete_old_entries')
+    and has_function_privilege('authenticated', p.oid, 'execute')) = 15);
+select pg_temp.expect('authenticated cannot execute the settings helpers', not exists (
+  select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'private' and p.proname in ('require_settings_pin', 'audit_setting', 'require_color', 'require_child_of')
+    and (has_function_privilege('authenticated', p.oid, 'execute') or has_function_privilege('anon', p.oid, 'execute'))));
+
 \o
 \echo 'ALL RLS SMOKE CHECKS PASSED'
 rollback;
