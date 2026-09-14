@@ -1799,6 +1799,33 @@ select pg_temp.expect('the wrong PIN took at least half a second', clock_timesta
 select pg_temp.expect('the right PIN still works right after', public.verify_pin(:'membership_f', '2468'));
 reset role;
 
+
+\echo '[83] revoke_member_invite: the token holder (e.g. the display, after the owner signed out) cancels an unused invite'
+set local role authenticated;
+select set_config('request.jwt.claims', :'F', true);
+select out_token as invite_cancel from public.create_member_invite(:'household_f', 'adult') \gset
+select out_token as invite_keep from public.create_member_invite(:'household_f', 'owner') \gset
+select set_config('smoke.invite_cancel', :'invite_cancel', true);
+select set_config('request.jwt.claims', :'J', true);
+select public.revoke_member_invite(:'invite_cancel');
+reset role;
+select pg_temp.expect('the cancelled invite is deleted, the other kept', not exists (
+  select 1 from public.member_invites where token_hash = encode(extensions.digest(:'invite_cancel', 'sha256'), 'hex'))
+  and exists (select 1 from public.member_invites where token_hash = encode(extensions.digest(:'invite_keep', 'sha256'), 'hex')));
+select pg_temp.expect('the cancellation is audited', (
+  select change ->> 'section' = 'members' and change ->> 'action' = 'invite_cancel' from public.settings_audit
+  where household_id = pg_temp.v('household_f') order by id desc limit 1));
+set local role authenticated;
+select set_config('request.jwt.claims', :'H', true);
+select pg_temp.expect_error('a cancelled invite cannot be accepted',
+  format('select public.accept_member_invite(%L, %L, %L, %L)', :'invite_cancel', 'Hana', '#2F86A6', '9999'), '22023');
+-- Unknown, null and repeated tokens are a quiet no-op (these would stop the script if they raised).
+select public.revoke_member_invite('not-a-token'), public.revoke_member_invite(null), public.revoke_member_invite(:'invite_cancel');
+reset role;
+select pg_temp.expect('only authenticated can execute revoke_member_invite',
+  has_function_privilege('authenticated', 'public.revoke_member_invite(text)', 'execute')
+  and not has_function_privilege('anon', 'public.revoke_member_invite(text)', 'execute'));
+
 \o
 \echo 'ALL RLS SMOKE CHECKS PASSED'
 rollback;

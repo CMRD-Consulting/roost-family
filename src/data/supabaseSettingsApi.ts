@@ -343,6 +343,10 @@ export function createSupabaseSettingsApi(client: RoostClient): SettingsApi {
     )
   }
 
+  async function revokeMemberInvite(token: string): Promise<void> {
+    await run(() => client.rpc('revoke_member_invite', { p_invite_token: token }))
+  }
+
   async function setMemberRole(adult: AdultClient, membershipId: string, role: 'owner' | 'adult'): Promise<void> {
     await run(() => adult.rpc('set_member_role', { p_membership_id: membershipId, p_role: role }))
   }
@@ -433,6 +437,7 @@ export function createSupabaseSettingsApi(client: RoostClient): SettingsApi {
     deletePhoto,
     createMemberInvite,
     acceptMemberInvite,
+    revokeMemberInvite,
     setMemberRole,
     removeMember,
     leaveHousehold,

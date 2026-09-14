@@ -4,7 +4,8 @@
  * Members. By now the owner's sign-in and the Settings session have ended, so nothing of Settings is reachable
  * from here. The new adult signs in with their own email, agrees to the terms and health-data consent, and
  * chooses a name, color and PIN. Joining or cancelling signs them out and returns the tablet to the main screen,
- * as does 5 minutes without a touch. The invite is held in memory only (see pendingInvite).
+ * as does 5 minutes without a touch; leaving without joining deletes the invite. The invite is held in memory only
+ * (see pendingInvite). Night Mode waits while the flow is open.
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, useTemplateRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
@@ -24,6 +25,7 @@ import { validateNewMember } from './ownerForms'
 import { takePendingInvite } from './pendingInvite'
 import { loadSettingsApi } from './settingsApiLoader'
 import { ownerActionMessage } from './useOwnerSignIn'
+import { useNightHold } from './useNightHold'
 import { useSettingsOffline } from './useSettingsSave'
 
 type Step = 'handoff' | 'signIn' | 'consent' | 'details'
@@ -32,6 +34,7 @@ const router = useRouter()
 const store = useHouseholdStore()
 const offline = useSettingsOffline()
 useHouseholdSession()
+useNightHold()
 
 const invite = takePendingInvite()
 const householdName = computed(() => store.view?.household.name ?? 'this household')
@@ -60,17 +63,27 @@ async function focusStepHeading(): Promise<void> {
 onMounted(focusStepHeading)
 watch(step, focusStepHeading)
 
-/** Signs the new adult out (if signed in) and returns the tablet to the main screen. */
-function finish(): void {
+/** Deletes the unused invite (cancel, idle): the owner's sign-in is over, so the token itself authorizes it. */
+function revokeInvite(): void {
+  if (!invite) return
+  void loadSettingsApi()
+    .then((api) => api.revokeMemberInvite(invite.token))
+    .catch(() => {}) // It expires in 10 minutes anyway.
+}
+
+/** Signs the new adult out (if signed in) and returns the tablet to the main screen; unless they joined, the invite
+ *  is deleted. */
+function finish(joined = false): void {
   if (finished) return
   finished = true
   const current = newAdult.value
   newAdult.value = null
   if (current) void current.end().catch(() => {})
+  if (!joined) revokeInvite()
   void router.replace('/home')
 }
 
-if (invite === null) finish()
+if (invite === null) finish(true)
 
 useAdultSessionIdle({
   session: () => newAdult.value,
@@ -87,12 +100,13 @@ watch(
   newAdult,
   (signedIn) => {
     stopFlowIdle?.()
-    stopFlowIdle = signedIn || finished ? null : startIdleTimer(finish, ADULT_SESSION_IDLE_MS)
+    stopFlowIdle = signedIn || finished ? null : startIdleTimer(() => finish(), ADULT_SESSION_IDLE_MS)
   },
   { immediate: true },
 )
 onBeforeUnmount(() => {
   // Leaving by any other way (e.g. this display was removed): no navigation, but nothing stays signed in.
+  if (!finished) revokeInvite()
   finished = true
   stopFlowIdle?.()
   const current = newAdult.value
@@ -143,7 +157,7 @@ async function join(): Promise<void> {
   }
   pin.value = ''
   pinAgain.value = ''
-  finish()
+  finish(true)
 }
 </script>
 
@@ -157,7 +171,7 @@ async function join(): Promise<void> {
           {{ householdName }} as {{ invite.role === 'owner' ? 'an owner' : 'an adult' }}. The invite works for 10 minutes.
         </p>
         <div class="flex flex-wrap gap-3">
-          <RButton variant="secondary" @click="finish">Cancel</RButton>
+          <RButton variant="secondary" @click="finish()">Cancel</RButton>
           <RButton @click="step = 'signIn'">I’m the new adult</RButton>
         </div>
       </template>
@@ -168,14 +182,14 @@ async function join(): Promise<void> {
         :title="`Sign in to join ${householdName}`"
         hint="Use your own email. You’ll be signed out when you’ve joined."
         @signed-in="onSignedIn"
-        @cancel="finish"
+        @cancel="finish()"
       />
 
       <template v-else-if="step === 'consent'">
         <h1 tabindex="-1" data-step-heading class="text-[32px] font-semibold text-ink outline-none">Your family’s information</h1>
         <ConsentChecks v-model:terms="agreeTerms" v-model:health="agreeHealth" />
         <div class="flex flex-wrap gap-3">
-          <RButton variant="secondary" :disabled="busy" @click="finish">Cancel</RButton>
+          <RButton variant="secondary" :disabled="busy" @click="finish()">Cancel</RButton>
           <RButton :disabled="!agreeTerms || !agreeHealth || busy || offline" @click="acceptConsent">Agree and continue</RButton>
         </div>
       </template>
@@ -187,7 +201,7 @@ async function join(): Promise<void> {
         <RInput v-model="pin" label="Choose a 4-digit PIN" inputmode="numeric" autocomplete="off" :maxlength="4" masked />
         <RInput v-model="pinAgain" label="PIN again" inputmode="numeric" autocomplete="off" :maxlength="4" masked />
         <div class="flex flex-wrap gap-3">
-          <RButton variant="secondary" :disabled="busy" @click="finish">Cancel</RButton>
+          <RButton variant="secondary" :disabled="busy" @click="finish()">Cancel</RButton>
           <RButton :disabled="busy || offline" @click="join">{{ busy ? 'Joining…' : `Join ${householdName}` }}</RButton>
         </div>
       </template>

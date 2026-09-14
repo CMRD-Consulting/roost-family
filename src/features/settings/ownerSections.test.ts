@@ -6,6 +6,7 @@ import { createMemoryHistory, createRouter, type Router } from 'vue-router'
 import { buildDemoSnapshot } from '@/data/demo/demoFixture'
 import { SettingsError, type SettingsApi } from '@/data/settingsApi'
 import { useHouseholdStore } from '@/stores/householdStore'
+import { useModesStore } from '@/stores/modesStore'
 import { useSettingsSessionStore } from '@/stores/settingsSession'
 import DeleteHouseholdSection from './sections/DeleteHouseholdSection.vue'
 import DisplaysSection from './sections/DisplaysSection.vue'
@@ -188,6 +189,24 @@ describe('owner sign-in', () => {
     expect(w.find('h2').text()).toBe('Members')
     expect(w.find('h2').attributes('tabindex')).toBe('-1')
     w.unmount()
+  })
+
+  it('holds Night Mode off during the sign-in and while signed in, not after signing out', async () => {
+    const store = useHouseholdStore()
+    store.snapshot = { ...store.snapshot!, household: { ...store.snapshot!.household, nightMode: { start: '14:00', end: '16:00' } } }
+    const modes = useModesStore()
+    const w = await mountSection(MembersSection)
+    expect(modes.nightActive).toBe(false)
+    await signIn(w)
+    expect(w.text()).toContain('Alex')
+    expect(modes.nightActive).toBe(false)
+
+    await buttonByText(w, 'Add adult').trigger('click')
+    await buttonByText(w, 'Continue').trigger('click')
+    await settle()
+    expect(ended).toEqual(['client-1'])
+    w.unmount()
+    expect(modes.nightActive).toBe(true)
   })
 
   it('signs the owner out after 5 minutes without a touch, and when the section closes', async () => {

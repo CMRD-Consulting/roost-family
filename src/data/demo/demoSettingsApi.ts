@@ -431,6 +431,8 @@ export function createDemoSettingsApi(): SettingsApi {
     deletePhoto,
     createMemberInvite: notAvailable,
     acceptMemberInvite: notAvailable,
+    // Demo has no invites to delete.
+    revokeMemberInvite: async () => {},
     setMemberRole,
     removeMember: notAvailable,
     leaveHousehold: notAvailable,

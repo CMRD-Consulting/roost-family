@@ -1579,6 +1579,10 @@ export type Database = {
         Returns: undefined
       }
       revoke_display: { Args: { p_display_id: string }; Returns: undefined }
+      revoke_member_invite: {
+        Args: { p_invite_token: string }
+        Returns: undefined
+      }
       revoke_take_list_link: {
         Args: { p_household_id: string }
         Returns: undefined

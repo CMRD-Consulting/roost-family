@@ -243,3 +243,27 @@ begin
 end $$;
 
 revoke execute on function private.pin_ok(uuid, text) from public, anon, authenticated;
+
+-- ═══ Cancelling an add-adult hand-off (spec §6.4) ═══
+-- Deletes an unused invite by its token. By the time the new adult cancels, the owner's sign-in has ended, so the
+-- token itself is the authority (whoever holds it could accept it anyway); the display's own session calls this.
+-- Unknown, used or null tokens are a quiet no-op, so it reveals nothing.
+create function public.revoke_member_invite(p_invite_token text) returns void
+language plpgsql security definer set search_path = '' as $$
+declare
+  v_invite uuid;
+  v_household uuid;
+begin
+  if auth.uid() is null or p_invite_token is null then
+    return;
+  end if;
+  delete from public.member_invites
+  where token_hash = encode(extensions.digest(p_invite_token, 'sha256'), 'hex') and used_at is null
+  returning id, household_id into v_invite, v_household;
+  if v_invite is not null then
+    perform private.audit_setting(v_household, null, 'members', 'invite_cancel', v_invite, null);
+  end if;
+end $$;
+
+revoke execute on function public.revoke_member_invite(text) from public, anon;
+grant execute on function public.revoke_member_invite(text) to authenticated;

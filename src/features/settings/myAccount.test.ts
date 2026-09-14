@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { buildDemoSnapshot } from '@/data/demo/demoFixture'
 import { SettingsError, type SettingsApi } from '@/data/settingsApi'
 import { useHouseholdStore } from '@/stores/householdStore'
+import { useModesStore } from '@/stores/modesStore'
 import { useSettingsSessionStore } from '@/stores/settingsSession'
 import { PERSON_COLORS } from '@/ui/personPalette'
 import AdultSignIn from './AdultSignIn.vue'
@@ -184,6 +185,20 @@ describe('MyAccountSection', () => {
     expect(useSettingsSessionStore().auth).toEqual({ membershipId: SAM, pin: '4321' })
     expect(w.text()).toContain('Your PIN is changed.')
     w.unmount()
+  })
+
+  it('holds Night Mode off while the full sign-in is open', async () => {
+    const store = useHouseholdStore()
+    store.snapshot = { ...store.snapshot!, household: { ...store.snapshot!.household, nightMode: { start: '14:00', end: '16:00' } } }
+    const modes = useModesStore()
+    const w = await mountAs(SAM, '1234')
+    expect(modes.nightActive).toBe(true)
+    await buttonByText(w, 'Change my PIN').trigger('click')
+    await settle()
+    expect(w.find('[data-testid="adult-sign-in"]').exists()).toBe(true)
+    expect(modes.nightActive).toBe(false)
+    w.unmount()
+    expect(modes.nightActive).toBe(true)
   })
 
   it("refuses a sign-in that isn't the Settings adult's account", async () => {

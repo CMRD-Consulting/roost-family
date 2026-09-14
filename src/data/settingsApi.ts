@@ -211,6 +211,9 @@ export interface SettingsApi {
   // ─── Full sign-in only (spec §6.3): members, displays, household deletion ─────────────────────────────
   createMemberInvite(client: AdultClient, householdId: string, role: 'owner' | 'adult'): Promise<{ token: string; expiresAt: string }>
   acceptMemberInvite(client: AdultClient, input: { token: string; displayName: string; color: string; pin: string }): Promise<string>
+  /** Deletes an unused invite when the add-adult hand-off is cancelled. Runs on the display's own client: by then the
+   *  owner's sign-in has ended, and the token itself authorizes it. Unknown or used tokens are a no-op. */
+  revokeMemberInvite(token: string): Promise<void>
   setMemberRole(client: AdultClient, membershipId: string, role: 'owner' | 'adult'): Promise<void>
   removeMember(client: AdultClient, membershipId: string): Promise<void>
   leaveHousehold(client: AdultClient, householdId: string): Promise<void>

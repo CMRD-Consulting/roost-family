@@ -352,6 +352,13 @@ describe('createSupabaseSettingsApi', () => {
       }])
     })
 
+    it('deleteEntry on an entry that no longer exists is an invalid SettingsError', async () => {
+      const { client } = createFakeClient({ rpc: { delete_entry: { error: { message: 'entry not found', code: '22023' }, status: 400 } } })
+      const err = await createSupabaseSettingsApi(client).deleteEntry(auth, 'jots', 'gone').catch((e: unknown) => e)
+      expect(err).toBeInstanceOf(SettingsError)
+      expect(err).toMatchObject({ code: 'invalid', message: 'That entry no longer exists.' })
+    })
+
     it('voidDose -> void_dose with the settings PIN and the reason', async () => {
       const { client, calls } = createFakeClient()
       await createSupabaseSettingsApi(client).voidDose(auth, 'dose-1', 'Logged twice')
@@ -360,6 +367,12 @@ describe('createSupabaseSettingsApi', () => {
         args: { p_dose_id: 'dose-1', p_membership_id: membershipId, p_pin: '1234', p_reason: 'Logged twice' },
       }])
     })
+  })
+
+  it('revokeMemberInvite -> revoke_member_invite with the token, on the display client', async () => {
+    const { client, calls } = createFakeClient()
+    await createSupabaseSettingsApi(client).revokeMemberInvite('invite-token')
+    expect(calls).toEqual([{ op: 'rpc', name: 'revoke_member_invite', args: { p_invite_token: 'invite-token' } }])
   })
 
   describe('My account (full sign-in)', () => {

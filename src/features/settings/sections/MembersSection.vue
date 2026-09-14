@@ -141,9 +141,10 @@ async function createInvite(): Promise<void> {
   }
   // The owner's part is done. The tablet goes to the new adult with nothing of Settings left open: the owner's
   // sign-in and the Settings PIN session both end, and the join flow runs full screen outside Settings.
+  // Navigate first: signing out releases the owner's Night Mode hold, and the flow holds it from here on.
   setPendingInvite({ token, role })
-  gate.signOut()
   await router.push('/join-adult')
+  gate.signOut()
   session.end()
 }
 </script>

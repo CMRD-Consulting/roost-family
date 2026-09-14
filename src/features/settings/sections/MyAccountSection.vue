@@ -14,6 +14,7 @@ import { useSettingsSessionStore } from '@/stores/settingsSession'
 import RButton from '@/ui/RButton.vue'
 import RInput from '@/ui/RInput.vue'
 import AdultSignIn from '../AdultSignIn.vue'
+import { useNightHold } from '../useNightHold'
 import ColorPicker from '../forms/ColorPicker.vue'
 import SaveRow from '../forms/SaveRow.vue'
 import { isLastOwner, validateNewPin } from '../myAccountForm'
@@ -45,6 +46,8 @@ type Phase = 'idle' | 'signIn' | 'act'
 
 const action = ref<Action | null>(null)
 const phase = ref<Phase>('idle')
+// Night Mode waits while the full sign-in (and what it unlocked) is open.
+useNightHold(() => phase.value !== 'idle')
 const adult = shallowRef<AdultSession | null>(null)
 const busy = ref(false)
 const error = ref<string | null>(null)

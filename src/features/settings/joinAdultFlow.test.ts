@@ -6,6 +6,7 @@ import { createMemoryHistory, createRouter, RouterView, type Router } from 'vue-
 import { buildDemoSnapshot } from '@/data/demo/demoFixture'
 import { SettingsError, type SettingsApi } from '@/data/settingsApi'
 import { useHouseholdStore } from '@/stores/householdStore'
+import { useModesStore } from '@/stores/modesStore'
 import { useSettingsSessionStore } from '@/stores/settingsSession'
 import JoinAdultFlow from './JoinAdultFlow.vue'
 import { setPendingInvite, takePendingInvite } from './pendingInvite'
@@ -30,12 +31,13 @@ vi.mock('@/data/supabase', () => {
   throw new Error('Supabase client loaded by a settings test')
 })
 
-type Fake = SettingsApi & Record<'recordConsent' | 'acceptMemberInvite', ReturnType<typeof vi.fn>>
+type Fake = SettingsApi & Record<'recordConsent' | 'acceptMemberInvite' | 'revokeMemberInvite', ReturnType<typeof vi.fn>>
 
 function fakeApi(): Fake {
   return {
     recordConsent: vi.fn().mockResolvedValue(undefined),
     acceptMemberInvite: vi.fn().mockResolvedValue('membership-pat'),
+    revokeMemberInvite: vi.fn().mockResolvedValue(undefined),
   } as never
 }
 
@@ -186,15 +188,39 @@ describe('JoinAdultFlow', () => {
     })
     expect(ended).toEqual(['client-1'])
     expect(router.currentRoute.value.path).toBe('/home')
+    expect(settingsApi.revokeMemberInvite).not.toHaveBeenCalled()
     w.unmount()
   })
 
-  it('Cancel before anyone signs in returns home', async () => {
+  it('Cancel before anyone signs in deletes the invite and returns home', async () => {
     const w = await mountFlow()
     await buttonByText(w, 'Cancel').trigger('click')
     await settle()
     expect(router.currentRoute.value.path).toBe('/home')
     expect(adult.newAdultClient).not.toHaveBeenCalled()
+    expect(settingsApi.revokeMemberInvite).toHaveBeenCalledWith('invite-token')
+    w.unmount()
+  })
+
+  it('a failed invite deletion still returns home', async () => {
+    settingsApi.revokeMemberInvite.mockRejectedValue(new SettingsError('offline', 'network'))
+    const w = await mountFlow()
+    await buttonByText(w, 'Cancel').trigger('click')
+    await settle()
+    expect(router.currentRoute.value.path).toBe('/home')
+    w.unmount()
+  })
+
+  it('holds Night Mode off while the flow is open', async () => {
+    const store = useHouseholdStore()
+    store.snapshot = { ...store.snapshot!, household: { ...store.snapshot!.household, nightMode: { start: '14:00', end: '16:00' } } }
+    const modes = useModesStore()
+    const w = await mountFlow()
+    expect(modes.nightActive).toBe(false)
+
+    await buttonByText(w, 'Cancel').trigger('click')
+    await settle()
+    expect(modes.nightActive).toBe(true)
     w.unmount()
   })
 
@@ -222,6 +248,7 @@ describe('JoinAdultFlow', () => {
     await settle()
     expect(ended).toEqual(['client-1'])
     expect(settingsApi.acceptMemberInvite).not.toHaveBeenCalled()
+    expect(settingsApi.revokeMemberInvite).toHaveBeenCalledWith('invite-token')
     expect(router.currentRoute.value.path).toBe('/home')
     w.unmount()
   })
@@ -255,6 +282,7 @@ describe('JoinAdultFlow', () => {
     await vi.advanceTimersByTimeAsync(5 * 60_000)
     await settle()
     expect(ended).toEqual(['client-1'])
+    expect(settingsApi.revokeMemberInvite).toHaveBeenCalledWith('invite-token')
     expect(router.currentRoute.value.path).toBe('/home')
     w.unmount()
   })

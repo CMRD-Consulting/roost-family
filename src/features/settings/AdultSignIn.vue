@@ -11,6 +11,7 @@ import { validateCode, validateEmail } from '@/features/setup/validation'
 import type { AdultSession } from '@/session/adultSession'
 import RButton from '@/ui/RButton.vue'
 import RInput from '@/ui/RInput.vue'
+import { useNightHold } from './useNightHold'
 
 withDefaults(defineProps<{ title?: string; hint?: string; /** The title's heading element: h1 when this is the whole screen. */ heading?: 'h1' | 'h3' }>(), {
   title: 'Sign in',
@@ -31,6 +32,7 @@ const code = ref('')
 const busy = ref(false)
 const error = ref<string | null>(null)
 const isDev = import.meta.env.DEV
+useNightHold()
 const headingEl = useTemplateRef<HTMLElement>('titleHeading')
 
 // A new step (email → code, or back): focus its heading so a screen reader announces where the adult is.

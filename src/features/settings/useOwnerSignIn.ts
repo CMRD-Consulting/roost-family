@@ -7,6 +7,7 @@ import { useHouseholdStore } from '@/stores/householdStore'
 import { useSettingsSessionStore } from '@/stores/settingsSession'
 import { loadSettingsApi } from './settingsApiLoader'
 import { settingsErrorMessage } from './settingsErrors'
+import { useNightHold } from './useNightHold'
 
 /** A signed-in owner of this household, for the Members, Displays and Delete household sections. */
 export interface SignedInOwner {
@@ -48,6 +49,8 @@ export function useOwnerSignIn() {
   const notice = ref<string | null>(null)
   /** Bumped to give the sign-in form a fresh client (after a refused account or an ended session). */
   const signInKey = ref(0)
+  // Night Mode waits while an owner is signed in (the sign-in form holds it itself while it's showing).
+  useNightHold(() => adult.value !== null)
 
   function endAdult(): void {
     const current = adult.value
