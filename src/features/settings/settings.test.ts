@@ -48,11 +48,26 @@ async function settle() {
   for (let i = 0; i < 10; i++) await flushPromises()
 }
 
-function fakeApi(): SettingsApi & Record<'settingsVerify' | 'updateHouseholdSettings' | 'updateSitterInfo', ReturnType<typeof vi.fn>> {
+type FakeSettingsApi = SettingsApi & Record<
+  | 'settingsVerify' | 'updateHouseholdSettings' | 'updateSitterInfo'
+  | 'addChild' | 'updateChild' | 'setFeatureOverride'
+  | 'upsertMedicine' | 'archiveMedicine'
+  | 'upsertStickerCategory' | 'archiveStickerCategory',
+  ReturnType<typeof vi.fn>
+>
+
+function fakeApi(): FakeSettingsApi {
   return {
     settingsVerify: vi.fn().mockResolvedValue({ role: 'owner', displayName: 'Sam' }),
     updateHouseholdSettings: vi.fn().mockResolvedValue(undefined),
     updateSitterInfo: vi.fn().mockResolvedValue(undefined),
+    addChild: vi.fn().mockResolvedValue('new-child-id'),
+    updateChild: vi.fn().mockResolvedValue(undefined),
+    setFeatureOverride: vi.fn().mockResolvedValue(undefined),
+    upsertMedicine: vi.fn().mockResolvedValue('new-medicine-id'),
+    archiveMedicine: vi.fn().mockResolvedValue(undefined),
+    upsertStickerCategory: vi.fn().mockResolvedValue('new-category-id'),
+    archiveStickerCategory: vi.fn().mockResolvedValue(undefined),
   } as never
 }
 
@@ -190,8 +205,8 @@ describe('SettingsShell', () => {
   })
 
   it('sections that are not built yet show Coming soon', async () => {
-    const w = await openShell(fakeApi(), 'children')
-    expect(w.find('h2').text()).toBe('Children')
+    const w = await openShell(fakeApi(), 'routines')
+    expect(w.find('h2').text()).toBe('Routines')
     expect(w.text()).toContain('Coming soon')
     w.unmount()
   })
@@ -325,6 +340,247 @@ describe('SettingsShell', () => {
         address: '12 Maple St',
       })
       expect(useSettingsSessionStore().info).not.toBeNull()
+      w.unmount()
+    })
+  })
+
+  describe('Children', () => {
+    const IVY = 'cccccccc-0000-0000-0000-000000000001'
+    const THEO = 'cccccccc-0000-0000-0000-000000000002'
+
+    it('lists each child with their age and opens an edit panel prefilled from their profile', async () => {
+      const w = await openShell(fakeApi(), 'children')
+
+      const rows = w.findAll('li').map((li) => li.text())
+      expect(rows.some((t) => t.includes('Ivy') && t.includes('3 yrs'))).toBe(true)
+      expect(rows.some((t) => t.includes('Theo') && t.includes('1 yr'))).toBe(true)
+
+      await buttonByText(w, 'Edit Ivy').trigger('click')
+      await settle()
+
+      expect((inputByLabel(w, 'Name').element as HTMLInputElement).value).toBe('Ivy')
+      expect((inputByLabel(w, 'Birthday').element as HTMLInputElement).value).toBe('2023-04-10')
+      // Ivy has her own night-sleep window, so the household-default toggle starts off.
+      expect(w.find('button[role="switch"]').attributes('aria-checked')).toBe('false')
+      expect((inputByLabel(w, 'Night from').element as HTMLInputElement).value).toBe('19:00')
+      w.unmount()
+    })
+
+    it('saves a profile edit', async () => {
+      const settingsApi = fakeApi()
+      const w = await openShell(settingsApi, 'children')
+
+      await buttonByText(w, 'Edit Ivy').trigger('click')
+      await settle()
+      await inputByLabel(w, 'Allergies').setValue('Peanuts')
+      await buttonByText(w, 'Save').trigger('click')
+      await settle()
+
+      expect(settingsApi.updateChild).toHaveBeenCalledWith(SAM_AUTH, {
+        childId: IVY,
+        name: 'Ivy',
+        birthday: '2023-04-10',
+        color: expect.any(String),
+        allergies: 'Peanuts',
+        foodRules: '',
+        nightSleep: { start: '19:00', end: '06:00' },
+      })
+      w.unmount()
+    })
+
+    it('shows validation messages and does not save an empty name', async () => {
+      const settingsApi = fakeApi()
+      const w = await openShell(settingsApi, 'children')
+
+      await buttonByText(w, 'Edit Ivy').trigger('click')
+      await settle()
+      await inputByLabel(w, 'Name').setValue('  ')
+      await buttonByText(w, 'Save').trigger('click')
+      await settle()
+
+      expect(w.text()).toContain('Give this child a name.')
+      expect(settingsApi.updateChild).not.toHaveBeenCalled()
+      w.unmount()
+    })
+
+    it('adds a child from the small add-child panel', async () => {
+      const settingsApi = fakeApi()
+      const w = await openShell(settingsApi, 'children')
+
+      await buttonByText(w, '+ Add child').trigger('click')
+      await settle()
+      await inputByLabel(w, 'Name').setValue('  Mo  ')
+      await inputByLabel(w, 'Birthday').setValue('2024-01-01')
+      await buttonByText(w, 'Save').trigger('click')
+      await settle()
+
+      expect(settingsApi.addChild).toHaveBeenCalledWith(SAM_AUTH, { name: 'Mo', birthday: '2024-01-01', color: expect.any(String) })
+      w.unmount()
+    })
+
+    it('shows the age-based default per feature and only saves the override that changed', async () => {
+      const settingsApi = fakeApi()
+      const w = await openShell(settingsApi, 'children')
+
+      // Ivy is 3, so Kids' Corner defaults on and the wake window/feeding default off.
+      await buttonByText(w, 'Edit Ivy').trigger('click')
+      await settle()
+      expect(w.find('[data-testid="override-kidsCorner"]').text()).toContain('Default (On)')
+      expect(w.find('[data-testid="override-wakeWindow"]').text()).toContain('Default (Off)')
+
+      const kidsCornerOff = w.find('[data-testid="override-kidsCorner"]').findAll('button').find((b) => b.text() === 'Off')!
+      await kidsCornerOff.trigger('click')
+      await buttonByText(w, 'Save').trigger('click')
+      await settle()
+
+      expect(settingsApi.setFeatureOverride).toHaveBeenCalledExactlyOnceWith(SAM_AUTH, IVY, 'kidsCorner', false)
+      w.unmount()
+    })
+
+    it('clearing an override back to Default sends null', async () => {
+      const settingsApi = fakeApi()
+      const w = await openShell(settingsApi, 'children')
+
+      // Theo's wake window defaults on; explicitly picking On then Default should clear it (null).
+      await buttonByText(w, 'Edit Theo').trigger('click')
+      await settle()
+      const wakeWindowRow = () => w.find('[data-testid="override-wakeWindow"]')
+      await wakeWindowRow().findAll('button').find((b) => b.text() === 'Off')!.trigger('click')
+      await wakeWindowRow().findAll('button').find((b) => b.text().startsWith('Default'))!.trigger('click')
+      await buttonByText(w, 'Save').trigger('click')
+      await settle()
+
+      expect(settingsApi.setFeatureOverride).not.toHaveBeenCalled()
+      w.unmount()
+    })
+  })
+
+  describe('Medicines', () => {
+    const THEO = 'cccccccc-0000-0000-0000-000000000002'
+
+    it('lists medicines for the selected child with their interval and maximum', async () => {
+      const w = await openShell(fakeApi(), 'medicines')
+
+      expect(w.text()).toContain('Enter intervals and maximums from the label or your doctor.');
+      expect(w.text()).toContain('Roost Family doesn’t give dosing advice.')
+      // Ivy is selected first (sort order 0) and has one medicine.
+      expect(w.text()).toContain('Every 6h · max 4/day')
+
+      await w.find('[role="radiogroup"][aria-label="Child"]').findAll('[role="radio"]').find((r) => r.text() === 'Theo')!.trigger('click')
+      await settle()
+      expect(w.text()).toContain('Infant ibuprofen')
+      expect(w.text()).toContain('Infant acetaminophen')
+      w.unmount()
+    })
+
+    it('adds a medicine for the selected child', async () => {
+      const settingsApi = fakeApi()
+      const w = await openShell(settingsApi, 'medicines')
+
+      await w.find('[role="radiogroup"][aria-label="Child"]').findAll('[role="radio"]').find((r) => r.text() === 'Theo')!.trigger('click')
+      await settle()
+      await buttonByText(w, '+ Add medicine').trigger('click')
+      await settle()
+      await inputByLabel(w, 'Name').setValue('Amoxicillin')
+      await w.find('button[aria-label="Increase Minimum hours between doses"]').trigger('click')
+      await buttonByText(w, 'Save').trigger('click')
+      await settle()
+
+      expect(settingsApi.upsertMedicine).toHaveBeenCalledWith(SAM_AUTH, {
+        medicineId: null, childId: THEO, name: 'Amoxicillin', minIntervalHours: 1, maxDosesPer24h: null,
+      })
+      w.unmount()
+    })
+
+    it('does not save a blank medicine name', async () => {
+      const settingsApi = fakeApi()
+      const w = await openShell(settingsApi, 'medicines')
+
+      await buttonByText(w, '+ Add medicine').trigger('click')
+      await settle()
+      await buttonByText(w, 'Save').trigger('click')
+      await settle()
+
+      expect(w.text()).toContain('Give this medicine a name.')
+      expect(settingsApi.upsertMedicine).not.toHaveBeenCalled()
+      w.unmount()
+    })
+
+    it('archives a medicine after confirming', async () => {
+      const settingsApi = fakeApi()
+      const w = await openShell(settingsApi, 'medicines')
+
+      // Ivy is selected first and has one medicine, "Children's ibuprofen".
+      await w.find('button[aria-label="Archive Children\'s ibuprofen"]').trigger('click')
+      await settle()
+      expect(w.text()).toContain("Archive Children's ibuprofen?")
+      await buttonByText(w, 'Archive').trigger('click')
+      await settle()
+
+      expect(settingsApi.archiveMedicine).toHaveBeenCalledWith(SAM_AUTH, expect.any(String))
+      w.unmount()
+    })
+  })
+
+  describe('Stickers', () => {
+    it('lists the sticker categories and adds a new one', async () => {
+      const settingsApi = fakeApi()
+      const w = await openShell(settingsApi, 'stickers')
+
+      expect(w.text()).toContain('Potty')
+      expect(w.text()).toContain('Teeth')
+
+      await buttonByText(w, '+ Add category').trigger('click')
+      await settle()
+      await inputByLabel(w, 'Name').setValue('Sharing')
+      await w.find('[role="radiogroup"][aria-label="Icon"] [role="radio"][aria-label="Snack"]').trigger('click')
+      await buttonByText(w, 'Save').trigger('click')
+      await settle()
+
+      expect(settingsApi.upsertStickerCategory).toHaveBeenCalledWith(SAM_AUTH, {
+        categoryId: null, name: 'Sharing', iconKey: 'snack', sortOrder: null,
+      })
+      w.unmount()
+    })
+
+    it('requires a name and an icon', async () => {
+      const settingsApi = fakeApi()
+      const w = await openShell(settingsApi, 'stickers')
+
+      await buttonByText(w, '+ Add category').trigger('click')
+      await settle()
+      await buttonByText(w, 'Save').trigger('click')
+      await settle()
+
+      expect(w.text()).toContain('Give this category a name.')
+      expect(w.text()).toContain('Pick an icon.')
+      expect(settingsApi.upsertStickerCategory).not.toHaveBeenCalled()
+      w.unmount()
+    })
+
+    it('moves a category down, swapping sort order with its neighbor', async () => {
+      const settingsApi = fakeApi()
+      const w = await openShell(settingsApi, 'stickers')
+
+      await w.find('button[aria-label="Move Potty down"]').trigger('click')
+      await settle()
+
+      expect(settingsApi.upsertStickerCategory).toHaveBeenCalledWith(SAM_AUTH, { categoryId: expect.any(String), name: 'Teeth', iconKey: 'teeth', sortOrder: 0 })
+      expect(settingsApi.upsertStickerCategory).toHaveBeenCalledWith(SAM_AUTH, { categoryId: expect.any(String), name: 'Potty', iconKey: 'potty', sortOrder: 1 })
+      w.unmount()
+    })
+
+    it('archives a category after confirming', async () => {
+      const settingsApi = fakeApi()
+      const w = await openShell(settingsApi, 'stickers')
+
+      await w.find('button[aria-label="Archive Potty"]').trigger('click')
+      await settle()
+      expect(w.text()).toContain('Archive Potty?')
+      await buttonByText(w, 'Archive').trigger('click')
+      await settle()
+
+      expect(settingsApi.archiveStickerCategory).toHaveBeenCalledWith(SAM_AUTH, expect.any(String))
       w.unmount()
     })
   })

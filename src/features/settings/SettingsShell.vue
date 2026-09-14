@@ -15,14 +15,20 @@ import RAvatar from '@/ui/RAvatar.vue'
 import RButton from '@/ui/RButton.vue'
 import RLogo from '@/ui/RLogo.vue'
 import AboutSection from './sections/AboutSection.vue'
+import ChildrenSection from './sections/ChildrenSection.vue'
 import ComingSoonSection from './sections/ComingSoonSection.vue'
 import HouseholdSection from './sections/HouseholdSection.vue'
+import MedicinesSection from './sections/MedicinesSection.vue'
 import SitterInfoSection from './sections/SitterInfoSection.vue'
+import StickersSection from './sections/StickersSection.vue'
 import { findSection, SETTINGS_SECTIONS, type SettingsSectionId } from './settingsNav'
 import { useSettingsOffline } from './useSettingsSave'
 
 const SECTION_COMPONENTS: Partial<Record<SettingsSectionId, Component>> = {
   household: HouseholdSection,
+  children: ChildrenSection,
+  medicines: MedicinesSection,
+  stickers: StickersSection,
   'sitter-info': SitterInfoSection,
   about: AboutSection,
 }

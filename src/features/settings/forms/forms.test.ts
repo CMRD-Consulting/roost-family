@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { PERSON_COLORS } from '@/ui/personPalette'
 import ColorPicker from './ColorPicker.vue'
+import { ICON_KEYS } from './iconKeys'
+import IconPicker from './IconPicker.vue'
 import Stepper from './Stepper.vue'
 import TimeField from './TimeField.vue'
 import ToggleField from './ToggleField.vue'
+import TriStateToggle from './TriStateToggle.vue'
 
 describe('Stepper', () => {
   it('steps up and down within the bounds', async () => {
@@ -51,5 +54,39 @@ describe('ColorPicker', () => {
     expect(radios[1]!.attributes('aria-label')).toBe('Teal')
     await radios[0]!.trigger('click')
     expect(w.emitted('update:modelValue')).toEqual([[PERSON_COLORS[0]]])
+  })
+})
+
+describe('TriStateToggle', () => {
+  it('shows the computed default, and each option sets the right value', async () => {
+    const w = mount(TriStateToggle, { props: { label: 'Feeding', computedDefault: true, modelValue: null } })
+    const radios = w.findAll('[role="radio"]')
+    expect(radios.map((r) => r.text())).toEqual(['Default (On)', 'On', 'Off'])
+    expect(radios[0]!.attributes('aria-checked')).toBe('true')
+
+    await radios[1]!.trigger('click')
+    expect(w.emitted('update:modelValue')).toEqual([[true]])
+    await radios[2]!.trigger('click')
+    expect(w.emitted('update:modelValue')!.at(-1)).toEqual([false])
+    await radios[0]!.trigger('click')
+    expect(w.emitted('update:modelValue')!.at(-1)).toEqual([null])
+  })
+
+  it('shows the default as Off when that is what it resolves to', () => {
+    const w = mount(TriStateToggle, { props: { label: 'Diaper log', computedDefault: false, modelValue: false } })
+    expect(w.findAll('[role="radio"]')[0]!.text()).toBe('Default (Off)')
+    expect(w.findAll('[role="radio"]')[2]!.attributes('aria-checked')).toBe('true')
+  })
+})
+
+describe('IconPicker', () => {
+  it('offers every icon by a readable name and selects one', async () => {
+    const w = mount(IconPicker, { props: { label: 'Icon', modelValue: 'potty' } })
+    const radios = w.findAll('[role="radio"]')
+    expect(radios).toHaveLength(ICON_KEYS.length)
+    expect(radios.find((r) => r.attributes('aria-checked') === 'true')!.attributes('aria-label')).toBe('Potty')
+    const dressed = radios.find((r) => r.attributes('aria-label') === 'Getting Dressed')!
+    await dressed.trigger('click')
+    expect(w.emitted('update:modelValue')).toEqual([['getting-dressed']])
   })
 })
