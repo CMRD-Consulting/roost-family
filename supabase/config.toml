@@ -396,6 +396,11 @@ verify_jwt = true
 [functions.storage-sweep]
 verify_jwt = false
 
+# Household export (spec §6.3, §11.3). Callers must send a valid JWT; the function requires a full sign-in owner of the
+# export's household. Needs SMTP_* and APP_URL (see export-household/index.ts).
+[functions.export-household]
+verify_jwt = true
+
 # ICS subscription connect (spec §5.5, §6.3). Callers must send a valid JWT; the function requires a full sign-in adult.
 [functions.calendar-connect-ics]
 verify_jwt = true

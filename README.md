@@ -120,6 +120,27 @@ disables that provider. The Google and Microsoft network paths (token exchange, 
 covered by unit tests with recorded response shapes but are not exercised locally without real credentials; ICS
 subscriptions can be verified end to end locally with `CALENDAR_ALLOW_PRIVATE_HOSTS=1`.
 
+## Household export
+
+An owner requests an export on **Manage household** (spec §11.3). `request_household_export` records it (one per
+household per hour), the page invokes the `export-household` Edge Function, which builds a ZIP (`household.json`, one
+CSV per log type, photos) into the private `exports` bucket and emails the requesting owner a link to
+`/manage/export/<id>`. That page signs the owner in again and asks the same function (`action: 'download'`) for a
+10-minute signed URL. Exports expire 24 hours after they are ready; `storage-sweep` erases expired files.
+
+- Photos are capped at 40 MB per export (memory and the 50 MiB upload limit); photos past the cap are left out and
+  README.txt in the ZIP says how many. A ZIP over 50 MiB fails as `too_large`.
+- The build runs after the function's 202 response (`EdgeRuntime.waitUntil`), within the runtime's wall-clock limit.
+
+| Variable | Notes |
+|---|---|
+| `SMTP_HOST`, `SMTP_PORT` | port 465 uses implicit TLS; others use STARTTLS when offered. Locally `inbucket` / `1025` (Mailpit, as seen from the edge runtime container; the container name with underscores does not resolve there) |
+| `SMTP_USER`, `SMTP_PASS` | optional, together |
+| `SMTP_FROM` | e.g. `Roost Family <no-reply@roost.cmrd.dev>` |
+| `APP_URL` | origin of the emailed link; defaults to `http://localhost:5173` only on a local stack |
+
+Without SMTP or `APP_URL` the function answers `503 { "error": "not_configured" }` and nothing is built.
+
 ## Commands
 
 | Command | What it does |
