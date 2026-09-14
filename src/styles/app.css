@@ -1,1 +1,60 @@
 @import 'tailwindcss';
+
+@theme {
+  --font-sans: 'Outfit', system-ui, -apple-system, sans-serif;
+
+  /* Neutrals */
+  --color-page: #e9dfd1;
+  --color-app: #f5eee3;
+  --color-surface: #fbf6ee;
+  --color-surface-2: #efe4d3;
+  --color-line: #d9cbb8;
+  --color-ink: #2b211c;
+  --color-ink-2: #5a4636;
+  --color-ink-3: #75604f; /* muted text; darker than the design's #8A7468 to pass AA on surface */
+  --color-faint: #b3a092; /* decoration only, never text */
+
+  /* Accents: bright = icon/fill, deep = text */
+  --color-orange: #e2703a;
+  --color-orange-deep: #b8542a;
+  --color-orange-tint: #f6ddd0;
+  --color-warn-ink: #7a3418;
+  --color-amber: #d9a441;
+  --color-amber-deep: #8a5e0f;
+  --color-amber-tint: #f5e6c4;
+  --color-green: #5fa88c;
+  --color-green-deep: #2f6b57;
+  --color-green-tint: #ddede5;
+
+  /* Kids' Corner */
+  --color-corner: #f5e6c4;
+  --color-corner-bar: #eed9a8;
+  --color-corner-tile: #fbf3e0;
+
+  /* Night */
+  --color-night: #0e0b0a;
+
+  --radius-sheet: 28px;
+  --radius-card: 22px;
+  --radius-button: 20px;
+  --radius-control: 14px;
+}
+
+html,
+body {
+  background: var(--color-app);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+}
+
+@keyframes roost-pop {
+  0% { transform: scale(0.6); opacity: 0; }
+  60% { transform: scale(1.08); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
