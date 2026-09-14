@@ -213,12 +213,93 @@ describe('useHouseholdStore', () => {
     expect(store.snapshot?.loadedAt).toBe(cached.loadedAt)
   })
 
-  it('saves every successful load to the device cache', async () => {
-    const { source } = fakeSource()
-    const store = newStore()
-    await store.start('h1', source)
+  describe('device cache writes', () => {
+    beforeEach(() => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-09-14T19:00:00Z'))
+    })
+    afterEach(() => {
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
+      vi.useRealTimers()
+    })
 
-    expect(deviceCache.saveSnapshot).toHaveBeenCalledWith(store.snapshot)
+    it('saves a successful load to the device cache within 5 seconds', async () => {
+      const { source } = fakeSource()
+      const store = newStore()
+      await store.start('h1', source)
+      expect(deviceCache.saveSnapshot).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(deviceCache.saveSnapshot).toHaveBeenCalledTimes(1)
+      expect(deviceCache.saveSnapshot).toHaveBeenCalledWith(store.snapshot)
+    })
+
+    it('writes at most once every 5 seconds, with the latest snapshot', async () => {
+      let n = 0
+      const { source } = fakeSource(async (_id, now) => ({ ...buildDemoSnapshot(now), loadedAt: `load-${n++}` }))
+      const store = newStore()
+      await store.start('h1', source)
+      await vi.advanceTimersByTimeAsync(1_000)
+      await store.reload()
+      await vi.advanceTimersByTimeAsync(1_000)
+      await store.reload()
+      expect(deviceCache.saveSnapshot).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(3_000)
+      expect(deviceCache.saveSnapshot).toHaveBeenCalledTimes(1)
+      expect(deviceCache.saveSnapshot.mock.calls[0]![0].loadedAt).toBe('load-2')
+
+      await store.reload()
+      await vi.advanceTimersByTimeAsync(4_999)
+      expect(deviceCache.saveSnapshot).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(deviceCache.saveSnapshot).toHaveBeenCalledTimes(2)
+      expect(deviceCache.saveSnapshot.mock.calls[1]![0].loadedAt).toBe('load-3')
+    })
+
+    it('saves at once when the page is hidden', async () => {
+      const { source } = fakeSource()
+      const store = newStore()
+      await store.start('h1', source)
+
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
+      document.dispatchEvent(new Event('visibilitychange'))
+      expect(deviceCache.saveSnapshot).toHaveBeenCalledTimes(1)
+
+      // Nothing left to write when the window would have ended.
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(deviceCache.saveSnapshot).toHaveBeenCalledTimes(1)
+    })
+
+    it('saves at once on pagehide', async () => {
+      const { source } = fakeSource()
+      const store = newStore()
+      await store.start('h1', source)
+
+      window.dispatchEvent(new Event('pagehide'))
+      expect(deviceCache.saveSnapshot).toHaveBeenCalledTimes(1)
+    })
+
+    it('does nothing on pagehide when there is nothing new to write', async () => {
+      const { source } = fakeSource()
+      const store = newStore()
+      await store.start('h1', source)
+      await vi.advanceTimersByTimeAsync(5_000)
+
+      window.dispatchEvent(new Event('pagehide'))
+      expect(deviceCache.saveSnapshot).toHaveBeenCalledTimes(1)
+    })
+
+    it('drops a pending write on stop (e.g. the display was just revoked and its cache cleared)', async () => {
+      const { source } = fakeSource()
+      const store = newStore()
+      await store.start('h1', source)
+      store.stop()
+
+      await vi.advanceTimersByTimeAsync(5_000)
+      window.dispatchEvent(new Event('pagehide'))
+      expect(deviceCache.saveSnapshot).not.toHaveBeenCalled()
+    })
   })
 
   it('does not touch the device cache in demo mode', async () => {

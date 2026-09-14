@@ -9,6 +9,9 @@ import type { HouseholdSnapshot } from '@/data/snapshot'
 
 export type HouseholdStatus = 'idle' | 'loading' | 'ready' | 'error'
 
+/** Device cache writes happen at most this often (realtime can trigger many reloads in a burst). */
+export const CACHE_SAVE_INTERVAL_MS = 5_000
+
 // Demo mode never writes household data (the child's health data) to disk.
 const deviceCache = createDeviceCache()
 
@@ -69,6 +72,40 @@ export const useHouseholdStore = defineStore('household', () => {
    *  data (routine progress, day overrides) rolls over even with no other trigger. */
   let midnightTimer: ReturnType<typeof setTimeout> | null = null
 
+  /** The newest loaded snapshot not yet written to the device cache. */
+  let pendingCacheSave: HouseholdSnapshot | null = null
+  let cacheSaveTimer: ReturnType<typeof setTimeout> | null = null
+
+  /** Queues `next` for the device cache: written at the end of the current 5 s window, latest wins. */
+  function queueCacheSave(next: HouseholdSnapshot): void {
+    if (isDemo) return
+    pendingCacheSave = next
+    cacheSaveTimer ??= setTimeout(flushCacheSave, CACHE_SAVE_INTERVAL_MS)
+  }
+
+  function flushCacheSave(): void {
+    if (cacheSaveTimer !== null) {
+      clearTimeout(cacheSaveTimer)
+      cacheSaveTimer = null
+    }
+    const pending = pendingCacheSave
+    pendingCacheSave = null
+    if (pending !== null) void deviceCache.saveSnapshot(pending)
+  }
+
+  function dropCacheSave(): void {
+    if (cacheSaveTimer !== null) {
+      clearTimeout(cacheSaveTimer)
+      cacheSaveTimer = null
+    }
+    pendingCacheSave = null
+  }
+
+  /** The page may be about to be frozen or closed: write what we have now. */
+  function handleVisibilityChange(): void {
+    if (document.visibilityState === 'hidden') flushCacheSave()
+  }
+
   function handleOnline(): void {
     online.value = true
     void reload()
@@ -109,7 +146,7 @@ export const useHouseholdStore = defineStore('household', () => {
       error.value = null
       freshAt.value = next.loadedAt
       fromCache.value = false
-      if (!isDemo) void deviceCache.saveSnapshot(next)
+      queueCacheSave(next)
       // Overlay items saved before this reload started are already reflected in `next`; drop them.
       overlay.value = overlay.value.filter((o) => o.savedAt === null || o.savedAt >= loadStartedAt)
       scheduleMidnightReload()
@@ -134,6 +171,8 @@ export const useHouseholdStore = defineStore('household', () => {
     if (overlayHouseholdId !== householdId) overlay.value = []
     overlayHouseholdId = householdId
     status.value = 'loading'
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    window.addEventListener('pagehide', flushCacheSave)
     // The live load starts at once; the device cache is read alongside it and never holds it up.
     const loading = reload()
     if (!isDemo) {
@@ -174,6 +213,11 @@ export const useHouseholdStore = defineStore('household', () => {
     unsubscribe = null
     window.removeEventListener('online', handleOnline)
     window.removeEventListener('offline', handleOffline)
+    document.removeEventListener('visibilitychange', handleVisibilityChange)
+    window.removeEventListener('pagehide', flushCacheSave)
+    // Not flushed: stop() also runs when the display was revoked, right after its cache was cleared. The
+    // cache is only last-known-good; the next live load writes it again.
+    dropCacheSave()
     currentHouseholdId = null
     currentSource = null
     realtime.value = 'unknown'
