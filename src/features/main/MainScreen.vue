@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useNow } from '@/composables/useNow'
+import { weatherToShow } from '@/data/weatherApi'
 import DiaperSheet from '@/features/logs/DiaperSheet.vue'
 import DinnerSheet from '@/features/logs/DinnerSheet.vue'
 import DosePinDialog from '@/features/logs/DosePinDialog.vue'
@@ -36,8 +37,10 @@ import KidCard from './KidCard.vue'
 import KidCardCompact from './KidCardCompact.vue'
 import LogRow from './LogRow.vue'
 import MedicineZone from './MedicineZone.vue'
+import WeatherLine from './WeatherLine.vue'
 import { buildMainScreenModel, savedInfoLabel, type LogKind } from './mainScreenModel'
 import { useHouseholdSession } from './useHouseholdSession'
+import { useWeatherRefresh } from './useWeatherRefresh'
 
 const STALE_AFTER_MIN = 5
 /** Realtime down this long means another display's dose may not have reached us (spec §13). */
@@ -76,6 +79,19 @@ const date = computed(() => {
 })
 
 const offline = computed(() => !store.online || displayStore.state?.kind === 'offline')
+
+// Weather (spec §5.6): shown from the snapshot; the display asks the server to refresh it when it goes stale.
+const weather = computed(() => weatherToShow(store.snapshot?.weather, now.value))
+useWeatherRefresh({
+  householdId: () => store.snapshot?.household.id ?? null,
+  weather: () => store.snapshot?.weather,
+  online: () => !offline.value,
+  now,
+  // The refreshed row normally arrives through Realtime; without it, reload to pick it up.
+  onRefreshed: () => {
+    if (store.realtime !== 'connected') void store.reload()
+  },
+})
 const staleMinutes = computed(() => store.staleMinutes(now.value))
 
 /** "Showing saved info from 9:42 AM" while the view is still the device cache's last-known snapshot. */
@@ -272,104 +288,114 @@ const SETTINGS_BUTTON = {
             </span>
           </div>
         </div>
-        <div class="flex shrink-0 items-center gap-2">
-          <button
-            type="button"
-            aria-label="Nap Mode"
-            :aria-pressed="modes.napActive"
-            class="flex h-[60px] w-[60px] items-center justify-center rounded-2xl focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-ink"
-            :class="modes.napActive ? 'bg-ink text-app' : 'bg-surface-2 text-ink'"
-            @click="modes.toggleNap()"
-          >
-            <svg
-              width="26"
-              height="26"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              aria-hidden="true"
+        <!-- Buttons first, laid out right to left; the weather fills what's left beside them (dropping its details
+             when they don't fit), and wraps onto a second, clipped row, so it disappears whole rather than cut off
+             mid-number, when even the temperature doesn't fit (e.g. Sitter Mode's wide button beside "12:59 PM"
+             at 1024 px). The date never gives up room for it. The padding keeps focus outlines inside the clip. -->
+        <div
+          data-testid="header-actions"
+          class="header-actions -m-2 flex h-[92px] flex-1 flex-row-reverse flex-wrap content-start items-start gap-x-6 gap-y-4 overflow-hidden p-2"
+        >
+          <div class="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              aria-label="Nap Mode"
+              :aria-pressed="modes.napActive"
+              class="flex h-[60px] w-[60px] items-center justify-center rounded-2xl focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-ink"
+              :class="modes.napActive ? 'bg-ink text-app' : 'bg-surface-2 text-ink'"
+              @click="modes.toggleNap()"
             >
-              <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" />
-            </svg>
-          </button>
-          <button
-            type="button"
-            aria-label="Kids' Corner"
-            class="flex h-[60px] w-[60px] items-center justify-center rounded-2xl bg-surface-2 text-ink focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-ink"
-            @click="router.push('/corner')"
-          >
-            <svg
-              width="26"
-              height="26"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M12 3l9 8h-3v9h-4v-6H10v6H6v-9H3z" />
-            </svg>
-          </button>
-          <RLongPress
-            v-if="model.sitterActive"
-            class="flex h-[60px] items-center gap-3 rounded-2xl bg-ink px-5 text-[20px] font-semibold whitespace-nowrap text-app focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-ink"
-            @complete="endingSitter = true"
-          >
-            <span class="r-longpress-ring h-7 w-7 shrink-0" aria-hidden="true" />
-            <span>End Sitter Mode</span>
-          </RLongPress>
-          <template v-else>
-            <RLongPress
-              aria-label="Sitter Mode"
+              <svg
+                width="26"
+                height="26"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              aria-label="Kids' Corner"
               class="flex h-[60px] w-[60px] items-center justify-center rounded-2xl bg-surface-2 text-ink focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-ink"
-              @complete="startingSitter = true"
+              @click="router.push('/corner')"
             >
-              <span class="relative flex h-10 w-10 items-center justify-center">
-                <span class="r-longpress-ring absolute -inset-1" aria-hidden="true" />
-                <svg
-                  width="26"
-                  height="26"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M16 8a4 4 0 1 1-8 0 4 4 0 0 1 8 0z" />
-                  <path d="M4 21c0-4 3.6-7 8-7s8 3 8 7" />
-                </svg>
-              </span>
-            </RLongPress>
+              <svg
+                width="26"
+                height="26"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M12 3l9 8h-3v9h-4v-6H10v6H6v-9H3z" />
+              </svg>
+            </button>
             <RLongPress
-              :aria-label="SETTINGS_BUTTON.label"
-              class="flex h-[60px] w-[60px] items-center justify-center rounded-2xl bg-surface-2 text-ink focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-ink"
-              @complete="openSettings()"
+              v-if="model.sitterActive"
+              class="flex h-[60px] items-center gap-3 rounded-2xl bg-ink px-5 text-[20px] font-semibold whitespace-nowrap text-app focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-ink"
+              @complete="endingSitter = true"
             >
-              <span class="relative flex h-10 w-10 items-center justify-center">
-                <span class="r-longpress-ring absolute -inset-1" aria-hidden="true" />
-                <svg
-                  width="26"
-                  height="26"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  aria-hidden="true"
-                >
-                  <path v-for="d in SETTINGS_BUTTON.paths" :key="d" :d="d" />
-                </svg>
-              </span>
+              <span class="r-longpress-ring h-7 w-7 shrink-0" aria-hidden="true" />
+              <span>End Sitter Mode</span>
             </RLongPress>
-          </template>
+            <template v-else>
+              <RLongPress
+                aria-label="Sitter Mode"
+                class="flex h-[60px] w-[60px] items-center justify-center rounded-2xl bg-surface-2 text-ink focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-ink"
+                @complete="startingSitter = true"
+              >
+                <span class="relative flex h-10 w-10 items-center justify-center">
+                  <span class="r-longpress-ring absolute -inset-1" aria-hidden="true" />
+                  <svg
+                    width="26"
+                    height="26"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M16 8a4 4 0 1 1-8 0 4 4 0 0 1 8 0z" />
+                    <path d="M4 21c0-4 3.6-7 8-7s8 3 8 7" />
+                  </svg>
+                </span>
+              </RLongPress>
+              <RLongPress
+                :aria-label="SETTINGS_BUTTON.label"
+                class="flex h-[60px] w-[60px] items-center justify-center rounded-2xl bg-surface-2 text-ink focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-ink"
+                @complete="openSettings()"
+              >
+                <span class="relative flex h-10 w-10 items-center justify-center">
+                  <span class="r-longpress-ring absolute -inset-1" aria-hidden="true" />
+                  <svg
+                    width="26"
+                    height="26"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path v-for="d in SETTINGS_BUTTON.paths" :key="d" :d="d" />
+                  </svg>
+                </span>
+              </RLongPress>
+            </template>
+          </div>
+          <WeatherLine :weather="weather" />
         </div>
       </header>
 

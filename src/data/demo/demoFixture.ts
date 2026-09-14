@@ -291,6 +291,15 @@ export function buildDemoSnapshot(now: Date, options: DemoOptions = {}): Househo
     activeSitterSession,
     recentSitterSession: null,
     unseenSitterSessions: [],
+    weather: {
+      fetchedAt: now.toISOString(),
+      currentTempF: 74,
+      highF: 78,
+      lowF: 61,
+      precipChance: 10,
+      summary: 'Mostly Sunny',
+      icon: 'partly',
+    },
     loadedAt: now.toISOString(),
   }
 }

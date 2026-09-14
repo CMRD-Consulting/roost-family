@@ -12,6 +12,12 @@ describe('demoHousehold', () => {
     expect(snap.household.name).toBe('Rivera')
   })
 
+  it('keeps the sample weather fresh (fetched at now), so a long-running demo never hides it', () => {
+    getDemoSnapshot(new Date('2026-09-14T08:00:00Z'))
+    const later = new Date('2026-09-14T19:00:00Z')
+    expect(getDemoSnapshot(later).weather?.fetchedAt).toBe(later.toISOString())
+  })
+
   it('returns a structured clone: mutating the result does not affect shared state', () => {
     const first = getDemoSnapshot(new Date())
     first.household.dinnerTonight = 'Mutated!'

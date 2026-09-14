@@ -140,6 +140,18 @@ describe('buildDemoSnapshot', () => {
     expect(s.jots.every((j) => j.doneAt === null)).toBe(true)
   })
 
+  it('has sample weather fetched now', () => {
+    expect(buildDemoSnapshot(now).weather).toEqual({
+      fetchedAt: now.toISOString(),
+      currentTempF: 74,
+      highF: 78,
+      lowF: 61,
+      precipChance: 10,
+      summary: 'Mostly Sunny',
+      icon: 'partly',
+    })
+  })
+
   it('has no active or recent sitter session and loadedAt equal to now', () => {
     const s = buildDemoSnapshot(now)
     expect(s.activeSitterSession).toBeNull()

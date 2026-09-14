@@ -7,7 +7,7 @@ import type { Tables } from './database.types'
 import {
   toChild, toDiaper, toDose, toFeeding, toGrocery, toHousehold, toJot, toMedicine, toMember,
   toRoutine, toRoutineOverride, toRoutineProgress, toSitterSession, toSleep, toSticker,
-  toStickerCategory,
+  toStickerCategory, toWeather,
 } from './mappers'
 
 const HOUR_MS = 3_600_000
@@ -24,7 +24,7 @@ const CONFLICT_CONTEXT_WINDOW_MS = 72 * HOUR_MS
 const HOUSEHOLD_FILTERED_TABLES = [
   'memberships', 'medicines', 'dose_entries', 'sleep_entries', 'feeding_entries',
   'diaper_entries', 'sticker_categories', 'sticker_entries', 'routines', 'routine_progress',
-  'routine_day_overrides', 'jots', 'grocery_items', 'sitter_sessions',
+  'routine_day_overrides', 'jots', 'grocery_items', 'sitter_sessions', 'household_weather',
 ] as const
 
 /** Tables that lack a `household_id` column; RLS scopes them instead. */
@@ -164,7 +164,7 @@ export function createSupabaseSource(client: RoostClient): HouseholdSource {
       membershipResult, childrenAndOverrides, medicineResult, doseRows, sleepResult,
       feedingResult, diaperResult, stickerCategoryResult, stickerResult, routineResult,
       routineProgressResult, routineOverrideResult, jotResult, groceryResult, sitterSessionResult,
-      recentSitterSessionResult, unseenSitterSessionResult,
+      recentSitterSessionResult, unseenSitterSessionResult, weatherResult,
     ] = await Promise.all([
       client.from('memberships').select('id, display_name, color, role').eq('household_id', householdId).is('left_at', null),
       loadChildrenAndOverrides(client, householdId),
@@ -209,6 +209,11 @@ export function createSupabaseSource(client: RoostClient): HouseholdSource {
         .is('summary_shown_at', null)
         .order('ended_at', { ascending: false })
         .limit(UNSEEN_SITTER_SESSIONS_MAX),
+      client
+        .from('household_weather')
+        .select('fetched_at, current_temp_f, high_f, low_f, precip_chance, summary, icon')
+        .eq('household_id', householdId)
+        .maybeSingle(),
     ])
 
     if (sitterSessionResult.error) throw new Error(sitterSessionResult.error.message)
@@ -239,6 +244,8 @@ export function createSupabaseSource(client: RoostClient): HouseholdSource {
       recentSitterSession:
         unseenSitterSessions[0] ?? (recentSitterSessionResult.data ? toSitterSession(recentSitterSessionResult.data) : null),
       unseenSitterSessions,
+      // Weather is never essential (spec §13): a failed read hides it rather than failing the load.
+      weather: weatherResult.error ? null : toWeather(weatherResult.data),
       loadedAt: now.toISOString(),
     }
   }

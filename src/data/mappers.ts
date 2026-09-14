@@ -3,8 +3,8 @@ import type {
   SleepEntry, StickerEntry,
 } from '@/domain/types'
 import type {
-  GroceryItem, HouseholdInfo, Jot, Member, RoutineDayOverride, RoutineProgress, SitterInfo, SitterSession,
-  SnapshotChild, StickerCategory,
+  GroceryItem, HouseholdInfo, HouseholdWeather, Jot, Member, RoutineDayOverride, RoutineProgress, SitterInfo,
+  SitterSession, SnapshotChild, StickerCategory, WeatherIcon,
 } from './snapshot'
 import type { Tables } from './database.types'
 
@@ -237,5 +237,28 @@ export function toMember(row: Pick<Tables<'memberships'>, 'id' | 'display_name' 
     displayName: row.display_name,
     color: row.color,
     role: assertOneOf(row.role, MEMBER_ROLES, 'member role'),
+  }
+}
+
+const WEATHER_ICONS = ['sun', 'partly', 'cloud', 'rain', 'snow', 'storm', 'fog', 'wind'] as const satisfies readonly WeatherIcon[]
+
+type WeatherColumns = Pick<
+  Tables<'household_weather'>,
+  'fetched_at' | 'current_temp_f' | 'high_f' | 'low_f' | 'precip_chance' | 'summary' | 'icon'
+>
+
+/** The cached forecast, or null when there is nothing to show (never fetched, or no current temperature). A row
+ *  whose latest refresh failed keeps its last good values. */
+export function toWeather(row: WeatherColumns | null): HouseholdWeather | null {
+  if (!row || row.fetched_at === null || row.current_temp_f === null) return null
+  const icon = (WEATHER_ICONS as readonly string[]).includes(row.icon ?? '') ? (row.icon as WeatherIcon) : 'cloud'
+  return {
+    fetchedAt: row.fetched_at,
+    currentTempF: row.current_temp_f,
+    highF: row.high_f,
+    lowF: row.low_f,
+    precipChance: row.precip_chance,
+    summary: row.summary ?? '',
+    icon,
   }
 }

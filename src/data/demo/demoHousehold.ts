@@ -14,10 +14,12 @@ function ensureSnapshot(): HouseholdSnapshot {
   return snapshot
 }
 
-/** A structured clone of the shared demo snapshot, with `loadedAt` set to `now`. Safe to mutate. */
+/** A structured clone of the shared demo snapshot, with `loadedAt` (and the sample weather's `fetchedAt`) set to
+ *  `now`, since there is no server to refresh it. Safe to mutate. */
 export function getDemoSnapshot(now: Date): HouseholdSnapshot {
   const clone = structuredClone(ensureSnapshot())
   clone.loadedAt = now.toISOString()
+  if (clone.weather) clone.weather.fetchedAt = now.toISOString()
   return clone
 }
 

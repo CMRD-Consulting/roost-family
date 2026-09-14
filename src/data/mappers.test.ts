@@ -3,7 +3,7 @@ import type { Tables } from './database.types'
 import {
   toChild, toDiaper, toDose, toFeeding, toGrocery, toHousehold, toJot, toMedicine, toMember,
   toRoutine, toRoutineOverride, toRoutineProgress, toSitterInfo, toSitterSession, toSleep, toSticker,
-  toStickerCategory,
+  toStickerCategory, toWeather,
 } from './mappers'
 
 const household = (over: Partial<Tables<'households'>> = {}): Tables<'households'> => ({
@@ -248,6 +248,51 @@ describe('toHousehold', () => {
 
   it('maps sitter_info through toSitterInfo', () => {
     expect(toHousehold(household({ sitter_info: { bedtime: '7:00 PM', notes: 1 } })).sitterInfo).toEqual({ bedtime: '7:00 PM' })
+  })
+})
+
+const weatherRow = (over: Partial<Tables<'household_weather'>> = {}): Tables<'household_weather'> => ({
+  household_id: 'h1',
+  fetched_at: '2026-09-14T17:30:00+00:00',
+  current_temp_f: 74,
+  high_f: 78,
+  low_f: 61,
+  precip_chance: 20,
+  summary: 'Partly Sunny',
+  icon: 'partly',
+  error: null,
+  points_forecast_url: 'https://api.weather.gov/gridpoints/GSP/119,65/forecast',
+  points_hourly_url: 'https://api.weather.gov/gridpoints/GSP/119,65/forecast/hourly',
+  updated_at: '2026-09-14T17:30:00+00:00',
+  ...over,
+})
+
+describe('toWeather', () => {
+  it('maps the cached forecast, leaving out the provider endpoints and error', () => {
+    expect(toWeather(weatherRow())).toEqual({
+      fetchedAt: '2026-09-14T17:30:00+00:00',
+      currentTempF: 74,
+      highF: 78,
+      lowF: 61,
+      precipChance: 20,
+      summary: 'Partly Sunny',
+      icon: 'partly',
+    })
+  })
+
+  it('keeps the last good values of a row whose latest refresh failed', () => {
+    expect(toWeather(weatherRow({ error: 'NWS request failed (503)' }))?.currentTempF).toBe(74)
+  })
+
+  it('is null when nothing was ever fetched or there is no current temperature', () => {
+    expect(toWeather(null)).toBeNull()
+    expect(toWeather(weatherRow({ fetched_at: null }))).toBeNull()
+    expect(toWeather(weatherRow({ current_temp_f: null }))).toBeNull()
+  })
+
+  it('falls back to the cloud icon for an unknown icon, and passes null high/low/precip through', () => {
+    const w = toWeather(weatherRow({ icon: 'tornado', high_f: null, low_f: null, precip_chance: null, summary: null }))
+    expect(w).toMatchObject({ icon: 'cloud', highF: null, lowF: null, precipChance: null, summary: '' })
   })
 })
 

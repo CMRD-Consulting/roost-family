@@ -162,6 +162,33 @@ describe('MainScreen (demo source)', () => {
     wrapper.unmount()
   })
 
+  it('shows the weather in the header beside the buttons, outside the clock line', async () => {
+    const wrapper = await mountMain()
+    const header = wrapper.get('header')
+    const weather = header.get('[data-testid="weather"]')
+    expect(weather.text()).toContain('74°')
+    expect(weather.text()).toContain('H 78° · L 61° · 10% rain')
+    expect(header.get('[data-testid="clock-line"]').element.contains(weather.element)).toBe(false)
+    // In the right-hand group, laid out right to left: the buttons come first (always placed), the weather after
+    // them (to their left), and a weather line that doesn't fit wraps onto the clipped second row rather than
+    // squeezing the date or showing a cut-off temperature.
+    const actions = header.get('[data-testid="header-actions"]')
+    expect(weather.element.parentElement).toBe(actions.element)
+    const nap = header.get('button[aria-label="Nap Mode"]').element
+    expect(nap.compareDocumentPosition(weather.element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    for (const cls of ['flex-row-reverse', 'flex-wrap', 'overflow-hidden']) expect(actions.classes()).toContain(cls)
+    wrapper.unmount()
+  })
+
+  it('hides the weather when there is none (spec §13), keeping the clock and date', async () => {
+    mutateDemo((s) => ({ ...s, weather: null }))
+    const wrapper = await mountMain()
+    expect(wrapper.find('[data-testid="weather"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('Weather unavailable')
+    expect(wrapper.text()).toContain('September 14')
+    wrapper.unmount()
+  })
+
   it('warns that recent doses can\'t be checked while showing saved info', async () => {
     const wrapper = await mountMain()
     expect(wrapper.find('[data-testid="medicine-stale"]').exists()).toBe(false)

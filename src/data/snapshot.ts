@@ -87,6 +87,22 @@ export interface SitterSession {
   summaryShownAt: IsoTimestamp | null
 }
 
+/** The 8 header weather icons (spec §5.6); the Edge Function maps the provider's forecast text onto these. */
+export type WeatherIcon = 'sun' | 'partly' | 'cloud' | 'rain' | 'snow' | 'storm' | 'fog' | 'wind'
+
+/** The household's cached forecast (`household_weather`), refreshed server-side at most every 30 minutes. */
+export interface HouseholdWeather {
+  /** When these values were fetched; the display hides weather that is too old. */
+  fetchedAt: IsoTimestamp
+  currentTempF: number
+  highF: number | null
+  lowF: number | null
+  /** Max chance of precipitation (0-100) over the next 12 hours. */
+  precipChance: number | null
+  summary: string
+  icon: WeatherIcon
+}
+
 export interface HouseholdSnapshot {
   household: HouseholdInfo
   members: Member[]
@@ -109,5 +125,8 @@ export interface HouseholdSnapshot {
   /** Up to 3 sessions that ended within the last 12 hours and whose summary no display has shown, oldest first
    *  (drives the "see summary" banner). */
   unseenSitterSessions: SitterSession[]
+  /** Null when the household has no location or nothing has been fetched yet. Optional: a device-cached snapshot
+   *  from before weather was loaded won't have it. */
+  weather?: HouseholdWeather | null
   loadedAt: IsoTimestamp
 }

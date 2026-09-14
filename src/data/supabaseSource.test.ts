@@ -174,6 +174,7 @@ function baseTableData(): Record<string, QueryResultSpec> {
     jots: { data: [], error: null },
     grocery_items: { data: [], error: null },
     sitter_sessions: { data: [], error: null },
+    household_weather: { data: [], error: null },
   }
 }
 
@@ -279,6 +280,38 @@ describe('createSupabaseSource load', () => {
       ['select:*', 'eq:household_id=h1', `gte:ended_at=${cutoff12h}`, 'order:ended_at:desc', 'limit:1', 'maybeSingle'],
       ['select:*', 'eq:household_id=h1', `gte:ended_at=${cutoff12h}`, 'is:summary_shown_at=null', 'order:ended_at:desc', 'limit:3'],
     ])
+  })
+
+  describe('weather', () => {
+    const weatherRow = {
+      household_id: 'h1', fetched_at: '2026-09-14T18:45:00+00:00', current_temp_f: 74, high_f: 78, low_f: 61,
+      precip_chance: 20, summary: 'Partly Sunny', icon: 'partly', error: null,
+      points_forecast_url: 'x', points_hourly_url: 'y', updated_at: '2026-09-14T18:45:00+00:00',
+    }
+
+    it("loads the household's cached weather row", async () => {
+      const { client, calls } = createFakeClient({ ...baseTableData(), household_weather: { data: [weatherRow], error: null } })
+      const snapshot = await createSupabaseSource(client).load('h1', now)
+      expect(calls.find((c) => c.table === 'household_weather')?.ops).toEqual([
+        'select:fetched_at, current_temp_f, high_f, low_f, precip_chance, summary, icon', 'eq:household_id=h1', 'maybeSingle',
+      ])
+      expect(snapshot.weather).toEqual({
+        fetchedAt: '2026-09-14T18:45:00+00:00', currentTempF: 74, highF: 78, lowF: 61, precipChance: 20,
+        summary: 'Partly Sunny', icon: 'partly',
+      })
+    })
+
+    it('is null when there is no row', async () => {
+      const { client } = createFakeClient(baseTableData())
+      expect((await createSupabaseSource(client).load('h1', now)).weather).toBeNull()
+    })
+
+    it('hides weather instead of failing the whole load when the weather query errors', async () => {
+      const { client } = createFakeClient({ ...baseTableData(), household_weather: { data: null, error: { message: 'nope' } } })
+      const snapshot = await createSupabaseSource(client).load('h1', now)
+      expect(snapshot.weather).toBeNull()
+      expect(snapshot.household.id).toBe('h1')
+    })
   })
 
   it('rejects with the query error message', async () => {
@@ -593,7 +626,7 @@ describe('createSupabaseSource subscribe', () => {
     for (const table of [
       'memberships', 'medicines', 'dose_entries', 'sleep_entries', 'feeding_entries',
       'diaper_entries', 'sticker_categories', 'sticker_entries', 'routines', 'routine_progress',
-      'routine_day_overrides', 'jots', 'grocery_items', 'sitter_sessions',
+      'routine_day_overrides', 'jots', 'grocery_items', 'sitter_sessions', 'household_weather',
     ]) {
       expect(byTable.get(table)).toBe(`household_id=eq.h1`)
     }
