@@ -18,7 +18,7 @@ import RSheet from '@/ui/RSheet.vue'
 import { sitterLabel } from './sitterModel'
 
 const props = defineProps<{ open: boolean }>()
-const emit = defineEmits<{ close: [] }>()
+const emit = defineEmits<{ close: []; notice: [message: string] }>()
 
 const OFFLINE_MESSAGE = 'Connect to start Sitter Mode.'
 
@@ -72,9 +72,14 @@ async function start(): Promise<void> {
       startedAt: new Date().toISOString(),
     })
   } catch (e) {
-    if (e instanceof LogWriteError && e.network) error.value = OFFLINE_MESSAGE
-    else if (e instanceof LogWriteError && e.code === '23505') error.value = 'Sitter Mode is already on.'
-    else error.value = "Couldn't start Sitter Mode. Try again."
+    if (e instanceof LogWriteError && e.code === '23505') {
+      // Another display started Sitter Mode first: show it rather than an error.
+      await householdStore.reload()
+      emit('notice', 'Sitter Mode is already on')
+      emit('close')
+      return
+    }
+    error.value = e instanceof LogWriteError && e.network ? OFFLINE_MESSAGE : "Couldn't start Sitter Mode. Try again."
     return
   } finally {
     pending.value = false

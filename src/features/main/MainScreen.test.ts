@@ -5,6 +5,7 @@ import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { getDemoSnapshot, mutateDemo, resetDemoForTests } from '@/data/demo/demoHousehold'
 import type { LogCommand } from '@/data/logCommands'
+import { LogWriteError } from '@/data/logWriter'
 import { useDisplayStore } from '@/session/displayStore'
 import { useHouseholdStore } from '@/stores/householdStore'
 import { useLogStore } from '@/stores/logStore'
@@ -519,6 +520,72 @@ describe('MainScreen (demo source)', () => {
       await settle()
       expect(wrapper.get('[role="dialog"]').text()).toContain("That PIN didn't match.")
       expect(getDemoSnapshot(new Date()).activeSitterSession).not.toBeNull()
+      wrapper.unmount()
+    })
+
+    it('ending a session another display already ended reloads, closes the PIN pad and shows its summary', async () => {
+      window.history.replaceState({}, '', '/home?sitter')
+      const wrapper = await mountMain()
+      await hold(buttonIn(wrapper, 'End Sitter Mode').element)
+      const logStore = useLogStore(pinia)
+      vi.spyOn(logStore, 'submit').mockImplementationOnce(async () => {
+        // The other display's end hasn't reached this one yet.
+        mutateDemo((s) => ({
+          ...s,
+          activeSitterSession: null,
+          recentSitterSession: { ...s.activeSitterSession!, endedAt: '2026-09-14T18:55:00.000Z' },
+        }))
+        throw new LogWriteError('sitter session has already ended', false, '22023')
+      })
+      await enterPin(wrapper, 'Alex', '5678')
+      await settle()
+
+      expect(wrapper.text()).not.toContain('Enter your PIN')
+      expect(wrapper.text()).not.toContain("Couldn't end Sitter Mode")
+      expect(wrapper.find('[data-testid="sitter-pill"]').exists()).toBe(false)
+      const summary = wrapper.get('[data-testid="sitter-summary"]')
+      expect(summary.get('[data-testid="summary-sitter"]').text()).toBe('Jess · 1:00 PM – 2:55 PM')
+      wrapper.unmount()
+    })
+
+    it('ending a session that is gone (not found) reloads and closes without a summary', async () => {
+      window.history.replaceState({}, '', '/home?sitter')
+      const wrapper = await mountMain()
+      await hold(buttonIn(wrapper, 'End Sitter Mode').element)
+      const logStore = useLogStore(pinia)
+      vi.spyOn(logStore, 'submit').mockImplementationOnce(async () => {
+        mutateDemo((s) => ({ ...s, activeSitterSession: null, recentSitterSession: null }))
+        throw new LogWriteError('sitter session not found', false, '42501')
+      })
+      await enterPin(wrapper, 'Alex', '5678')
+      await settle()
+
+      expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="sitter-summary"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="sitter-pill"]').exists()).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('starting while another display already started Sitter Mode reloads, closes and says it is already on', async () => {
+      const wrapper = await mountMain()
+      await hold(wrapper.get('button[aria-label="Sitter Mode"]').element)
+      await enterPin(wrapper, 'Sam', '1234')
+      const logStore = useLogStore(pinia)
+      vi.spyOn(logStore, 'submit').mockImplementationOnce(async () => {
+        mutateDemo((s) => ({
+          ...s,
+          activeSitterSession: { id: 'other-display', sitterName: 'Robin', startedAt: '2026-09-14T18:59:00.000Z', endedAt: null, summaryShownAt: null },
+        }))
+        throw new LogWriteError('a sitter session is already active', false, '23505')
+      })
+      await buttonIn(wrapper.get('[role="dialog"]'), 'Start Sitter Mode').trigger('click')
+      await settle()
+
+      expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+      expect(wrapper.get('[data-testid="notice"]').text()).toBe('Sitter Mode is already on')
+      expect(wrapper.get('[data-testid="sitter-pill"]').text()).toBe('Sitter Mode · Robin')
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(wrapper.find('[data-testid="notice"]').exists()).toBe(false)
       wrapper.unmount()
     })
 

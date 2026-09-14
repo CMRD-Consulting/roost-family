@@ -103,6 +103,17 @@ const summarySessionId = ref<string | null>(null)
 /** The session this display ended: its summary was shown here, so no banner for it. */
 const endedHereSessionId = ref<string | null>(null)
 
+/** A short message in the toast row (e.g. "Sitter Mode is already on"). */
+const NOTICE_MS = 4_000
+const notice = ref<string | null>(null)
+let noticeTimer: ReturnType<typeof setTimeout> | undefined
+function showNotice(message: string): void {
+  notice.value = message
+  clearTimeout(noticeTimer)
+  noticeTimer = setTimeout(() => (notice.value = null), NOTICE_MS)
+}
+onBeforeUnmount(() => clearTimeout(noticeTimer))
+
 const activeSitter = computed(() => store.view?.activeSitterSession ?? null)
 const sitterPill = computed(() => {
   const name = activeSitter.value?.sitterName?.trim()
@@ -398,7 +409,18 @@ const SETTINGS_BUTTON = {
         </div>
       </div>
 
-      <UndoToast @needs-pin="undoingDoseId = $event" />
+      <div class="relative h-full">
+        <UndoToast @needs-pin="undoingDoseId = $event" />
+        <div v-if="notice" class="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <p
+            role="status"
+            data-testid="notice"
+            class="flex h-[60px] items-center rounded-full bg-ink px-7 text-[22px] font-medium text-surface shadow-[0_12px_30px_rgba(0,0,0,0.25)]"
+          >
+            {{ notice }}
+          </p>
+        </div>
+      </div>
 
       <LogRow :buttons="model.logButtons" @open="openLog = $event" />
     </div>
@@ -438,7 +460,7 @@ const SETTINGS_BUTTON = {
       :dose-id="acknowledgingDoseId"
       @close="acknowledgingDoseId = null"
     />
-    <SitterStartSheet :open="startingSitter" @close="startingSitter = false" />
+    <SitterStartSheet :open="startingSitter" @close="startingSitter = false" @notice="showNotice" />
     <SitterExitDialog :open="endingSitter" action="end" @close="endingSitter = false" @done="onSitterEnded" />
     <SitterExitDialog
       :open="unlockingSummaryId !== null"

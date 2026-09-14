@@ -1,12 +1,14 @@
 <script setup lang="ts">
 /**
  * Adult PIN for the end of Sitter Mode (spec §7.3, §7.6). `end` ends the household's active session and emits
- * `done` with its id, for the caller to show that session's summary. `unlockSummary` only checks the PIN before
+ * `done` with its id, for the caller to show that session's summary. If another display already ended it, the household is
+ * reloaded and `done` carries that session's id when its summary hasn't been shown anywhere yet (else `close`). `unlockSummary` only checks the PIN before
  * another display shows the summary of a session that has already ended. Both need a connection (the PIN is
  * checked on the server).
  */
 import { computed, ref, watch } from 'vue'
 import { LogWriteError } from '@/data/logWriter'
+import { pendingSummary } from './sitterModel'
 import SheetError from '@/features/logs/SheetError.vue'
 import { useHouseholdStore } from '@/stores/householdStore'
 import { useLogStore } from '@/stores/logStore'
@@ -49,6 +51,20 @@ watch(
   { immediate: true },
 )
 
+/** The session was already ended (22023) or is gone (42501 "not found"; the PIN itself was verified just before). */
+function endedElsewhere(e: unknown): boolean {
+  if (!(e instanceof LogWriteError)) return false
+  return e.code === '22023' || (e.code === '42501' && /not found/i.test(e.message))
+}
+
+/** Sitter Mode was ended elsewhere: show its summary here if no display has shown it yet, else just close. */
+function closeEndedElsewhere(): void {
+  const view = householdStore.view
+  const pending = view ? pendingSummary(view, new Date()) : null
+  if (pending) emit('done', pending.id)
+  else emit('close')
+}
+
 function verify(membershipId: string, pin: string): Promise<boolean> {
   return logStore.verifyPin(membershipId, pin)
 }
@@ -66,7 +82,7 @@ async function onVerified({ membershipId, pin }: { membershipId: string; pin: st
   const session = view.activeSitterSession ?? null
   if (session === null) {
     // Already ended (e.g. on another display).
-    emit('close')
+    closeEndedElsewhere()
     return
   }
   pending.value = true
@@ -81,6 +97,11 @@ async function onVerified({ membershipId, pin }: { membershipId: string; pin: st
       endedAt: new Date().toISOString(),
     })
   } catch (e) {
+    if (endedElsewhere(e)) {
+      await householdStore.reload()
+      closeEndedElsewhere()
+      return
+    }
     error.value = e instanceof LogWriteError && e.network ? copy.value.offline : copy.value.failed
     padKey.value++
     return

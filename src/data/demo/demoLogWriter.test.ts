@@ -84,6 +84,34 @@ describe('createDemoLogWriter', () => {
     await vi.advanceTimersByTimeAsync(150)
     await assertion
     expect(getDemoSnapshot(new Date()).activeSitterSession?.id).toBe('s1')
+
+    // A retry of the same start is idempotent.
+    const retry = writer.execute(cmd)
+    await vi.advanceTimersByTimeAsync(150)
+    await expect(retry).resolves.toBeUndefined()
+  })
+
+  it('rejects ending a session that already ended (22023) or does not exist (42501), like the server', async () => {
+    vi.useFakeTimers()
+    const writer = createDemoLogWriter()
+    const run = async (promise: Promise<void>) => {
+      await vi.advanceTimersByTimeAsync(150)
+      return promise
+    }
+    const at = new Date().toISOString()
+    await run(writer.execute({
+      kind: 'sitter.start', householdId: 'h', sessionId: 's1', membershipId: SAM_ID, pin: '1234', sitterName: null, displayId: null, startedAt: at,
+    }))
+    const end = { kind: 'sitter.end' as const, householdId: 'h', sessionId: 's1', membershipId: SAM_ID, pin: '1234', endedAt: at }
+    await run(writer.execute(end))
+    const again = writer.execute(end)
+    const againAssertion = expect(again).rejects.toMatchObject({ network: false, code: '22023' })
+    await vi.advanceTimersByTimeAsync(150)
+    await againAssertion
+    const missing = writer.execute({ ...end, sessionId: 'nope' })
+    const missingAssertion = expect(missing).rejects.toMatchObject({ network: false, code: '42501', message: 'sitter session not found' })
+    await vi.advanceTimersByTimeAsync(150)
+    await missingAssertion
   })
 
   it('starts, ends and marks a sitter session shown with the correct PIN', async () => {
