@@ -279,12 +279,22 @@ describe('createCalendarSettingsApi', () => {
     await expect(api.connectIcs(fakeClient(invoke), HOUSEHOLD, 'https://x')).rejects.toMatchObject({ code: 'network' })
   })
 
-  it('starts OAuth, reporting not_configured as a result rather than an error', async () => {
+  it('starts OAuth (always returning to Manage household), reporting not_configured as a result rather than an error', async () => {
     const invoke = vi.fn().mockResolvedValue({ data: { error: 'not_configured' }, error: null })
-    await expect(api.startOAuth(fakeClient(invoke), HOUSEHOLD, 'google', 'manage')).resolves.toEqual({ notConfigured: true })
+    await expect(api.startOAuth(fakeClient(invoke), HOUSEHOLD, 'google')).resolves.toEqual({ notConfigured: true })
     expect(invoke).toHaveBeenCalledWith('calendar-oauth-start', { body: { householdId: HOUSEHOLD, provider: 'google', returnTo: 'manage' } })
     invoke.mockResolvedValue({ data: { url: 'https://accounts.example/consent' }, error: null })
-    await expect(api.startOAuth(fakeClient(invoke), HOUSEHOLD, 'microsoft', 'manage')).resolves.toEqual({ url: 'https://accounts.example/consent' })
+    await expect(api.startOAuth(fakeClient(invoke), HOUSEHOLD, 'microsoft')).resolves.toEqual({ url: 'https://accounts.example/consent' })
+  })
+
+  it('finishes an OAuth attempt, with expired and forbidden as codes', async () => {
+    const invoke = vi.fn().mockResolvedValue({ data: { connectionId: 'c', calendars: 3, label: 'sam@example.com' }, error: null })
+    await expect(api.finishOAuth(fakeClient(invoke), 'attempt-token')).resolves.toEqual({ connectionId: 'c', calendars: 3, label: 'sam@example.com' })
+    expect(invoke).toHaveBeenCalledWith('calendar-oauth-finish', { body: { attempt: 'attempt-token' } })
+    invoke.mockResolvedValue({ data: null, error: httpError(410, { error: 'expired' }) })
+    await expect(api.finishOAuth(fakeClient(invoke), 'attempt-token')).rejects.toMatchObject({ code: 'expired' })
+    invoke.mockResolvedValue({ data: null, error: httpError(404, { error: 'invalid_attempt' }) })
+    await expect(api.finishOAuth(fakeClient(invoke), 'attempt-token')).rejects.toMatchObject({ code: 'invalid_attempt' })
   })
 
   it('sets a selection and disconnects through the RPCs', async () => {
@@ -307,7 +317,8 @@ describe('calendarConnectMessage', () => {
     expect(calendarConnectMessage(new CalendarError('invalid_url'))).toMatch(/https:\/\/ or webcal:\/\//)
     expect(calendarConnectMessage(new CalendarError('not_a_calendar'))).toMatch(/isn’t a calendar/)
     expect(calendarConnectMessage(new CalendarError('too_large'))).toMatch(/too big/)
-    expect(calendarConnectMessage(new CalendarError('unreachable'))).toMatch(/Couldn’t reach that calendar/)
+    expect(calendarConnectMessage(new CalendarError('unreachable'))).toMatch(/We couldn’t reach that calendar link/)
+    expect(calendarConnectMessage(new CalendarError('expired'))).toBe('That took too long. Connect again.')
     expect(calendarConnectMessage(new CalendarError('forbidden'))).toMatch(/sign-in/)
     expect(calendarConnectMessage(new CalendarError('network'))).toMatch(/Couldn’t reach Roost Family/)
     expect(calendarConnectMessage(new Error('boom'))).toMatch(/Try again/)

@@ -4,7 +4,8 @@
  * as the Settings adult (spec §6.3): changing my PIN and leaving the household. The adult session ends after 5
  * minutes without a touch, when the action is done, or when this section closes. In a browser (Manage household,
  * spec §7.10) the adult is already signed in: only leaving the household, with no sign-in of its own. `host` is
- * where the section is shown (see sectionHosts). The `calendars` slot is where the calendar settings go.
+ * where the section is shown (see sectionHosts). The `calendars` slot is where the calendar settings go: Manage
+ * household fills it with its signed-in adult's; on a display it defaults to "My calendars", behind a full sign-in.
  */
 import { computed, ref, shallowRef } from 'vue'
 import { isDemo } from '@/data/householdSource'
@@ -14,6 +15,7 @@ import { useAdultSessionIdle } from '@/session/useAdultSessionIdle'
 import RButton from '@/ui/RButton.vue'
 import RInput from '@/ui/RInput.vue'
 import AdultSignIn from '../AdultSignIn.vue'
+import CalendarsSection from './CalendarsSection.vue'
 import { useNightHold } from '../useNightHold'
 import { validateNewPin } from '../myAccountForm'
 import { useDisplayAccountHost, type AccountSectionHost } from '../sectionHosts'
@@ -29,7 +31,7 @@ const myName = computed(() => host.me.value?.displayName ?? '')
 const householdName = computed(() => host.household.value?.name ?? 'this household')
 
 // ─── Full sign-in actions ──────────────────────────────────────────────────
-type Action = 'pin' | 'leave'
+type Action = 'pin' | 'leave' | 'calendars'
 type Phase = 'idle' | 'signIn' | 'act'
 
 const action = ref<Action | null>(null)
@@ -77,6 +79,12 @@ function start(next: Action): void {
   // Already signed in (Manage household): straight to the action.
   phase.value = host.signedIn ? 'act' : 'signIn'
 }
+
+const signInTitle = computed(() => {
+  if (action.value === 'pin') return `Sign in as ${myName.value} to change your PIN`
+  if (action.value === 'calendars') return `Sign in as ${myName.value} to manage your calendars`
+  return `Sign in as ${myName.value} to leave ${householdName.value}`
+})
 
 function cancel(): void {
   endAdult()
@@ -176,7 +184,17 @@ async function confirmLeave(): Promise<void> {
 
     <MyColorCard v-if="host.pinSession" />
 
-    <slot name="calendars" />
+    <slot name="calendars">
+      <div v-if="host.surface === 'display' && phase === 'idle'" class="flex flex-col gap-3 rounded-[var(--radius-card)] bg-surface px-6 py-5">
+        <h3 class="text-[22px] font-semibold text-ink">Calendars</h3>
+        <p class="text-[18px] text-ink-3">
+          Connect your calendars and choose whose events they are. This needs a full sign-in with your email.
+        </p>
+        <div>
+          <RButton variant="secondary" :disabled="offline" @click="start('calendars')">Manage my calendars</RButton>
+        </div>
+      </div>
+    </slot>
 
     <p v-if="notice" role="status" class="text-[18px] font-medium text-green-deep">{{ notice }}</p>
     <p v-if="error && phase !== 'signIn'" role="alert" class="text-[18px] text-warn-ink">{{ error }}</p>
@@ -205,13 +223,27 @@ async function confirmLeave(): Promise<void> {
     <template v-else-if="phase === 'signIn'">
       <AdultSignIn
         :key="signInKey"
-        :title="action === 'pin' ? `Sign in as ${myName} to change your PIN` : `Sign in as ${myName} to leave ${householdName}`"
+        :title="signInTitle"
         hint="A full sign-in ends after 5 minutes without a touch."
         @signed-in="onSignedIn"
         @cancel="cancel"
       />
       <p v-if="error" role="alert" class="text-[18px] text-warn-ink">{{ error }}</p>
     </template>
+
+    <div v-else-if="action === 'calendars'" class="flex flex-col gap-4">
+      <CalendarsSection
+        v-if="adult && host.me.value && host.household.value"
+        :client="adult.client"
+        :household-id="host.household.value.id"
+        :membership-id="host.me.value.membershipId"
+        surface="display"
+        :heading-level="3"
+      />
+      <div>
+        <RButton variant="secondary" @click="cancel">Done with calendars</RButton>
+      </div>
+    </div>
 
     <div v-else-if="action === 'pin'" class="flex flex-col gap-4 rounded-[var(--radius-card)] bg-surface px-6 py-5">
       <h3 class="text-[22px] font-semibold text-ink">Choose a new PIN</h3>

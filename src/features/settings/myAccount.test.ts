@@ -21,6 +21,14 @@ const adult = vi.hoisted(() => ({
 
 vi.mock('@/data/householdSource', () => ({ isDemo: false, selectSettingsApi: async () => api.current }))
 vi.mock('@/session/adultSession', () => adult)
+const calendars = vi.hoisted(() => ({
+  listMyConnections: vi.fn(async () => []),
+  listPeople: vi.fn(async () => []),
+}))
+vi.mock('@/data/calendarApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/data/calendarApi')>()),
+  createCalendarSettingsApi: () => calendars,
+}))
 vi.mock('@/data/supabase', () => {
   throw new Error('Supabase client loaded by a settings test')
 })
@@ -184,6 +192,30 @@ describe('MyAccountSection', () => {
     expect(endSession).toHaveBeenCalled()
     expect(useSettingsSessionStore().auth).toEqual({ membershipId: SAM, pin: '4321' })
     expect(w.text()).toContain('Your PIN is changed.')
+    w.unmount()
+  })
+
+  it('manages my calendars after a full sign-in as the Settings adult, without Google or Microsoft on the tablet', async () => {
+    settingsApi.adultMembership.mockResolvedValue({ membershipId: SAM, role: 'owner' })
+    const w = await mountAs(SAM, '1234')
+    expect(w.find('[data-testid="calendars-section"]').exists()).toBe(false)
+
+    await buttonByText(w, 'Manage my calendars').trigger('click')
+    await settle()
+    expect(w.text()).toContain('Sign in as Sam to manage your calendars')
+    await signIn(w)
+
+    const section = w.get('[data-testid="calendars-section"]')
+    expect(section.get('h3').text()).toBe('Calendars')
+    expect(calendars.listMyConnections).toHaveBeenCalledWith({ name: 'adult-client' }, HOUSEHOLD, SAM)
+    expect(section.get('[data-testid="connect-google"]').attributes('disabled')).toBeDefined()
+    expect(section.text()).toContain('roost.cmrd.dev/manage')
+
+    await buttonByText(w, 'Done with calendars').trigger('click')
+    await settle()
+    expect(endSession).toHaveBeenCalled()
+    expect(w.find('[data-testid="calendars-section"]').exists()).toBe(false)
+    expect(w.text()).toContain('Manage my calendars')
     w.unmount()
   })
 

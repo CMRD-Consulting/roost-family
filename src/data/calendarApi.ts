@@ -8,7 +8,8 @@
  *
  * Calendar settings: an adult with a full sign-in lists their own connections (explicit columns: the Vault secret id
  * and external calendar ids are not readable), connects a calendar link or starts Google / Microsoft OAuth through
- * the Edge Functions, shows / assigns calendars and disconnects through RPCs.
+ * the Edge Functions, shows / assigns calendars and disconnects through RPCs. OAuth always returns to Manage household
+ * (`/manage?calendar=pending&attempt=…`), where the signed-in adult finishes the attempt (`finishOAuth`).
  */
 import { getCurrentScope, onScopeDispose, ref, shallowRef, watch, type Ref, type ShallowRef } from 'vue'
 import { msUntilNextHouseholdMidnight } from '@/composables/householdMidnight'
@@ -61,6 +62,8 @@ export type CalendarErrorCode =
   | 'too_large'
   | 'not_a_calendar'
   | 'unreachable'
+  | 'invalid_attempt'
+  | 'expired'
   | 'network'
   | 'internal'
 
@@ -71,7 +74,10 @@ export class CalendarError extends Error {
   }
 }
 
-const KNOWN_CODES = new Set<string>(['invalid_request', 'invalid_url', 'forbidden', 'not_found', 'too_large', 'not_a_calendar', 'unreachable', 'internal'])
+const KNOWN_CODES = new Set<string>([
+  'invalid_request', 'invalid_url', 'forbidden', 'not_found', 'too_large', 'not_a_calendar', 'unreachable', 'invalid_attempt',
+  'expired', 'internal',
+])
 
 /** A `functions.invoke` error as a CalendarError: the function's `{ error }` code, or `network` when no response came. */
 async function functionError(error: unknown): Promise<CalendarError> {
@@ -312,13 +318,16 @@ export interface CalendarSettingsApi {
   listMyConnections(client: AdultClient, householdId: string, membershipId: string): Promise<MyConnection[]>
   /** Active members, then children, who a calendar can belong to. */
   listPeople(client: AdultClient, householdId: string): Promise<CalendarPerson[]>
-  connectIcs(client: AdultClient, householdId: string, url: string): Promise<{ connectionId: string; selectionId: string; name: string }>
-  startOAuth(
+  /** `alreadyConnected`: this adult had already connected that link; nothing new was created. */
+  connectIcs(
     client: AdultClient,
     householdId: string,
-    provider: 'google' | 'microsoft',
-    returnTo: 'settings' | 'manage',
-  ): Promise<{ url: string } | { notConfigured: true }>
+    url: string,
+  ): Promise<{ connectionId: string; selectionId: string; name: string; alreadyConnected?: boolean }>
+  /** The provider's consent page (the browser comes back to /manage), or not configured on this server. */
+  startOAuth(client: AdultClient, householdId: string, provider: 'google' | 'microsoft'): Promise<{ url: string } | { notConfigured: true }>
+  /** Creates the connection for a returned OAuth attempt, as the adult who started it. */
+  finishOAuth(client: AdultClient, attempt: string): Promise<{ connectionId: string; calendars: number; label: string }>
   setSelection(client: AdultClient, selectionId: string, visible: boolean, assignee: Assignee | null): Promise<void>
   disconnect(client: AdultClient, connectionId: string): Promise<void>
 }
@@ -404,11 +413,21 @@ export function createCalendarSettingsApi(): CalendarSettingsApi {
 
     connectIcs: (client, householdId, url) => invoke(client, 'calendar-connect-ics', { householdId, url }),
 
-    async startOAuth(client, householdId, provider, returnTo) {
-      const data = await invoke<{ url?: unknown; error?: unknown } | null>(client, 'calendar-oauth-start', { householdId, provider, returnTo })
+    async startOAuth(client, householdId, provider) {
+      const data = await invoke<{ url?: unknown; error?: unknown } | null>(client, 'calendar-oauth-start', { householdId, provider, returnTo: 'manage' })
       if (data?.error === 'not_configured') return { notConfigured: true }
       if (typeof data?.url !== 'string') throw new CalendarError('internal')
       return { url: data.url }
+    },
+
+    async finishOAuth(client, attempt) {
+      const data = await invoke<{ connectionId?: unknown; calendars?: unknown; label?: unknown } | null>(client, 'calendar-oauth-finish', { attempt })
+      if (typeof data?.connectionId !== 'string') throw new CalendarError('internal')
+      return {
+        connectionId: data.connectionId,
+        calendars: typeof data.calendars === 'number' ? data.calendars : 0,
+        label: typeof data.label === 'string' ? data.label : '',
+      }
     },
 
     async setSelection(client, selectionId, visible, assignee) {
@@ -440,9 +459,13 @@ export function calendarConnectMessage(error: unknown): string {
     case 'too_large':
       return 'That calendar is too big to show. Try a calendar with fewer events.'
     case 'unreachable':
-      return 'Couldn’t reach that calendar. Check the link still works and try again.'
+      return 'We couldn’t reach that calendar link. Check the link and try again.'
     case 'forbidden':
       return 'Roost Family didn’t accept your sign-in. Sign in again.'
+    case 'expired':
+      return 'That took too long. Connect again.'
+    case 'invalid_attempt':
+      return 'That calendar connection didn’t finish. Connect again.'
     case 'network':
       return 'Couldn’t reach Roost Family. Check the connection and try again.'
     default:
