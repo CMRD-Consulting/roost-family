@@ -115,6 +115,16 @@ function showNotice(message: string): void {
 onBeforeUnmount(() => clearTimeout(noticeTimer))
 
 const activeSitter = computed(() => store.view?.activeSitterSession ?? null)
+// A sitter doesn't see the household's personal lists (spec §7.6): if Sitter Mode starts (e.g. on another display)
+// while one is open, close it.
+watch(
+  () => model.value?.sitterActive ?? false,
+  (active) => {
+    if (!active) return
+    if (openLog.value === 'jot' || openLog.value === 'grocery') openLog.value = null
+    editingDinner.value = false
+  },
+)
 const sitterPill = computed(() => {
   const name = activeSitter.value?.sitterName?.trim()
   return name ? `Sitter Mode · ${name}` : 'Sitter Mode'

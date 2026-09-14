@@ -457,6 +457,45 @@ describe('MainScreen (demo source)', () => {
       wrapper.unmount()
     })
 
+    const startRemotely = () =>
+      mutateDemo((s) => ({
+        ...s,
+        activeSitterSession: { id: 'remote', sitterName: 'Robin', startedAt: '2026-09-14T18:59:00.000Z', endedAt: null, summaryShownAt: null },
+      }))
+
+    it.each([
+      ['jot', 'Jot it'],
+      ['grocery', 'Grocery list'],
+    ])('closes the open %s sheet when another display starts Sitter Mode', async (kind, title) => {
+      const wrapper = await mountMain()
+      await hold(wrapper.get(`[data-log-kind="${kind}"]`).element)
+      expect(wrapper.get('[role="dialog"]').text()).toContain(title)
+
+      startRemotely()
+      await settle()
+
+      expect(wrapper.get('[data-testid="sitter-pill"]').text()).toBe('Sitter Mode · Robin')
+      expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('closes the dinner sheet when another display starts Sitter Mode, but keeps a sitter-safe sheet open', async () => {
+      const wrapper = await mountMain()
+      await hold(wrapper.get('[data-testid="dinner-line"]').element)
+      expect(wrapper.get('[role="dialog"]').text()).toContain('Dinner')
+      startRemotely()
+      await settle()
+      expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+
+      mutateDemo((s) => ({ ...s, activeSitterSession: null }))
+      await settle()
+      await hold(wrapper.get('[data-log-kind="feeding"]').element)
+      startRemotely()
+      await settle()
+      expect(wrapper.get('[role="dialog"]').text()).toContain('Feeding')
+      wrapper.unmount()
+    })
+
     it('says "Sitter Mode" without a name', async () => {
       mutateDemo((s) => ({
         ...s,
