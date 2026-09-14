@@ -268,7 +268,7 @@ describe('createSupabaseSource load', () => {
       'select:*', 'eq:household_id=h1', `or:checked_at.is.null,checked_at.gte.${cutoff24h}`,
     ])
     expect(calls.find((c) => c.table === 'sitter_sessions')?.ops).toEqual([
-      'select:*', 'eq:household_id=h1', 'is:ended_at=null', 'maybeSingle',
+      'select:*', 'eq:household_id=h1', 'is:ended_at=null', 'order:started_at:desc', 'limit:1', 'maybeSingle',
     ])
   })
 
@@ -288,6 +288,27 @@ describe('createSupabaseSource load', () => {
     })
     const source = createSupabaseSource(client)
     await expect(source.load('h1', now)).rejects.toThrow('household not found')
+  })
+
+  describe('multiple open sitter sessions', () => {
+    it('picks the most recently started open session when more than one is open', async () => {
+      // A real query orders by started_at desc and limits to 1, so the fake's data is
+      // already in that shape here — the query-shape assertion above covers the ordering.
+      const mostRecent = {
+        id: 'sess-2', household_id: 'h1', display_id: null, sitter_name: 'Priya',
+        started_at: '2026-09-14T18:00:00Z', ended_at: null, summary_shown_at: null,
+      }
+      const { client } = createFakeClient({
+        ...baseTableData(),
+        sitter_sessions: { data: [mostRecent], error: null },
+      })
+      const source = createSupabaseSource(client)
+      const snapshot = await source.load('h1', now)
+
+      expect(snapshot.activeSitterSession).toEqual({
+        id: 'sess-2', sitterName: 'Priya', startedAt: '2026-09-14T18:00:00Z', endedAt: null,
+      })
+    })
   })
 
   describe('conflict doses never age out', () => {

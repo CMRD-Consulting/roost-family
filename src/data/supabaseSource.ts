@@ -125,7 +125,14 @@ export function createSupabaseSource(client: RoostClient): HouseholdSource {
       client.from('routine_day_overrides').select('*').eq('household_id', householdId).eq('day', today),
       client.from('jots').select('*').eq('household_id', householdId).is('done_at', null),
       client.from('grocery_items').select('*').eq('household_id', householdId).or(`checked_at.is.null,checked_at.gte.${cutoff24h}`),
-      client.from('sitter_sessions').select('*').eq('household_id', householdId).is('ended_at', null).maybeSingle(),
+      client
+        .from('sitter_sessions')
+        .select('*')
+        .eq('household_id', householdId)
+        .is('ended_at', null)
+        .order('started_at', { ascending: false })
+        .limit(1)
+        .maybeSingle(),
     ])
 
     const overridesByChild = new Map<string, { feature: string; enabled: boolean }[]>()
