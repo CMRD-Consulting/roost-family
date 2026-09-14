@@ -14,6 +14,8 @@ export const useHouseholdStore = defineStore('household', () => {
   let currentHouseholdId: string | null = null
   let currentSource: HouseholdSource | null = null
   let unsubscribe: (() => void) | null = null
+  /** Monotonic counter; a load result is applied only if it's still the latest one issued. */
+  let loadSeq = 0
 
   function handleOnline(): void {
     online.value = true
@@ -26,12 +28,19 @@ export const useHouseholdStore = defineStore('household', () => {
 
   async function reload(): Promise<void> {
     if (currentHouseholdId === null || currentSource === null) return
+    const householdId = currentHouseholdId
+    const source = currentSource
+    const seq = ++loadSeq
+    /** True once a newer load has started, this household was left, or the store stopped. */
+    const isStale = () => seq !== loadSeq || currentHouseholdId !== householdId
     try {
-      const next = await currentSource.load(currentHouseholdId, new Date())
+      const next = await source.load(householdId, new Date())
+      if (isStale()) return
       snapshot.value = next
       status.value = 'ready'
       error.value = null
     } catch (e) {
+      if (isStale()) return
       error.value = e instanceof Error ? e.message : String(e)
       if (snapshot.value === null) status.value = 'error'
     }
@@ -42,8 +51,12 @@ export const useHouseholdStore = defineStore('household', () => {
     stop()
     currentHouseholdId = householdId
     currentSource = source
+    snapshot.value = null
+    error.value = null
     status.value = 'loading'
     await reload()
+    // A stop() or a switch to another household during that first load must not subscribe.
+    if (currentHouseholdId !== householdId) return
     unsubscribe = source.subscribe(householdId, () => {
       void reload()
     })
