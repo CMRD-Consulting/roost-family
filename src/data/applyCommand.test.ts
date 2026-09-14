@@ -116,7 +116,7 @@ describe('applyCommand', () => {
         kind: 'dose.add', householdId: h, attribution: sitter,
         entry: {
           id: 'sdo', childId: theo.id, medicineId: base.medicines[0]!.id, at: now.toISOString(), loggedByName: null, loggedOffline: false,
-          voidedAt: null, conflictAcknowledgedAt: null, createdAt: '', note: null, warningsConfirmed: [], sitterSessionId: null,
+          voidedAt: null, voidReason: null, conflictAcknowledgedAt: null, createdAt: '', note: null, warningsConfirmed: [], sitterSessionId: null,
         },
       }, now)
       expect(next.feedings.find((e) => e.id === 'sf')?.sitterSessionId).toBe('sitter-1')
@@ -131,7 +131,7 @@ describe('applyCommand', () => {
     it('appends and is idempotent', () => {
       const entry = {
         id: 'new-dose', childId: theo.id, medicineId: base.medicines[0]!.id, at: now.toISOString(),
-        loggedByName: null, loggedOffline: false, voidedAt: null, conflictAcknowledgedAt: null,
+        loggedByName: null, loggedOffline: false, voidedAt: null, voidReason: null, conflictAcknowledgedAt: null,
         createdAt: '', note: null, warningsConfirmed: [], sitterSessionId: null,
       }
       const cmd: LogCommand = { kind: 'dose.add', householdId: base.household.id, entry, attribution }
@@ -143,7 +143,7 @@ describe('applyCommand', () => {
     it('sets createdAt to now only when the entry has no createdAt', () => {
       const entry = {
         id: 'new-dose-2', childId: theo.id, medicineId: base.medicines[0]!.id, at: now.toISOString(),
-        loggedByName: 'Alex', loggedOffline: false, voidedAt: null, conflictAcknowledgedAt: null,
+        loggedByName: 'Alex', loggedOffline: false, voidedAt: null, voidReason: null, conflictAcknowledgedAt: null,
         createdAt: '2026-09-14T18:00:00.000Z', note: null, warningsConfirmed: [], sitterSessionId: null,
       }
       const cmd: LogCommand = { kind: 'dose.add', householdId: base.household.id, entry, attribution }
@@ -211,10 +211,11 @@ describe('applyCommand', () => {
   describe('dose.void / dose.acknowledge', () => {
     const doseId = base.doses[0]!.id
 
-    it('dose.void sets voidedAt to now', () => {
+    it('dose.void sets voidedAt to now and keeps the reason', () => {
       const cmd: LogCommand = { kind: 'dose.void', householdId: base.household.id, doseId, membershipId: sam.id, pin: '1234', reason: 'test' }
       const next = applyCommand(base, cmd, now)
       expect(next.doses.find((d) => d.id === doseId)?.voidedAt).toBe(now.toISOString())
+      expect(next.doses.find((d) => d.id === doseId)?.voidReason).toBe('test')
     })
 
     it('dose.acknowledge sets conflictAcknowledgedAt to now', () => {

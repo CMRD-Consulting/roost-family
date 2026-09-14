@@ -209,7 +209,7 @@ describe('createSupabaseLogWriter', () => {
       const writer = createSupabaseLogWriter(client)
       const entry = {
         id: 'dose-1', childId, medicineId: 'med-1', at: '2026-09-14T19:00:00Z',
-        loggedByName: null, loggedOffline: true, voidedAt: null, conflictAcknowledgedAt: null,
+        loggedByName: null, loggedOffline: true, voidedAt: null, voidReason: null, conflictAcknowledgedAt: null,
         createdAt: '2026-09-14T19:00:00Z', note: '5 ml', warningsConfirmed: ['early'], sitterSessionId: null,
       }
       await writer.execute({ kind: 'dose.add', householdId, entry, attribution })

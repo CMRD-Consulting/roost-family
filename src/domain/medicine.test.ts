@@ -14,6 +14,7 @@ const dose = (over: Partial<DoseEntry>): DoseEntry => ({
   loggedByName: 'Sam',
   loggedOffline: false,
   voidedAt: null,
+  voidReason: null,
   conflictAcknowledgedAt: null,
   createdAt: over.at ?? '2026-09-14T12:00:00Z',
   note: null,

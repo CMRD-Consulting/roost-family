@@ -45,7 +45,10 @@ describe('SitterSummary', () => {
         color: '#C2477A',
         lines: [
           { time: '6:00 PM', icon: 'sticker', text: 'Sticker: Potty' },
-          { time: '7:10 PM', icon: 'medicine', text: "Children's ibuprofen · 5 ml", flag: 'warningConfirmed' },
+          {
+            time: '7:10 PM', icon: 'medicine', text: "Children's ibuprofen · 5 ml",
+            flags: [{ kind: 'voided', text: 'Voided: Wrong child' }, { kind: 'warningConfirmed', text: 'Given despite a timing warning' }],
+          },
         ],
       },
       { childId: 'theo', name: 'Theo', color: '#3F7CAC', lines: [] },
@@ -70,10 +73,12 @@ describe('SitterSummary', () => {
     expect(lines[0]!.get('[data-testid="summary-time"]').classes()).toEqual(expect.arrayContaining(['text-[18px]', 'text-ink-3']))
     expect(lines[0]!.get('[data-testid="summary-text"]').classes()).toContain('text-[22px]')
     expect(lines[0]!.find('[data-testid="summary-flag"]').exists()).toBe(false)
-    const flag = lines[1]!.get('[data-testid="summary-flag"]')
-    expect(flag.text()).toBe('Given despite a timing warning')
-    expect(flag.classes()).toEqual(expect.arrayContaining(['text-warn-ink', 'text-[18px]']))
-    expect(flag.find('svg').exists()).toBe(true)
+    const flags = lines[1]!.findAll('[data-testid="summary-flag"]')
+    expect(flags.map((f) => f.text())).toEqual(['Voided: Wrong child', 'Given despite a timing warning'])
+    expect(flags[0]!.classes()).toEqual(expect.arrayContaining(['text-warn-ink', 'text-[18px]']))
+    expect(flags[0]!.find('svg').exists()).toBe(true)
+    expect(lines[1]!.get('[data-testid="summary-text"]').classes()).toContain('line-through')
+    expect(lines[0]!.get('[data-testid="summary-text"]').classes()).not.toContain('line-through')
 
     expect(cards[1]!.text()).toContain('Nothing logged')
   })

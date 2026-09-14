@@ -3,7 +3,7 @@
 import { nextTick, onMounted, useTemplateRef } from 'vue'
 import RAvatar from '@/ui/RAvatar.vue'
 import RButton from '@/ui/RButton.vue'
-import { SUMMARY_FLAG_TEXT, type SummaryIcon, type SummaryModel } from './sitterModel'
+import type { SummaryIcon, SummaryLine, SummaryModel } from './sitterModel'
 
 defineProps<{ model: SummaryModel }>()
 const emit = defineEmits<{ close: [] }>()
@@ -22,6 +22,8 @@ const ICON: Record<SummaryIcon, string> = {
   sticker: 'M12 3l2.7 5.6 6.1.8-4.5 4.2 1.1 6-5.4-2.9-5.4 2.9 1.1-6-4.5-4.2 6.1-.8z',
   diaper: 'M12 3c3 4.5 6 8 6 11.5a6 6 0 0 1-12 0C6 11 9 7.5 12 3z',
 }
+
+const isVoided = (line: SummaryLine) => line.flags?.some((f) => f.kind === 'voided') ?? false
 </script>
 
 <template>
@@ -69,10 +71,15 @@ const ICON: Record<SummaryIcon, string> = {
                 <path :d="ICON[line.icon]" />
               </svg>
               <div class="flex min-w-0 flex-col gap-1">
-                <span data-testid="summary-text" class="text-[22px] leading-snug" :class="line.flag === 'voided' && 'line-through'">
+                <span data-testid="summary-text" class="text-[22px] leading-snug" :class="isVoided(line) && 'line-through'">
                   {{ line.text }}
                 </span>
-                <span v-if="line.flag" data-testid="summary-flag" class="flex items-center gap-2 text-[18px] font-semibold text-warn-ink">
+                <span
+                  v-for="flag in line.flags ?? []"
+                  :key="flag.kind"
+                  data-testid="summary-flag"
+                  class="flex items-center gap-2 text-[18px] font-semibold text-warn-ink"
+                >
                   <svg
                     width="20"
                     height="20"
@@ -88,7 +95,7 @@ const ICON: Record<SummaryIcon, string> = {
                     <path d="M12 3l10 18H2z" />
                     <path d="M12 10v4M12 17.5v.5" />
                   </svg>
-                  {{ SUMMARY_FLAG_TEXT[line.flag] }}
+                  {{ flag.text }}
                 </span>
               </div>
             </li>

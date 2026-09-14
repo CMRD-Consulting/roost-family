@@ -65,6 +65,8 @@ export interface DoseEntry {
   loggedByName: string | null
   loggedOffline: boolean
   voidedAt: IsoTimestamp | null
+  /** Why an adult voided it ("logged by mistake" etc.); null unless voided. */
+  voidReason: string | null
   conflictAcknowledgedAt: IsoTimestamp | null
   /** Server insert time (= sync time for offline-logged doses). */
   createdAt: IsoTimestamp

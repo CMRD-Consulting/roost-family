@@ -328,7 +328,7 @@ describe('MainScreen (demo source)', () => {
       householdId: HOUSEHOLD_ID,
       entry: {
         id: 'dose-new', childId: THEO, medicineId: IBUPROFEN_THEO, at: '2026-09-14T19:00:00.000Z', loggedByName: 'Sam',
-        loggedOffline: false, voidedAt: null, conflictAcknowledgedAt: null, createdAt: '2026-09-14T19:00:00.000Z', note: null,
+        loggedOffline: false, voidedAt: null, voidReason: null, conflictAcknowledgedAt: null, createdAt: '2026-09-14T19:00:00.000Z', note: null,
         warningsConfirmed: ['early'], sitterSessionId: null,
       },
       attribution: { displayId: 'demo-display', loggedByMembershipId: SAM, sitterSessionId: null, loggedByName: 'Sam' },

@@ -37,6 +37,7 @@ const dose = (over: Partial<DoseEntry>): DoseEntry => ({
   loggedByName: 'Jess (sitter)',
   loggedOffline: false,
   voidedAt: null,
+  voidReason: null,
   conflictAcknowledgedAt: null,
   createdAt: at('2026-09-14T18:00:00Z'),
   note: '2.5 ml',
@@ -129,8 +130,9 @@ describe('summaryModel', () => {
     s.doses = [
       dose({ at: at('2026-09-14T18:00:00Z') }),
       dose({ at: at('2026-09-14T18:10:00Z'), warningsConfirmed: ['early'], note: null }),
-      dose({ at: at('2026-09-14T18:20:00Z'), voidedAt: at('2026-09-14T18:21:00Z'), warningsConfirmed: ['early'] }),
+      dose({ at: at('2026-09-14T18:20:00Z'), voidedAt: at('2026-09-14T18:21:00Z'), voidReason: 'Logged twice', warningsConfirmed: ['early'], loggedOffline: true }),
       dose({ at: at('2026-09-14T18:30:00Z'), loggedOffline: true }),
+      dose({ at: at('2026-09-14T18:40:00Z'), voidedAt: at('2026-09-14T18:41:00Z') }),
     ]
     s.stickers = [{ id: 'st', childId: IVY, categoryId: 'dddddddd-0000-0000-0000-000000000001', at: at('2026-09-14T17:30:00Z'), sitterSessionId: 'session-1' }]
     s.diapers = [
@@ -146,9 +148,17 @@ describe('summaryModel', () => {
       { time: '1:10 PM', icon: 'diaper', text: 'Diaper: Wet' },
       { time: '1:20 PM', icon: 'diaper', text: 'Diaper: Wet and dirty' },
       { time: '2:00 PM', icon: 'medicine', text: 'Infant ibuprofen · 2.5 ml' },
-      { time: '2:10 PM', icon: 'medicine', text: 'Infant ibuprofen', flag: 'warningConfirmed' },
-      { time: '2:20 PM', icon: 'medicine', text: 'Infant ibuprofen · 2.5 ml', flag: 'voided' },
-      { time: '2:30 PM', icon: 'medicine', text: 'Infant ibuprofen · 2.5 ml', flag: 'offline' },
+      { time: '2:10 PM', icon: 'medicine', text: 'Infant ibuprofen', flags: [{ kind: 'warningConfirmed', text: 'Given despite a timing warning' }] },
+      {
+        time: '2:20 PM', icon: 'medicine', text: 'Infant ibuprofen · 2.5 ml',
+        flags: [
+          { kind: 'voided', text: 'Voided: Logged twice' },
+          { kind: 'warningConfirmed', text: 'Given despite a timing warning' },
+          { kind: 'offline', text: 'Logged offline' },
+        ],
+      },
+      { time: '2:30 PM', icon: 'medicine', text: 'Infant ibuprofen · 2.5 ml', flags: [{ kind: 'offline', text: 'Logged offline' }] },
+      { time: '2:40 PM', icon: 'medicine', text: 'Infant ibuprofen · 2.5 ml', flags: [{ kind: 'voided', text: 'Voided' }] },
     ])
   })
 

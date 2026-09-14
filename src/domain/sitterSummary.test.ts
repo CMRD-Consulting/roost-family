@@ -21,6 +21,7 @@ const dose = (childId: string, at: string, sitterSessionId: string | null = SESS
   loggedByName: sitterSessionId ? 'Jess (sitter)' : 'Sam',
   loggedOffline: false,
   voidedAt: null,
+  voidReason: null,
   conflictAcknowledgedAt: null,
   createdAt: at,
   note: null,

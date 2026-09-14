@@ -141,6 +141,7 @@ async function save(): Promise<void> {
         loggedByName: attribution.loggedByName,
         loggedOffline: false,
         voidedAt: null,
+        voidReason: null,
         conflictAcknowledgedAt: null,
         createdAt: new Date().toISOString(),
         note: note.value.trim() || null,

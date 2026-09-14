@@ -140,6 +140,7 @@ describe('medicine', () => {
         loggedByName: 'Alex',
         loggedOffline: false,
         voidedAt: null,
+        voidReason: null,
         conflictAcknowledgedAt: null,
         note: '2.5 ml',
         warningsConfirmed: ['early'],

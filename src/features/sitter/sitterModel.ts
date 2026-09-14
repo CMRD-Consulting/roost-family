@@ -1,7 +1,7 @@
 import { currentStepIndex, routineForDay } from '@/domain/routines'
 import { sitterSummary } from '@/domain/sitterSummary'
 import { formatClock, formatDuration, householdDate, householdWeekday, minutesOfDay } from '@/domain/time'
-import type { DiaperEntry, FeedingEntry } from '@/domain/types'
+import type { DiaperEntry, DoseEntry, FeedingEntry } from '@/domain/types'
 import type { Attribution } from '@/data/logCommands'
 import type { HouseholdSnapshot, SitterSession } from '@/data/snapshot'
 
@@ -81,11 +81,18 @@ export function careInfoModel(s: HouseholdSnapshot, now: Date): CareInfoModel {
 export type SummaryIcon = 'sleep' | 'feeding' | 'medicine' | 'sticker' | 'diaper'
 export type SummaryFlag = 'warningConfirmed' | 'voided' | 'offline'
 
+export interface SummaryLineFlag {
+  kind: SummaryFlag
+  /** How the flag is described under the line, e.g. "Voided: Logged twice". */
+  text: string
+}
+
 export interface SummaryLine {
   time: string
   icon: SummaryIcon
   text: string
-  flag?: SummaryFlag
+  /** Present only when the line has flags (doses), most important first. */
+  flags?: SummaryLineFlag[]
 }
 
 export interface SummaryChild {
@@ -103,11 +110,16 @@ export interface SummaryModel {
   children: SummaryChild[]
 }
 
-/** How a flagged dose is described under its line. */
-export const SUMMARY_FLAG_TEXT: Record<SummaryFlag, string> = {
-  warningConfirmed: 'Given despite a timing warning',
-  voided: 'Voided — logged by mistake',
-  offline: 'Logged offline',
+/** A dose's flags: voided (with the adult's reason), given despite a timing warning, logged offline. */
+function doseFlags(dose: DoseEntry): SummaryLineFlag[] {
+  const flags: SummaryLineFlag[] = []
+  if (dose.voidedAt !== null) {
+    const reason = clean(dose.voidReason)
+    flags.push({ kind: 'voided', text: reason ? `Voided: ${reason}` : 'Voided' })
+  }
+  if (dose.warningsConfirmed.length > 0) flags.push({ kind: 'warningConfirmed', text: 'Given despite a timing warning' })
+  if (dose.loggedOffline) flags.push({ kind: 'offline', text: 'Logged offline' })
+  return flags
 }
 
 const FEEDING_TYPE: Record<FeedingEntry['type'], string> = { milk: 'Milk', meal: 'Meal', snack: 'Snack' }
@@ -157,12 +169,8 @@ export function summaryModel(s: HouseholdSnapshot, session: SitterSession, now: 
     }
     for (const dose of data?.doses ?? []) {
       const text = [medicineName.get(dose.medicineId) ?? 'Medicine', clean(dose.note)].filter(Boolean).join(' · ')
-      const flag: SummaryFlag | undefined =
-        dose.voidedAt !== null ? 'voided'
-        : dose.warningsConfirmed.length > 0 ? 'warningConfirmed'
-        : dose.loggedOffline ? 'offline'
-        : undefined
-      add(dose.at, { time: clock(dose.at), icon: 'medicine', text, ...(flag ? { flag } : {}) })
+      const flags = doseFlags(dose)
+      add(dose.at, { time: clock(dose.at), icon: 'medicine', text, ...(flags.length > 0 ? { flags } : {}) })
     }
     for (const sticker of data?.stickers ?? []) {
       const name = categoryName.get(sticker.categoryId)

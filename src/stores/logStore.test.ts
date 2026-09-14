@@ -119,6 +119,7 @@ function doseCmd(id = 'dose-x'): LogCommand {
     entry: {
       id, childId: 'cccccccc-0000-0000-0000-000000000002', medicineId: 'eeeeeeee-0000-0000-0000-000000000001',
       at: '2026-09-14T19:00:00.000Z', loggedByName: 'Sam', loggedOffline: false, voidedAt: null,
+      voidReason: null,
       conflictAcknowledgedAt: null, createdAt: '2026-09-14T19:00:00.000Z', note: null, warningsConfirmed: [], sitterSessionId: null,
     },
     attribution: { displayId: 'demo-display', loggedByMembershipId: 'bbbbbbbb-0000-0000-0000-000000000001', sitterSessionId: null, loggedByName: 'Sam' },

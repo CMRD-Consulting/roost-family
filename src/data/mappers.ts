@@ -114,6 +114,7 @@ export function toDose(row: Tables<'dose_entries'>): DoseEntry {
     loggedByName: row.logged_by_name,
     loggedOffline: row.logged_offline,
     voidedAt: row.voided_at,
+    voidReason: row.void_reason,
     conflictAcknowledgedAt: row.conflict_acknowledged_at,
     createdAt: row.created_at,
     note: row.note,

@@ -52,7 +52,7 @@ export function applyCommand(snapshot: HouseholdSnapshot, cmd: LogCommand, now: 
       return { ...snapshot, doses: [...snapshot.doses, entry] }
     }
     case 'dose.void':
-      return { ...snapshot, doses: updateById(snapshot.doses, cmd.doseId, (d) => ({ ...d, voidedAt: now.toISOString() })) }
+      return { ...snapshot, doses: updateById(snapshot.doses, cmd.doseId, (d) => ({ ...d, voidedAt: now.toISOString(), voidReason: cmd.reason })) }
     case 'dose.acknowledge':
       return { ...snapshot, doses: updateById(snapshot.doses, cmd.doseId, (d) => ({ ...d, conflictAcknowledgedAt: now.toISOString() })) }
 
