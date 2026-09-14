@@ -1,4 +1,5 @@
 import { TZDate } from '@date-fns/tz'
+import { startOfDay, subDays, subYears } from 'date-fns'
 import type { Tables } from '@/data/database.types'
 import { toDiaper, toDose, toFeeding, toSleep, toSticker } from '@/data/mappers'
 import type { EntryPatch, LogEntryRow, LogTable } from '@/data/settingsApi'
@@ -242,10 +243,12 @@ export function validateVoidReason(reason: string): string | null {
   return null
 }
 
-/** The bulk-delete cutoff (spec §11.2): the start of the household day two years ago. */
+/**
+ * The bulk-delete cutoff (spec §11.2): the start of the household day two years ago, less one day. `subYears` clamps
+ * Feb 29 to Feb 28 as Postgres does for `now() - interval '2 years'`, and the extra day keeps the cutoff safely before
+ * the server's limit despite clock differences and time zones.
+ */
 export function retentionCutoff(now: Date, timeZone: string): string {
-  const d = new TZDate(now.getTime(), timeZone)
-  d.setHours(0, 0, 0, 0)
-  d.setFullYear(d.getFullYear() - 2)
-  return new Date(d.getTime()).toISOString()
+  const startOfToday = startOfDay(new TZDate(now.getTime(), timeZone))
+  return new Date(subDays(subYears(startOfToday, 2), 1).getTime()).toISOString()
 }

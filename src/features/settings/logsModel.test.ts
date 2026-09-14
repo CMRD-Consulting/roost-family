@@ -146,7 +146,30 @@ describe('validateVoidReason', () => {
 })
 
 describe('retentionCutoff', () => {
-  it('is the start of the household day two years ago', () => {
-    expect(retentionCutoff(NOW, TZ)).toBe('2024-09-14T04:00:00.000Z')
+  /** The server's own check (delete_old_entries): the cutoff must not be after now() - interval '2 years', which
+   *  Postgres clamps Feb 29 to Feb 28. */
+  function serverLimit(now: Date): number {
+    const d = new Date(now)
+    const month = d.getUTCMonth()
+    d.setUTCFullYear(d.getUTCFullYear() - 2)
+    if (d.getUTCMonth() !== month) d.setUTCDate(0)
+    return d.getTime()
+  }
+
+  it('is the start of the household day two years ago, less a day of safety margin', () => {
+    expect(retentionCutoff(NOW, TZ)).toBe('2024-09-13T04:00:00.000Z')
+    expect(Date.parse(retentionCutoff(NOW, TZ))).toBeLessThanOrEqual(serverLimit(NOW))
+  })
+
+  it('clamps Feb 29 to Feb 28 two years back (no rollover to Mar 1 the server would reject)', () => {
+    const leapDay = new Date('2028-02-29T15:00:00Z') // 10:00 AM in New York
+    expect(retentionCutoff(leapDay, TZ)).toBe('2026-02-27T05:00:00.000Z')
+    expect(Date.parse(retentionCutoff(leapDay, TZ))).toBeLessThanOrEqual(serverLimit(leapDay))
+  })
+
+  it('stays before the server limit just after midnight in a time zone behind UTC', () => {
+    const lateUtc = new Date('2028-03-01T04:30:00Z') // Feb 29, 11:30 PM in New York
+    expect(retentionCutoff(lateUtc, TZ)).toBe('2026-02-27T05:00:00.000Z')
+    expect(Date.parse(retentionCutoff(lateUtc, TZ))).toBeLessThanOrEqual(serverLimit(lateUtc))
   })
 })

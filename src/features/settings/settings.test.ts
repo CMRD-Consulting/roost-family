@@ -993,7 +993,7 @@ describe('SettingsShell', () => {
       await buttonByText(w, 'Delete old logs').trigger('click')
       await settle()
 
-      expect(settingsApi.deleteOldEntries).toHaveBeenCalledWith(SAM_AUTH, 'feeding_entries', '2024-09-14T04:00:00.000Z')
+      expect(settingsApi.deleteOldEntries).toHaveBeenCalledWith(SAM_AUTH, 'feeding_entries', '2024-09-13T04:00:00.000Z')
       expect(w.text()).toContain('Deleted 0 entries.')
       w.unmount()
     })
