@@ -10,6 +10,7 @@ import { useSettingsSessionStore } from '@/stores/settingsSession'
 import DeleteHouseholdSection from './sections/DeleteHouseholdSection.vue'
 import DisplaysSection from './sections/DisplaysSection.vue'
 import MembersSection from './sections/MembersSection.vue'
+import { takePendingInvite } from './pendingInvite'
 import { resetSettingsApiLoaderForTests } from './settingsApiLoader'
 
 const api = vi.hoisted(() => ({ current: null as unknown }))
@@ -106,6 +107,7 @@ async function mountSection(section: Component, membershipId = SAM, pin = '1234'
     routes: [
       { path: '/settings/:section?', component: Stub },
       { path: '/removed', component: Stub },
+      { path: '/join-adult', component: Stub },
     ],
   })
   await router.push('/settings')
@@ -133,6 +135,7 @@ beforeEach(() => {
   settingsApi = fakeApi()
   api.current = settingsApi
   ended.length = 0
+  takePendingInvite()
   adult.resetClients()
   adult.sendEmailCode.mockReset().mockResolvedValue(undefined)
   adult.disposeAdultClient.mockReset().mockResolvedValue(undefined)
@@ -249,7 +252,7 @@ describe('MembersSection', () => {
     w.unmount()
   })
 
-  it('adds an adult: invite, owner signs out, new adult signs in, consents, and joins', async () => {
+  it('adding an adult makes the invite, ends the owner sign-in and the Settings session, and opens the join flow', async () => {
     const w = await mountSection(MembersSection)
     await signIn(w)
 
@@ -261,68 +264,26 @@ describe('MembersSection', () => {
 
     expect(settingsApi.createMemberInvite).toHaveBeenCalledWith(OWNER_CLIENT, HOUSEHOLD, 'owner')
     expect(ended).toEqual(['client-1'])
-    expect(w.text()).toContain('Hand the tablet to the new adult')
-
-    await buttonByText(w, 'I’m the new adult').trigger('click')
-    await settle()
-    expect(w.text()).toContain('Sign in to join Rivera')
-    await signIn(w, 'pat@example.com')
-
-    const boxes = w.findAll('input[type="checkbox"]')
-    expect(buttonByText(w, 'Agree and continue').attributes('disabled')).toBeDefined()
-    await boxes[0]!.setValue(true)
-    await boxes[1]!.setValue(true)
-    await buttonByText(w, 'Agree and continue').trigger('click')
-    await settle()
-    expect(settingsApi.recordConsent).toHaveBeenCalledWith({ name: 'client-2' }, '2026-09-14')
-
-    await inputByLabel(w, 'Your name').setValue(' Pat ')
-    await inputByLabel(w, 'Choose a 4-digit PIN').setValue('2468')
-    await inputByLabel(w, 'PIN again').setValue('2486')
-    await buttonByText(w, 'Join Rivera').trigger('click')
-    await settle()
-    expect(w.find('[role="alert"]').text()).toBe('The two PINs don’t match.')
-    expect(settingsApi.acceptMemberInvite).not.toHaveBeenCalled()
-
-    await inputByLabel(w, 'PIN again').setValue('2468')
-    await buttonByText(w, 'Join Rivera').trigger('click')
-    await settle()
-
-    expect(settingsApi.acceptMemberInvite).toHaveBeenCalledWith({ name: 'client-2' }, {
-      token: 'invite-token', displayName: 'Pat', color: expect.stringMatching(/^#[0-9A-F]{6}$/), pin: '2468',
-    })
-    expect(ended).toEqual(['client-1', 'client-2'])
-    expect(w.text()).toContain('Pat joined Rivera.')
-    expect(w.findAll('button').some((b) => b.text() === 'Sign in as an owner')).toBe(true)
-    expect(useSettingsSessionStore().auth).toEqual({ membershipId: SAM, pin: '1234' })
+    expect(useSettingsSessionStore().info).toBeNull()
+    expect(useSettingsSessionStore().auth).toBeNull()
+    expect(router.currentRoute.value.path).toBe('/join-adult')
+    expect(takePendingInvite()).toEqual({ token: 'invite-token', role: 'owner' })
     w.unmount()
   })
 
-  it('shows an expired invite and lets the new adult cancel', async () => {
-    settingsApi.acceptMemberInvite.mockRejectedValue(new SettingsError('invalid or expired invite', 'invalid'))
+  it('a refused invite keeps the owner signed in and Settings open', async () => {
+    settingsApi.createMemberInvite.mockRejectedValue(new SettingsError('only an owner can add an adult', 'auth'))
     const w = await mountSection(MembersSection)
     await signIn(w)
     await buttonByText(w, 'Add adult').trigger('click')
     await buttonByText(w, 'Continue').trigger('click')
     await settle()
-    expect(settingsApi.createMemberInvite).toHaveBeenCalledWith(OWNER_CLIENT, HOUSEHOLD, 'adult')
-    await buttonByText(w, 'I’m the new adult').trigger('click')
-    await settle()
-    await signIn(w, 'pat@example.com')
-    for (const box of w.findAll('input[type="checkbox"]')) await box.setValue(true)
-    await buttonByText(w, 'Agree and continue').trigger('click')
-    await settle()
-    await inputByLabel(w, 'Your name').setValue('Pat')
-    await inputByLabel(w, 'Choose a 4-digit PIN').setValue('2468')
-    await inputByLabel(w, 'PIN again').setValue('2468')
-    await buttonByText(w, 'Join Rivera').trigger('click')
-    await settle()
 
-    expect(w.find('[role="alert"]').text()).toBe('Invalid or expired invite.')
-    await buttonByText(w, 'Cancel').trigger('click')
-    await settle()
-    expect(ended).toEqual(['client-1', 'client-2'])
-    expect(w.find('[data-testid="add-adult-flow"]').exists()).toBe(false)
+    expect(w.find('[role="alert"]').text()).toBe('Roost Family didn’t accept that sign-in. Sign in again.')
+    expect(ended).toEqual([])
+    expect(useSettingsSessionStore().info?.membershipId).toBe(SAM)
+    expect(router.currentRoute.value.path).toBe('/settings')
+    expect(takePendingInvite()).toBeNull()
     w.unmount()
   })
 })

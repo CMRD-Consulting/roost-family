@@ -192,10 +192,10 @@ It starts as one family's app (household #1, the author's) but is built as a mul
 **Add an adult** (on a display):
 1. An Owner enters their PIN → Settings → Members → **Add adult**.
 2. The Owner picks the role (Owner or Adult).
-3. The new adult signs in on the display with their own account and accepts the terms and health-data consent.
+3. The Owner's sign-in and Settings end, and the tablet shows a full-screen hand-off (no Settings navigation). The new adult signs in on the display with their own account and accepts the terms and health-data consent.
 4. They choose a color and set a 4-digit PIN.
 5. Optionally, they connect their calendar and pick which calendars to show.
-6. They're signed out; the display returns to the main screen.
+6. They're signed out; the display returns to the main screen. Cancelling at any step does the same.
 
 **Add a display:**
 1. Open Roost Family on the new tablet → **Join a household**.

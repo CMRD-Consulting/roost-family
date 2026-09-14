@@ -2,6 +2,7 @@ import { createRouter, createWebHistory, type RouteLocationNormalized } from 'vu
 import { recoverFromChunkError } from '@/app/appUpdates'
 import KidsCorner from '@/features/corner/KidsCorner.vue'
 import MainScreen from '@/features/main/MainScreen.vue'
+import { hasPendingInvite } from '@/features/settings/pendingInvite'
 import { useDisplayStore, type DisplayStoreKind, type DisplayStoreState } from '@/session/displayStore'
 import { useSettingsSessionStore } from '@/stores/settingsSession'
 
@@ -12,6 +13,8 @@ declare module 'vue-router' {
     settingsSession?: boolean
     /** Leaving Settings for this route keeps the settings session open (e.g. About's policy pages). */
     keepsSettingsSession?: boolean
+    /** Only reachable with a member invite just made in Settings > Members (the add-adult hand-off). */
+    pendingInvite?: boolean
     /** Reachable on any device with no display registration and no display checks (the Take list phone page). */
     public?: boolean
   }
@@ -40,6 +43,12 @@ export const router = createRouter({
       path: '/settings/:section?',
       component: () => import('@/features/settings/SettingsShell.vue'),
       meta: { requires: 'registered', settingsSession: true },
+    },
+    // Add an adult (spec §6.4): full screen, outside Settings; the Settings session has already ended.
+    {
+      path: '/join-adult',
+      component: () => import('@/features/settings/JoinAdultFlow.vue'),
+      meta: { requires: 'registered', pendingInvite: true },
     },
     {
       path: '/privacy',
@@ -84,6 +93,11 @@ export function resolveSettingsRoute(to: Pick<RouteLocationNormalized, 'meta'>, 
   return to.meta.settingsSession && !hasSettingsSession ? '/home' : true
 }
 
+/** The add-adult flow needs the invite Settings > Members just made (held in memory only); otherwise /home. */
+export function resolveJoinAdultRoute(to: Pick<RouteLocationNormalized, 'meta'>, invitePending: boolean): true | string {
+  return to.meta.pendingInvite && !invitePending ? '/home' : true
+}
+
 /** Public routes skip the display guards entirely: they must not start or check a display session. */
 export function isPublicRoute(to: Pick<RouteLocationNormalized, 'meta'>): boolean {
   return to.meta.public === true
@@ -100,7 +114,9 @@ router.beforeEach(async (to) => {
   }
   const display = resolveDisplayRoute(to, state, store.lastKnown?.kind ?? null)
   if (display !== true) return display
-  return resolveSettingsRoute(to, useSettingsSessionStore().info !== null)
+  const settings = resolveSettingsRoute(to, useSettingsSessionStore().info !== null)
+  if (settings !== true) return settings
+  return resolveJoinAdultRoute(to, hasPendingInvite())
 })
 
 // A lazy route chunk that fails to load (stale build after a deploy, or no network) reloads to /home once;

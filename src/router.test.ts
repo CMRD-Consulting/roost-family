@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { isPublicRoute, resolveDisplayRoute, resolveSettingsRoute, router } from './router'
+import { isPublicRoute, resolveDisplayRoute, resolveJoinAdultRoute, resolveSettingsRoute, router } from './router'
 
 vi.mock('@/data/supabase', () => ({ displayClient: {} }))
 
@@ -41,6 +41,21 @@ describe('resolveSettingsRoute', () => {
   it('ignores routes that do not need a settings session', () => {
     expect(resolveSettingsRoute(at('registered'), false)).toBe(true)
     expect(resolveSettingsRoute(at(), false)).toBe(true)
+  })
+})
+
+describe('resolveJoinAdultRoute', () => {
+  it('serves /join-adult, a registered screen outside Settings, only with a pending invite', () => {
+    const route = router.resolve('/join-adult')
+    expect(route.matched).toHaveLength(1)
+    expect(route.meta.requires).toBe('registered')
+    expect(route.meta.settingsSession).toBeUndefined()
+    expect(resolveJoinAdultRoute(route, true)).toBe(true)
+    expect(resolveJoinAdultRoute(route, false)).toBe('/home')
+  })
+
+  it('ignores other routes', () => {
+    expect(resolveJoinAdultRoute(router.resolve('/home'), false)).toBe(true)
   })
 })
 

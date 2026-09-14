@@ -69,11 +69,12 @@ const adult = computed(() => {
 
 let leaving = false
 
-// Idle expiry or Night Mode ended the session: back to the main screen.
+// Idle expiry or Night Mode ended the session: back to the main screen. (A section that ends the session as it
+// navigates elsewhere, like adding an adult, has already left Settings.)
 watch(
   () => session.info,
   (info) => {
-    if (info === null && !leaving) void router.replace('/home')
+    if (info === null && !leaving && route.meta.settingsSession) void router.replace('/home')
   },
 )
 
