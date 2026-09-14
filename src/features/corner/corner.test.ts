@@ -168,6 +168,27 @@ describe("Kids' Corner (demo source)", () => {
       wrapper.unmount()
     })
 
+    it('ignores a second tap on the big check while the celebration runs, then accepts taps again', async () => {
+      const wrapper = await mountAt('/corner')
+      const submit = vi.spyOn(useLogStore(pinia), 'submit')
+
+      await wrapper.get('button[aria-label="Done with Nap"]').trigger('click')
+      // The optimistic view has already moved on to Books: a double tap must not finish it too.
+      await wrapper.get('button[aria-label="Done with Books"]').trigger('click')
+      await vi.advanceTimersByTimeAsync(600)
+      await wrapper.get('button[aria-label="Done with Books"]').trigger('click')
+      await settle()
+      expect(submit).toHaveBeenCalledTimes(1)
+      expect(sound.playChime).toHaveBeenCalledTimes(1)
+
+      await vi.advanceTimersByTimeAsync(700)
+      await wrapper.get('button[aria-label="Done with Books"]').trigger('click')
+      await settle()
+      expect(submit).toHaveBeenCalledTimes(2)
+      expect(submit).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'routine.step', stepIndex: 6, done: true }))
+      wrapper.unmount()
+    })
+
     it('shows "All done!" once the last step is finished', async () => {
       mutateDemo((s) => ({
         ...s,

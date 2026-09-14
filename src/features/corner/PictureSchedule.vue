@@ -14,6 +14,8 @@ const props = defineProps<{ model: ScheduleModel | null }>()
 const emit = defineEmits<{ complete: [] }>()
 
 const CELEBRATION_MS = 700
+/** After a finished step, taps on the big check are ignored this long, so a double tap can't finish the next step too. */
+const TAP_GUARD_MS = 700
 /** Cards shown before and after the current step, so the strip fits a landscape tablet. */
 const BEFORE = 1
 const AFTER = 3
@@ -32,10 +34,14 @@ const visibleSteps = computed<ScheduleStep[]>(() => {
 /** The step that was just finished, popped for a moment. */
 const celebrating = ref<number | null>(null)
 let celebrationTimer: ReturnType<typeof setTimeout> | undefined
+/** Epoch ms before which the big check ignores taps. */
+let acceptTapsAt = 0
 
 function finishCurrent(): void {
   const step = current.value
-  if (step === null) return
+  // The view moves to the next step at once (optimistic save): a second tap now would finish that one as well.
+  if (step === null || celebrating.value !== null || Date.now() < acceptTapsAt) return
+  acceptTapsAt = Date.now() + TAP_GUARD_MS
   celebrating.value = step.index
   clearTimeout(celebrationTimer)
   celebrationTimer = setTimeout(() => (celebrating.value = null), CELEBRATION_MS)
