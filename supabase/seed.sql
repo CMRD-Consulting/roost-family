@@ -1,3 +1,15 @@
+-- ─────────────────────────────────────────────────────────────────────────
+-- DEV-ONLY SEED. Fake household, fake adults (sam@roost.test, alex@roost.test), known PINs.
+-- Loaded by `supabase db reset` on a local stack. NEVER run it against production and never
+-- pass `--include-seed` to `supabase db push`: it creates sign-in-able users and reusable invite codes.
+-- ─────────────────────────────────────────────────────────────────────────
+do $$
+begin
+  if exists (select 1 from auth.users) or exists (select 1 from public.households) then
+    raise exception 'seed.sql refuses to run: auth.users or public.households already has rows (dev-only seed)';
+  end if;
+end $$;
+
 insert into public.invite_codes (code) values ('ROOST1'), ('ROOST2'), ('ROOST3'), ('RIVERA');
 
 -- Adults (email sign-in works through the local mail viewer)
