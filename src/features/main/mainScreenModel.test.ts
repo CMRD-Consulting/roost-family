@@ -34,6 +34,7 @@ function minimalSnapshot(overrides: Partial<HouseholdSnapshot> = {}): HouseholdS
     groceries: [],
     activeSitterSession: null,
     recentSitterSession: null,
+    unseenSitterSessions: [],
     loadedAt: now.toISOString(),
     ...overrides,
   }

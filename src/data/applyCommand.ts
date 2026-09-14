@@ -96,12 +96,22 @@ export function applyCommand(snapshot: HouseholdSnapshot, cmd: LogCommand, now: 
     case 'sitter.end': {
       const active = snapshot.activeSitterSession
       if (active === null || active.id !== cmd.sessionId) return snapshot
-      return { ...snapshot, activeSitterSession: null, recentSitterSession: { ...active, endedAt: cmd.endedAt } }
+      const ended = { ...active, endedAt: cmd.endedAt }
+      // A device-cached snapshot from before unseen sessions were loaded has none.
+      const unseen = (snapshot.unseenSitterSessions ?? []).filter((x) => x.id !== ended.id)
+      return { ...snapshot, activeSitterSession: null, recentSitterSession: ended, unseenSitterSessions: [...unseen, ended] }
     }
     case 'sitter.summaryShown': {
       const recent = snapshot.recentSitterSession
-      if (recent === null || recent.id !== cmd.sessionId || recent.summaryShownAt !== null) return snapshot
-      return { ...snapshot, recentSitterSession: { ...recent, summaryShownAt: now.toISOString() } }
+      const recentMatches = recent !== null && recent.id === cmd.sessionId && recent.summaryShownAt === null
+      const unseen = snapshot.unseenSitterSessions ?? []
+      const inUnseen = unseen.some((x) => x.id === cmd.sessionId)
+      if (!recentMatches && !inUnseen) return snapshot
+      return {
+        ...snapshot,
+        ...(recentMatches ? { recentSitterSession: { ...recent, summaryShownAt: now.toISOString() } } : {}),
+        ...(inUnseen ? { unseenSitterSessions: unseen.filter((x) => x.id !== cmd.sessionId) } : {}),
+      }
     }
 
     case 'routine.step': {

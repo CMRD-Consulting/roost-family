@@ -198,6 +198,21 @@ describe('pendingSummary and summaryBannerLabel', () => {
     expect(pendingSummary(s, new Date(Date.parse('2026-09-14T18:50:00Z') + 12 * H + MIN))).toBeNull()
   })
 
+  it('offers the oldest unseen summary first, skipping excluded and already shown sessions', () => {
+    const s = buildDemoSnapshot(now)
+    const older = session({ id: 'older', endedAt: at('2026-09-14T12:00:00Z') })
+    const newer = session({ id: 'newer', endedAt: at('2026-09-14T16:00:00Z') })
+    s.unseenSitterSessions = [older, newer]
+    s.recentSitterSession = older
+    expect(pendingSummary(s, now)?.id).toBe('older')
+    expect(pendingSummary(s, now, ['older'])?.id).toBe('newer')
+    expect(pendingSummary(s, now, ['older', 'newer'])).toBeNull()
+
+    s.unseenSitterSessions = [{ ...older, summaryShownAt: now.toISOString() }, newer]
+    s.recentSitterSession = { ...older, summaryShownAt: now.toISOString() }
+    expect(pendingSummary(s, now)?.id).toBe('newer')
+  })
+
   it('words the banner with and without a sitter name', () => {
     expect(summaryBannerLabel(session(), 'America/New_York')).toBe('Sitter session with Jess ended at 3:10 PM')
     expect(summaryBannerLabel(session({ sitterName: null }), 'America/New_York')).toBe('Sitter session ended at 3:10 PM')

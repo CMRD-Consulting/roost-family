@@ -15,6 +15,7 @@ export function getRedactionTerms(): string[] {
   for (const medicine of view.medicines) terms.add(medicine.name)
   if (view.activeSitterSession?.sitterName) terms.add(view.activeSitterSession.sitterName)
   if (view.recentSitterSession?.sitterName) terms.add(view.recentSitterSession.sitterName)
+  for (const session of view.unseenSitterSessions ?? []) if (session.sitterName) terms.add(session.sitterName)
 
   return [...terms].filter((term) => term.trim().length > 0)
 }

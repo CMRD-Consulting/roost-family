@@ -263,10 +263,13 @@ describe('applyCommand', () => {
       expectIdempotent(base, start)
     })
 
-    it('end moves the active session to recentSitterSession with endedAt', () => {
-      const next = applyCommand(applyCommand(base, start, now), end, now)
+    it('end moves the active session to recentSitterSession with endedAt, and to the end of the unseen summaries', () => {
+      const earlier = { id: 'earlier', sitterName: null, startedAt, endedAt: startedAt, summaryShownAt: null }
+      const next = applyCommand(applyCommand({ ...base, unseenSitterSessions: [earlier] }, start, now), end, now)
+      const ended = { id: 'sitter-client-id', sitterName: 'Jess', startedAt, endedAt, summaryShownAt: null }
       expect(next.activeSitterSession).toBeNull()
-      expect(next.recentSitterSession).toEqual({ id: 'sitter-client-id', sitterName: 'Jess', startedAt, endedAt, summaryShownAt: null })
+      expect(next.recentSitterSession).toEqual(ended)
+      expect(next.unseenSitterSessions).toEqual([earlier, ended])
     })
 
     it('end is a no-op when the active session is a different one, and idempotent', () => {
@@ -281,6 +284,15 @@ describe('applyCommand', () => {
       expect(next.recentSitterSession?.summaryShownAt).toBe(now.toISOString())
       const later = new Date(now.getTime() + 60_000)
       expect(applyCommand(next, shown, later).recentSitterSession?.summaryShownAt).toBe(now.toISOString())
+    })
+
+    it('summaryShown removes the session from the unseen summaries', () => {
+      const earlier = { id: 'earlier', sitterName: null, startedAt, endedAt: startedAt, summaryShownAt: null }
+      const ended = applyCommand(applyCommand({ ...base, unseenSitterSessions: [earlier] }, start, now), end, now)
+      expect(applyCommand(ended, shown, now).unseenSitterSessions.map((x) => x.id)).toEqual(['earlier'])
+      const next = applyCommand(ended, { ...shown, sessionId: 'earlier' }, now)
+      expect(next.unseenSitterSessions.map((x) => x.id)).toEqual(['sitter-client-id'])
+      expect(next.recentSitterSession?.summaryShownAt).toBeNull()
     })
 
     it('summaryShown is a no-op without a matching recent session', () => {

@@ -219,6 +219,7 @@ describe('createSupabaseSource load', () => {
     ])
     expect(snapshot.activeSitterSession).toBeNull()
     expect(snapshot.recentSitterSession).toBeNull()
+    expect(snapshot.unseenSitterSessions).toEqual([])
     expect(snapshot.loadedAt).toBe(now.toISOString())
 
     const householdsCall = calls.find((c) => c.table === 'households')
@@ -276,6 +277,7 @@ describe('createSupabaseSource load', () => {
     expect(calls.filter((c) => c.table === 'sitter_sessions').map((c) => c.ops)).toEqual([
       ['select:*', 'eq:household_id=h1', 'is:ended_at=null', 'order:started_at:desc', 'limit:1', 'maybeSingle'],
       ['select:*', 'eq:household_id=h1', `gte:ended_at=${cutoff12h}`, 'order:ended_at:desc', 'limit:1', 'maybeSingle'],
+      ['select:*', 'eq:household_id=h1', `gte:ended_at=${cutoff12h}`, 'is:summary_shown_at=null', 'order:ended_at:desc', 'limit:3'],
     ])
   })
 
@@ -400,6 +402,49 @@ describe('createSupabaseSource load', () => {
       expect(snapshot.recentSitterSession).toEqual({
         id: 'sess-1', sitterName: 'Jess', startedAt: '2026-09-14T12:00:00Z', endedAt: '2026-09-14T16:00:00Z', summaryShownAt: null,
       })
+    })
+
+    it('loads up to 3 unseen summaries, oldest first, and uses the oldest as the recent session', async () => {
+      const row = (id: string, endedAt: string, shownAt: string | null = null) => ({
+        id, household_id: 'h1', display_id: null, sitter_name: id, started_at: '2026-09-14T08:00:00Z', ended_at: endedAt,
+        summary_shown_at: shownAt, started_by: null, ended_by: null,
+      })
+      const latest = row('latest', '2026-09-14T18:00:00Z', '2026-09-14T18:05:00Z')
+      const { client } = createFakeClient({
+        ...baseTableData(),
+        // Active, then latest ended, then the unseen ones (newest first, as queried).
+        sitter_sessions: [
+          { data: [], error: null },
+          { data: [latest], error: null },
+          { data: [row('newer', '2026-09-14T16:00:00Z'), row('older', '2026-09-14T12:00:00Z')], error: null },
+        ],
+      })
+      const snapshot = await createSupabaseSource(client).load('h1', now)
+
+      expect(snapshot.unseenSitterSessions.map((s) => s.id)).toEqual(['older', 'newer'])
+      expect(snapshot.recentSitterSession?.id).toBe('older')
+    })
+
+    it('keeps the latest ended session as the recent one when every summary was seen', async () => {
+      const latest = {
+        id: 'seen', household_id: 'h1', display_id: null, sitter_name: 'Jess', started_at: '2026-09-14T12:00:00Z',
+        ended_at: '2026-09-14T16:00:00Z', summary_shown_at: '2026-09-14T16:01:00Z', started_by: null, ended_by: null,
+      }
+      const { client } = createFakeClient({
+        ...baseTableData(),
+        sitter_sessions: [{ data: [], error: null }, { data: [latest], error: null }, { data: [], error: null }],
+      })
+      const snapshot = await createSupabaseSource(client).load('h1', now)
+      expect(snapshot.unseenSitterSessions).toEqual([])
+      expect(snapshot.recentSitterSession?.id).toBe('seen')
+    })
+
+    it('rejects when the unseen sitter sessions query errors', async () => {
+      const { client } = createFakeClient({
+        ...baseTableData(),
+        sitter_sessions: [{ data: [], error: null }, { data: [], error: null }, { data: null, error: { message: 'unseen failed' } }],
+      })
+      await expect(createSupabaseSource(client).load('h1', now)).rejects.toThrow('unseen failed')
     })
 
     it('rejects when the recent sitter session query errors', async () => {

@@ -134,14 +134,16 @@ const summary = computed(() => {
   const view = store.view
   const id = summarySessionId.value
   if (!view || id === null) return null
-  const session = [view.recentSitterSession, view.activeSitterSession].find((x) => x?.id === id) ?? null
+  const sessions = [view.recentSitterSession, view.activeSitterSession, ...(view.unseenSitterSessions ?? [])]
+  const session = sessions.find((x) => x?.id === id) ?? null
   return session ? summaryModel(view, session, now.value) : null
 })
 const pendingBanner = computed(() => {
   const view = store.view
   if (!view || model.value?.sitterActive) return null
-  const session = pendingSummary(view, now.value)
-  if (!session || session.id === endedHereSessionId.value || session.id === summarySessionId.value) return null
+  // Oldest first; not the one this display ended (it showed that summary already) or the one on screen.
+  const session = pendingSummary(view, now.value, [endedHereSessionId.value, summarySessionId.value])
+  if (!session) return null
   return { sessionId: session.id, label: `${summaryBannerLabel(session, view.household.timeZone)} · See summary` }
 })
 

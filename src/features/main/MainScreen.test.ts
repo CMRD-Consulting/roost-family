@@ -688,6 +688,27 @@ describe('MainScreen (demo source)', () => {
       wrapper.unmount()
     })
 
+    it('with several unseen summaries, the banner offers the oldest first, then the next', async () => {
+      const older = { id: 'older', sitterName: 'Jess', startedAt: '2026-09-14T12:00:00.000Z', endedAt: '2026-09-14T13:00:00.000Z', summaryShownAt: null }
+      const newer = { id: 'newer', sitterName: 'Robin', startedAt: '2026-09-14T15:00:00.000Z', endedAt: '2026-09-14T17:00:00.000Z', summaryShownAt: null }
+      mutateDemo((s) => ({ ...s, recentSitterSession: older, unseenSitterSessions: [older, newer] }))
+      const wrapper = await mountMain()
+      expect(wrapper.get('[data-testid="sitter-summary-banner"]').text()).toBe('Sitter session with Jess ended at 9:00 AM · See summary')
+
+      await wrapper.get('[data-testid="sitter-summary-banner"]').trigger('click')
+      await flushPromises()
+      await enterPin(wrapper, 'Sam', '1234')
+      await settle()
+      const summary = wrapper.get('[data-testid="sitter-summary"]')
+      expect(summary.get('[data-testid="summary-sitter"]').text()).toBe('Jess · 8:00 AM – 9:00 AM')
+      await buttonIn(summary, 'Done').trigger('click')
+      await settle()
+
+      expect(getDemoSnapshot(new Date()).unseenSitterSessions.map((x) => x.id)).toEqual(['newer'])
+      expect(wrapper.get('[data-testid="sitter-summary-banner"]').text()).toBe('Sitter session with Robin ended at 1:00 PM · See summary')
+      wrapper.unmount()
+    })
+
     it('offline: asks for a connection to start Sitter Mode', async () => {
       const wrapper = await mountMain()
       setOnline(false)

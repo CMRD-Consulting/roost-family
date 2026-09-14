@@ -45,6 +45,7 @@ function fixture(householdId: string, loadedAt: string): HouseholdSnapshot {
     groceries: [],
     activeSitterSession: null,
     recentSitterSession: null,
+    unseenSitterSessions: [],
     loadedAt,
   }
 }

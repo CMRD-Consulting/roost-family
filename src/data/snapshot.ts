@@ -104,7 +104,10 @@ export interface HouseholdSnapshot {
   jots: Jot[]
   groceries: GroceryItem[]
   activeSitterSession: SitterSession | null
-  /** The latest session that ended within the last 12 hours (drives the "see summary" banner). */
+  /** The oldest unseen session below, else the latest session that ended within the last 12 hours. */
   recentSitterSession: SitterSession | null
+  /** Up to 3 sessions that ended within the last 12 hours and whose summary no display has shown, oldest first
+   *  (drives the "see summary" banner). */
+  unseenSitterSessions: SitterSession[]
   loadedAt: IsoTimestamp
 }

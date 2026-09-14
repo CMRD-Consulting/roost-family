@@ -6,7 +6,7 @@ import type { Attribution } from '@/data/logCommands'
 import type { HouseholdSnapshot, SitterSession } from '@/data/snapshot'
 
 const H = 3_600_000
-/** A session's summary is offered for this long after it ended (matches the snapshot's `recentSitterSession`). */
+/** A session's summary is offered for this long after it ended (matches the snapshot's unseen sessions). */
 const PENDING_SUMMARY_MS = 12 * H
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -198,14 +198,22 @@ export function summaryModel(s: HouseholdSnapshot, session: SitterSession, now: 
 }
 
 /**
- * The recently ended session whose summary no display has shown yet, or null. A device-cached snapshot from
- * before these fields existed may have them undefined: that counts as nothing pending.
+ * The oldest recently ended session whose summary no display has shown yet (leaving out `excludeIds`), or null.
+ * A device-cached snapshot from before these fields existed may have them undefined: that counts as nothing pending.
  */
-export function pendingSummary(s: HouseholdSnapshot, now: Date): SitterSession | null {
+export function pendingSummary(s: HouseholdSnapshot, now: Date, excludeIds: readonly (string | null)[] = []): SitterSession | null {
+  const candidates = [...(s.unseenSitterSessions ?? [])]
   const recent = s.recentSitterSession ?? null
-  if (recent === null || !recent.endedAt || (recent.summaryShownAt ?? null) !== null) return null
-  if (now.getTime() - Date.parse(recent.endedAt) > PENDING_SUMMARY_MS) return null
-  return recent
+  if (recent !== null && !candidates.some((x) => x.id === recent.id)) candidates.push(recent)
+  const pending = candidates.filter(
+    (x) =>
+      !!x.endedAt &&
+      (x.summaryShownAt ?? null) === null &&
+      now.getTime() - Date.parse(x.endedAt) <= PENDING_SUMMARY_MS &&
+      !excludeIds.includes(x.id),
+  )
+  pending.sort((a, b) => Date.parse(a.endedAt!) - Date.parse(b.endedAt!))
+  return pending[0] ?? null
 }
 
 /** "Sitter session with Jess ended at 9:10 PM" for the banner on displays that didn't end it. */

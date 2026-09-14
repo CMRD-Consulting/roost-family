@@ -290,6 +290,7 @@ export function buildDemoSnapshot(now: Date, options: DemoOptions = {}): Househo
     groceries,
     activeSitterSession,
     recentSitterSession: null,
+    unseenSitterSessions: [],
     loadedAt: now.toISOString(),
   }
 }
