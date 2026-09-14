@@ -103,6 +103,15 @@ export const useDisplayStore = defineStore('display', () => {
     return refreshOnce()
   }
 
+  /**
+   * Something else just reached the server for this display (e.g. a household load succeeded): drop the
+   * `offline` state back to the last known one now, instead of waiting for the next periodic refresh.
+   * Registration itself is still re-checked by that refresh and the heartbeat.
+   */
+  function markReachable(): void {
+    if (state.value?.kind === 'offline') state.value = lastKnown.value
+  }
+
   /** Refreshes every `intervalMs` and whenever the browser comes back online. Returns a stop function. */
   function watch(intervalMs = DISPLAY_REFRESH_MS): () => void {
     const onOnline = () => void refresh()
@@ -114,5 +123,5 @@ export const useDisplayStore = defineStore('display', () => {
     }
   }
 
-  return { state, lastKnown, identity, refresh, ensure, watch }
+  return { state, lastKnown, identity, refresh, ensure, watch, markReachable }
 })

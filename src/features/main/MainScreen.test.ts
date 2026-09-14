@@ -5,6 +5,7 @@ import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { mutateDemo, resetDemoForTests } from '@/data/demo/demoHousehold'
 import type { LogCommand } from '@/data/logCommands'
+import { useDisplayStore } from '@/session/displayStore'
 import { useHouseholdStore } from '@/stores/householdStore'
 import { useLogStore } from '@/stores/logStore'
 import MainScreen from './MainScreen.vue'
@@ -271,6 +272,20 @@ describe('MainScreen (demo source)', () => {
     await settle()
     await settle()
     expect(wrapper.find('[data-testid="syncing"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('clears the Offline badge on the next successful household load, without waiting for the display check', async () => {
+    const wrapper = await mountMain()
+    const displayStore = useDisplayStore(pinia)
+    displayStore.state = { kind: 'offline' }
+    await flushPromises()
+    expect(wrapper.text()).toContain('Offline')
+
+    await useHouseholdStore(pinia).reload()
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('Offline')
+    expect(displayStore.state).not.toEqual({ kind: 'offline' })
     wrapper.unmount()
   })
 

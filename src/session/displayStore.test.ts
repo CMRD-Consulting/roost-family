@@ -131,6 +131,28 @@ describe('displayStore', () => {
     await vi.waitFor(() => expect(result).toEqual(REGISTERED))
   })
 
+  describe('markReachable', () => {
+    it('clears the offline state back to the last known state', async () => {
+      loadDisplayState.mockResolvedValueOnce(REGISTERED).mockRejectedValueOnce(new Error('Failed to fetch'))
+      const store = useDisplayStore()
+      await store.refresh()
+      await store.refresh()
+      expect(store.state).toEqual({ kind: 'offline' })
+
+      store.markReachable()
+      expect(store.state).toEqual(REGISTERED)
+    })
+
+    it('leaves a state read from the server alone', async () => {
+      loadDisplayState.mockResolvedValue({ kind: 'revoked' })
+      const store = useDisplayStore()
+      await store.refresh()
+
+      store.markReachable()
+      expect(store.state).toEqual({ kind: 'revoked' })
+    })
+  })
+
   it('reads the device cache at most once', async () => {
     deviceCache.loadIdentity.mockResolvedValue(REGISTERED.identity)
     loadDisplayState.mockResolvedValue(REGISTERED)

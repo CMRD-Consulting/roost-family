@@ -109,6 +109,15 @@ function createSession(router: Router): Session {
       },
     )
 
+    // A live household load proves the server is reachable again: clear the display's offline state (and
+    // the header's Offline badge) now rather than on the next 60 s display refresh.
+    watch(
+      () => householdStore.snapshot,
+      (snapshot) => {
+        if (snapshot !== null && !householdStore.fromCache) displayStore.markReachable()
+      },
+    )
+
     // Nap Mode isn't ended from inside the store on its own — the store only knows the rule (napShouldEnd);
     // the session watches the live view and clock and calls endNap() when the rule fires.
     watchEffect(() => {
