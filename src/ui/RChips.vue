@@ -8,7 +8,12 @@ export interface ChipOption {
   disabled?: boolean
 }
 
-const props = defineProps<{ options: ChipOption[]; label: string }>()
+const props = defineProps<{
+  options: ChipOption[]
+  label: string
+  /** Tapping the selected chip again clears the selection (for optional choices). */
+  deselectable?: boolean
+}>()
 const model = defineModel<string | null>({ required: true })
 
 const chipRefs = ref<HTMLButtonElement[]>([])
@@ -21,7 +26,7 @@ function focusableIndex(): number {
 
 function select(option: ChipOption): void {
   if (option.disabled) return
-  model.value = option.value
+  model.value = props.deselectable && model.value === option.value ? null : option.value
 }
 
 function onKeydown(e: KeyboardEvent, index: number): void {

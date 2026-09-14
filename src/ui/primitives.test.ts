@@ -44,6 +44,16 @@ describe('RChips', () => {
     expect(w.findAll('[role="radio"]')[0]!.attributes('aria-checked')).toBe('true')
   })
 
+  it('clears the selection when the selected chip is tapped again, only if deselectable', async () => {
+    const plain = mountModel(RChips, 'a', { options, label: 'Type' })
+    await plain.findAll('[role="radio"]')[0]!.trigger('click')
+    expect(plain.props('modelValue')).toBe('a')
+
+    const w = mountModel(RChips, 'a', { options, label: 'Amount', deselectable: true })
+    await w.findAll('[role="radio"]')[0]!.trigger('click')
+    expect(w.props('modelValue')).toBeNull()
+  })
+
   it('ignores clicks on a disabled chip', async () => {
     const w = mountModel(RChips, 'a', { options, label: 'Type' })
     await w.findAll('[role="radio"]')[2]!.trigger('click')
