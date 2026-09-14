@@ -1597,6 +1597,15 @@ export type Database = {
         }
         Returns: undefined
       }
+      set_household_location: {
+        Args: {
+          p_lat: number
+          p_lon: number
+          p_membership_id: string
+          p_pin: string
+        }
+        Returns: undefined
+      }
       set_member_role: {
         Args: { p_membership_id: string; p_role: string }
         Returns: undefined

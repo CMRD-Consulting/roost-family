@@ -51,7 +51,7 @@ async function settle() {
 }
 
 type FakeSettingsApi = SettingsApi & Record<
-  | 'settingsVerify' | 'updateHouseholdSettings' | 'updateSitterInfo'
+  | 'settingsVerify' | 'updateHouseholdSettings' | 'setHouseholdLocation' | 'updateSitterInfo'
   | 'addChild' | 'updateChild' | 'setFeatureOverride'
   | 'upsertMedicine' | 'archiveMedicine'
   | 'upsertStickerCategory' | 'archiveStickerCategory'
@@ -63,6 +63,7 @@ function fakeApi(): FakeSettingsApi {
   return {
     settingsVerify: vi.fn().mockResolvedValue({ role: 'owner', displayName: 'Sam' }),
     updateHouseholdSettings: vi.fn().mockResolvedValue(undefined),
+    setHouseholdLocation: vi.fn().mockResolvedValue(undefined),
     updateSitterInfo: vi.fn().mockResolvedValue(undefined),
     addChild: vi.fn().mockResolvedValue('new-child-id'),
     updateChild: vi.fn().mockResolvedValue(undefined),
@@ -331,6 +332,43 @@ describe('SettingsShell', () => {
 
       expect(w.find('[role="alert"]').text()).toBe('Unknown time zone Mars/Base.')
       expect(w.text()).not.toContain('Saved')
+      w.unmount()
+    })
+
+    function mockGeolocation(impl: Geolocation['getCurrentPosition'] | undefined) {
+      Object.defineProperty(window.navigator, 'geolocation', { value: impl ? { getCurrentPosition: impl } : undefined, configurable: true })
+    }
+
+    it('sets the weather location from this tablet, separately from the ZIP code', async () => {
+      mutateDemo((s) => ({ ...s, household: { ...s.household, hasLocation: false } }))
+      mockGeolocation((ok) => ok({ coords: { latitude: 35.226944, longitude: -80.843124 } } as GeolocationPosition))
+      const settingsApi = fakeApi()
+      const w = await openShell(settingsApi)
+
+      const location = () => w.find('[data-testid="weather-location"]')
+      expect(location().text()).toContain('Not set — weather hidden')
+      await buttonByText(w, 'Use this tablet’s location for weather').trigger('click')
+      await settle()
+
+      expect(settingsApi.setHouseholdLocation).toHaveBeenCalledWith(SAM_AUTH, 35.23, -80.84)
+      expect(settingsApi.updateHouseholdSettings).not.toHaveBeenCalled()
+      expect(location().text()).toContain('Weather location set')
+      mockGeolocation(undefined)
+      w.unmount()
+    })
+
+    it('says when the tablet can’t share its location, and saves nothing', async () => {
+      mockGeolocation((_ok, fail) => fail?.({ code: 1, message: 'denied' } as GeolocationPositionError))
+      const settingsApi = fakeApi()
+      const w = await openShell(settingsApi)
+
+      expect(w.find('[data-testid="weather-location"]').text()).toContain('Weather location set')
+      await buttonByText(w, 'Use this tablet’s location for weather').trigger('click')
+      await settle()
+
+      expect(w.find('[data-testid="weather-location"] [role="alert"]').text()).toBe('Couldn’t get this tablet’s location. Check that location is allowed and try again.')
+      expect(settingsApi.setHouseholdLocation).not.toHaveBeenCalled()
+      mockGeolocation(undefined)
       w.unmount()
     })
 

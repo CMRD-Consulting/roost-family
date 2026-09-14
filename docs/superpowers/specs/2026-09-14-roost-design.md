@@ -136,7 +136,7 @@ It starts as one family's app (household #1, the author's) but is built as a mul
 
 - Source: **National Weather Service API** (api.weather.gov), behind a small provider interface so another provider can replace it for international expansion.
 - Fetched server-side per household location every 30 minutes; displays read the cached result.
-- Household location is stored as latitude/longitude, set from a ZIP code during setup.
+- Household location is stored as latitude/longitude (rounded to 2 decimals, about 1 km), set from the tablet's location during setup or in Settings. The ZIP code does not set it; with no location, weather is hidden.
 
 ### 5.7 Time Zones
 
@@ -404,7 +404,7 @@ Opened with an adult PIN. Sections marked 🔐 require a full sign-in ([6.3](#63
 - **Medicines:** per child; name, minimum hours between doses, optional max doses in 24 hours
 - **Stickers:** categories
 - **Sitter info:** nap and bedtime instructions, emergency contacts, pediatrician, address, "where things are" notes
-- **Household:** name, ZIP code / time zone, leave-by buffer, default night-sleep window, Night Mode schedule, Diaper log on/off, tonight's dinner
+- **Household:** name, ZIP code / time zone, weather location (from this tablet's location), leave-by buffer, default night-sleep window, Night Mode schedule, Diaper log on/off, tonight's dinner
 - **Photos:** slideshow photos (up to 200)
 - **Logs:** history per child and type; edit or delete entries; void doses
 - **Inbox:** jots (check off or delete)

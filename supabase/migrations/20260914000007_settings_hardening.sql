@@ -130,3 +130,28 @@ grant execute on function
   public.update_entry(uuid, text, text, uuid, jsonb),
   public.delete_entry(uuid, text, text, uuid)
 to authenticated;
+
+-- ═══ Weather location (spec §5.6) ═══
+-- The weather location is set from the tablet's location (setup or Settings > Household), never implied by the ZIP.
+-- Stored rounded to 2 decimals (about 1 km). Both null clears it (weather hidden). The coordinates are not audited.
+create function public.set_household_location(p_membership_id uuid, p_pin text, p_lat double precision, p_lon double precision)
+returns void
+language plpgsql security definer set search_path = '' as $$
+declare v_household uuid := private.require_settings_pin(p_membership_id, p_pin);
+begin
+  if (p_lat is null) <> (p_lon is null) then
+    raise exception 'set both latitude and longitude, or neither' using errcode = '22023';
+  end if;
+  if p_lat is not null and (p_lat = 'NaN'::float8 or p_lon = 'NaN'::float8
+     or p_lat not between -90 and 90 or p_lon not between -180 and 180) then
+    raise exception 'that location is out of range' using errcode = '22023';
+  end if;
+  update public.households
+  set lat = round(p_lat::numeric, 2)::double precision, lon = round(p_lon::numeric, 2)::double precision
+  where id = v_household;
+  perform private.audit_setting(v_household, p_membership_id, 'household', 'location', v_household,
+    jsonb_build_object('set', p_lat is not null));
+end $$;
+
+revoke execute on function public.set_household_location(uuid, text, double precision, double precision) from public, anon;
+grant execute on function public.set_household_location(uuid, text, double precision, double precision) to authenticated;

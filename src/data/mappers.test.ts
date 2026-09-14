@@ -232,6 +232,7 @@ describe('toHousehold', () => {
       id: 'h1',
       name: 'Rivera',
       zip: null,
+      hasLocation: false,
       timeZone: 'America/New_York',
       defaultNightSleep: { start: '18:00', end: '05:00' },
       nightMode: { start: '20:00', end: '06:00' },
@@ -240,6 +241,13 @@ describe('toHousehold', () => {
       dinnerTonight: 'Tacos',
       sitterInfo: {},
     })
+  })
+
+  it('reports whether a weather location is set, without exposing the coordinates', () => {
+    const located = toHousehold(household({ lat: 35.23, lon: -80.84 }))
+    expect(located.hasLocation).toBe(true)
+    expect(located).not.toHaveProperty('lat')
+    expect(toHousehold(household({ lat: 35.23, lon: null })).hasLocation).toBe(false)
   })
 
   it('passes a null dinner_tonight through', () => {

@@ -141,6 +141,10 @@ export function createSupabaseSettingsApi(client: RoostClient): SettingsApi {
     )
   }
 
+  async function setHouseholdLocation(auth: SettingsAuth, lat: number, lon: number): Promise<void> {
+    await run(() => client.rpc('set_household_location', { p_membership_id: auth.membershipId, p_pin: auth.pin, p_lat: lat, p_lon: lon }))
+  }
+
   async function updateSitterInfo(auth: SettingsAuth, info: SitterInfo): Promise<void> {
     await run(() =>
       client.rpc('update_sitter_info', { p_membership_id: auth.membershipId, p_pin: auth.pin, p_info: info as never }),
@@ -406,6 +410,7 @@ export function createSupabaseSettingsApi(client: RoostClient): SettingsApi {
   return {
     settingsVerify,
     updateHouseholdSettings,
+    setHouseholdLocation,
     updateSitterInfo,
     addChild,
     updateChild,

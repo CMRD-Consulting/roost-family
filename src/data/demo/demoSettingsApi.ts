@@ -141,6 +141,11 @@ export function createDemoSettingsApi(): SettingsApi {
     }))
   }
 
+  async function setHouseholdLocation(auth: SettingsAuth, _lat: number, _lon: number): Promise<void> {
+    requirePin(auth)
+    mutateDemo((s) => ({ ...s, household: { ...s.household, hasLocation: true } }))
+  }
+
   async function updateSitterInfo(auth: SettingsAuth, info: SitterInfo): Promise<void> {
     requirePin(auth)
     mutateDemo((s) => ({ ...s, household: { ...s.household, sitterInfo: info } }))
@@ -403,6 +408,7 @@ export function createDemoSettingsApi(): SettingsApi {
   return {
     settingsVerify,
     updateHouseholdSettings,
+    setHouseholdLocation,
     updateSitterInfo,
     addChild,
     updateChild,

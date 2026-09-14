@@ -19,6 +19,9 @@ export interface HouseholdInfo {
   name: string
   /** 5-digit ZIP code, or null when not set. Optional: a device-cached snapshot from before it was loaded won't have it. */
   zip?: string | null
+  /** Whether a weather location (lat/lon) is set; without one, weather is hidden. The coordinates stay on the
+   *  server. Optional: a device-cached snapshot from before it was loaded won't have it. */
+  hasLocation?: boolean
   timeZone: string
   defaultNightSleep: TimeWindow
   nightMode: TimeWindow

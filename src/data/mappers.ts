@@ -62,6 +62,7 @@ export function toHousehold(row: Tables<'households'>): HouseholdInfo {
     id: row.id,
     name: row.name,
     zip: row.zip,
+    hasLocation: row.lat !== null && row.lon !== null,
     timeZone: row.time_zone,
     defaultNightSleep: { start: hm(row.default_night_sleep_start), end: hm(row.default_night_sleep_end) },
     nightMode: { start: hm(row.night_mode_start), end: hm(row.night_mode_end) },

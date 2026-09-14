@@ -161,6 +161,9 @@ export interface SettingsApi {
   settingsVerify(auth: SettingsAuth): Promise<{ role: string; displayName: string }>
 
   updateHouseholdSettings(auth: SettingsAuth, input: HouseholdSettingsInput): Promise<void>
+  /** Sets the household's weather location (spec §5.6) from the tablet's position; the server rounds it to 2 decimals.
+   *  The ZIP code never sets it. */
+  setHouseholdLocation(auth: SettingsAuth, lat: number, lon: number): Promise<void>
   updateSitterInfo(auth: SettingsAuth, info: SitterInfo): Promise<void>
 
   addChild(auth: SettingsAuth, input: AddChildInput): Promise<string>

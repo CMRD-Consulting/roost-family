@@ -1,8 +1,14 @@
 <script setup lang="ts">
-/** Settings > Household (spec §7.9): name, ZIP, time zone, leave-by buffer, night windows and the Diaper log. */
+/**
+ * Settings > Household (spec §5.6, §7.9): name, ZIP, time zone, weather location, leave-by buffer, night windows and
+ * the Diaper log. The weather location comes only from this tablet's location (saved on its own, right away); the ZIP
+ * code doesn't set it.
+ */
 import { computed, ref, watch } from 'vue'
+import { getTabletLocation, TabletLocationError } from '@/features/setup/tabletLocation'
 import { LIMITS } from '@/features/setup/validation'
 import { useHouseholdStore } from '@/stores/householdStore'
+import RButton from '@/ui/RButton.vue'
 import RInput from '@/ui/RInput.vue'
 import SaveRow from '../forms/SaveRow.vue'
 import Stepper from '../forms/Stepper.vue'
@@ -30,6 +36,33 @@ watch(
 )
 
 const zones = computed(() => timeZoneOptions(form.value?.timeZone ?? ''))
+
+// ─── Weather location ──────────────────────────────────────────────────────
+const { saving: locationSaving, error: locationSaveError, save: saveLocation } = useSettingsSave()
+const locating = ref(false)
+const locationError = ref<string | null>(null)
+/** Set here and not yet reflected in the household view. */
+const locationSavedHere = ref(false)
+const locationSet = computed(() => locationSavedHere.value || store.view?.household.hasLocation === true)
+watch(() => store.view?.household.hasLocation, () => (locationSavedHere.value = false))
+
+async function useTabletLocation(): Promise<void> {
+  if (locating.value || locationSaving.value || offline.value) return
+  locationError.value = null
+  locating.value = true
+  let position: { lat: number; lon: number }
+  try {
+    position = await getTabletLocation()
+  } catch (e) {
+    locationError.value = e instanceof TabletLocationError && e.reason === 'unavailable'
+      ? 'This tablet can’t share its location.'
+      : 'Couldn’t get this tablet’s location. Check that location is allowed and try again.'
+    return
+  } finally {
+    locating.value = false
+  }
+  if (await saveLocation((api, auth) => api.setHouseholdLocation(auth, position.lat, position.lon))) locationSavedHere.value = true
+}
 
 async function submit(): Promise<void> {
   const current = form.value
@@ -66,6 +99,20 @@ async function submit(): Promise<void> {
           </select>
           <span v-if="errors.timeZone" class="text-[18px] text-warn-ink">{{ errors.timeZone }}</span>
         </label>
+      </div>
+
+      <div data-testid="weather-location" class="flex flex-col gap-3 rounded-[var(--radius-card)] bg-surface px-6 py-5">
+        <h3 class="text-[20px] font-medium text-ink">Weather location</h3>
+        <p class="text-[20px] font-medium" :class="locationSet ? 'text-green-deep' : 'text-ink-2'">
+          {{ locationSet ? 'Weather location set' : 'Not set — weather hidden' }}
+        </p>
+        <p class="text-[18px] text-ink-3">Weather uses this tablet’s location, rounded to about 1 km. Changing the ZIP code doesn’t change it.</p>
+        <div>
+          <RButton variant="secondary" :disabled="locating || locationSaving || offline" @click="useTabletLocation">
+            {{ locating ? 'Finding location…' : locationSaving ? 'Saving…' : 'Use this tablet’s location for weather' }}
+          </RButton>
+        </div>
+        <p v-if="locationError || locationSaveError" role="alert" class="text-[18px] text-warn-ink">{{ locationError ?? locationSaveError }}</p>
       </div>
 
       <div class="rounded-[var(--radius-card)] bg-surface px-6 py-5">

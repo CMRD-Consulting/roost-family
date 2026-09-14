@@ -5,9 +5,8 @@ import RButton from '@/ui/RButton.vue'
 import RInput from '@/ui/RInput.vue'
 import { LIMITS, validateHousehold } from '../validation'
 import { detectedTimeZone, initialTimeZone, US_TIME_ZONES } from '../timeZones'
+import { getTabletLocation, TabletLocationError } from '../tabletLocation'
 import type { WizardState } from '../wizardState'
-
-const GEOLOCATION_OPTIONS: PositionOptions = { timeout: 10_000, maximumAge: 600_000 }
 
 const props = defineProps<{ state: WizardState }>()
 const emit = defineEmits<{ next: []; back: [] }>()
@@ -15,30 +14,20 @@ const error = ref<string | null>(null)
 const locating = ref(false)
 const showPickNote = !initialTimeZone(detectedTimeZone()).matched
 
-/** Two decimals (about 1 km) is plenty for weather and avoids storing a precise home location. */
-function roundCoordinate(value: number): number {
-  return Math.round(value * 100) / 100
-}
-
-function useLocation() {
-  if (!navigator.geolocation) {
-    error.value = 'This tablet can’t share its location. Weather can be set up later.'
-    return
-  }
+async function useLocation() {
   locating.value = true
   error.value = null
-  navigator.geolocation.getCurrentPosition(
-    (pos) => {
-      props.state.lat = roundCoordinate(pos.coords.latitude)
-      props.state.lon = roundCoordinate(pos.coords.longitude)
-      locating.value = false
-    },
-    () => {
-      error.value = 'Couldn’t get this tablet’s location. Weather can be set up later.'
-      locating.value = false
-    },
-    GEOLOCATION_OPTIONS,
-  )
+  try {
+    const { lat, lon } = await getTabletLocation()
+    props.state.lat = lat
+    props.state.lon = lon
+  } catch (e) {
+    error.value = e instanceof TabletLocationError && e.reason === 'unavailable'
+      ? 'This tablet can’t share its location. Weather can be set up later.'
+      : 'Couldn’t get this tablet’s location. Weather can be set up later.'
+  } finally {
+    locating.value = false
+  }
 }
 
 function submit() {

@@ -58,6 +58,13 @@ describe('createDemoSettingsApi', () => {
     })
   })
 
+  it('setHouseholdLocation needs the PIN and marks the weather location set', async () => {
+    const api = createDemoSettingsApi()
+    await expect(api.setHouseholdLocation({ membershipId: SAM_ID, pin: '0000' }, 35.23, -80.84)).rejects.toMatchObject({ code: 'auth' })
+    await api.setHouseholdLocation(auth, 35.23, -80.84)
+    expect(getDemoSnapshot(new Date()).household.hasLocation).toBe(true)
+  })
+
   it('updateSitterInfo replaces the sitter info', async () => {
     const api = createDemoSettingsApi()
     await api.updateSitterInfo(auth, { napInstructions: 'Updated instructions' })

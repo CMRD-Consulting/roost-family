@@ -122,6 +122,14 @@ describe('createSupabaseSettingsApi', () => {
     expect((calls[0] as RpcCall).args).toMatchObject({ p_zip: null })
   })
 
+  it('setHouseholdLocation -> set_household_location with the PIN and coordinates', async () => {
+    const { client, calls } = createFakeClient()
+    await createSupabaseSettingsApi(client).setHouseholdLocation(auth, 35.23, -80.84)
+    expect(calls).toEqual([{
+      op: 'rpc', name: 'set_household_location', args: { p_membership_id: membershipId, p_pin: '1234', p_lat: 35.23, p_lon: -80.84 },
+    }])
+  })
+
   it('updateSitterInfo sends the info object as p_info', async () => {
     const { client, calls } = createFakeClient()
     const info = { napInstructions: 'Crib, sound machine' }

@@ -1727,6 +1727,53 @@ select pg_temp.expect('no client role can execute the editable-columns helper',
   not has_function_privilege('authenticated', 'private.editable_entry_columns(text)', 'execute')
   and not has_function_privilege('anon', 'private.editable_entry_columns(text)', 'execute'));
 
+
+\echo '[81] set_household_location: PIN-checked, rounded, validated, audited without coordinates; ZIP changes leave it alone'
+reset role;
+update public.households set lat = null, lon = null where id = :'household_f';
+insert into public.household_weather (household_id, fetched_at, current_temp_f) values (:'household_f', now(), 70)
+  on conflict (household_id) do update set current_temp_f = 70;
+set local role authenticated;
+select set_config('request.jwt.claims', :'J', true);
+select public.set_household_location(:'membership_f', '2468', 35.226944, -80.843124);
+reset role;
+select pg_temp.expect('location saved, rounded to 2 decimals', (
+  select lat = 35.23 and lon = -80.84 from public.households where id = pg_temp.v('household_f')));
+select pg_temp.expect('a new location clears the cached weather', not exists (
+  select 1 from public.household_weather where household_id = pg_temp.v('household_f')));
+select pg_temp.expect('location change audited without coordinates', pg_temp.audited(pg_temp.v('household_f'), pg_temp.v('membership_f'), 'household', 'location', pg_temp.v('household_f'))
+  and (select change::text not like '%35.2%' and change::text not like '%80.8%' from public.settings_audit order by id desc limit 1));
+set local role authenticated;
+select set_config('request.jwt.claims', :'F', true);
+select public.update_household_settings(:'membership_f', '2468', 'F family', '80202', 'America/Denver', 20, '18:00', '05:00', '20:00', '06:00', false);
+reset role;
+select pg_temp.expect('changing the ZIP keeps the weather location', (
+  select zip = '80202' and lat = 35.23 and lon = -80.84 from public.households where id = pg_temp.v('household_f')));
+set local role authenticated;
+select pg_temp.expect_error('location with a wrong PIN',
+  $q$select public.set_household_location(pg_temp.v('membership_f'), '0000', 35.2, -80.8)$q$, '42501');
+select pg_temp.expect_error('location as a caregiver',
+  $q$select public.set_household_location(pg_temp.v('membership_g'), '3333', 35.2, -80.8)$q$, '42501');
+select pg_temp.expect_error('latitude out of range',
+  $q$select public.set_household_location(pg_temp.v('membership_f'), '2468', 91, -80.8)$q$, '22023');
+select pg_temp.expect_error('longitude out of range',
+  $q$select public.set_household_location(pg_temp.v('membership_f'), '2468', 35.2, -181)$q$, '22023');
+select pg_temp.expect_error('only one coordinate',
+  $q$select public.set_household_location(pg_temp.v('membership_f'), '2468', 35.2, null)$q$, '22023');
+select pg_temp.expect_error('not a number',
+  $q$select public.set_household_location(pg_temp.v('membership_f'), '2468', 'NaN'::float8, -80.8)$q$, '22023');
+select set_config('request.jwt.claims', :'A', true);
+select pg_temp.expect_error('a non-member uses F''s PIN',
+  $q$select public.set_household_location(pg_temp.v('membership_f'), '2468', 35.2, -80.8)$q$, '42501');
+select set_config('request.jwt.claims', :'F', true);
+select public.set_household_location(:'membership_f', '2468', null, null);
+reset role;
+select pg_temp.expect('both null clears the location', (
+  select lat is null and lon is null from public.households where id = pg_temp.v('household_f')));
+select pg_temp.expect('only authenticated can execute set_household_location',
+  has_function_privilege('authenticated', 'public.set_household_location(uuid, text, double precision, double precision)', 'execute')
+  and not has_function_privilege('anon', 'public.set_household_location(uuid, text, double precision, double precision)', 'execute'));
+
 \o
 \echo 'ALL RLS SMOKE CHECKS PASSED'
 rollback;

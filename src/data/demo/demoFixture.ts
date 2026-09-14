@@ -286,6 +286,7 @@ export function buildDemoSnapshot(now: Date, options: DemoOptions = {}): Househo
       id: householdId,
       name: 'Rivera',
       zip: '28202',
+      hasLocation: true,
       timeZone,
       defaultNightSleep: { start: '18:00', end: '05:00' },
       nightMode: { start: '20:00', end: '06:00' },
