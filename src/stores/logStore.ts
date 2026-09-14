@@ -67,6 +67,10 @@ export const useLogStore = defineStore('log', () => {
   let inFlightKey: number | null = null
   /** A command being sent directly (not via the queue), including its fall-back enqueue on a network error. */
   let directSend: Promise<unknown> | null = null
+  /** Bumped by every init() and stop(); an init whose token is stale stops where it is. */
+  let initToken = 0
+  /** The init step that sets the writer and opens the queue, while it runs. Submits wait for it. */
+  let initializing: Promise<boolean> | null = null
   /** NOT_FOUND failures per queue key, for the stuck-command policy. In memory only: a reload starts over. */
   const notFoundFailures = new Map<number, { attempts: number; firstFailedAt: number }>()
 
@@ -188,6 +192,8 @@ export const useLogStore = defineStore('log', () => {
   }
 
   async function submit(cmd: LogCommand, opts: { confirmOffline?: boolean } = {}): Promise<'saved' | 'queued'> {
+    // Still starting (writer loading, queue opening): wait rather than fail or run without the queue.
+    while (initializing !== null) await initializing.catch(() => {})
     requireWriter()
     const offline = isOffline()
 
@@ -360,9 +366,31 @@ export const useLogStore = defineStore('log', () => {
     void replay()
   }
 
-  async function init(w: LogWriter, q: OfflineQueue): Promise<void> {
-    stop()
-    writer = w
+  /**
+   * Starts the store with a writer (or one still loading) and the offline queue, then replays what's queued.
+   * Submits made before the writer is known and the queue is open wait for that rather than failing (e.g. with
+   * NO_QUEUE while a re-init re-opens the queue); they don't wait for the replay.
+   */
+  async function init(w: LogWriter | Promise<LogWriter>, q: OfflineQueue): Promise<void> {
+    const token = ++initToken
+    const starting = start(token, w, q)
+    initializing = starting
+    let started: boolean
+    try {
+      started = await starting
+    } finally {
+      if (initializing === starting) initializing = null
+    }
+    if (started && token === initToken) await replay()
+  }
+
+  /** Resolves true once writer and queue are in place (with or without a usable queue); false if superseded. */
+  async function start(token: number, w: LogWriter | Promise<LogWriter>, q: OfflineQueue): Promise<boolean> {
+    const resolvedWriter = await w
+    // A stop() or a newer init() while the writer was loading: this one must not start anything.
+    if (token !== initToken) return false
+    removeListeners()
+    writer = resolvedWriter
     queue = null
     queued = []
     notFoundFailures.clear()
@@ -370,15 +398,18 @@ export const useLogStore = defineStore('log', () => {
     window.addEventListener('online', handleOnline)
     replayTimer = setInterval(() => void replayIfPending(), 30_000)
 
+    let items: QueuedCommand[]
     try {
-      queued = await q.list()
-      queue = q
+      items = await q.list()
     } catch (e) {
       // E.g. Safari private browsing. Keep working online; offline commands will say they can't be saved.
       console.warn('Offline queue unavailable; running without offline saving', e)
       syncPendingCount()
-      return
+      return true
     }
+    if (token !== initToken) return false
+    queued = items
+    queue = q
     // Queued-but-unsent commands must still show optimistically, even before their first replay. After a
     // re-init in the same session (e.g. the main screen remounting) their overlays are already there.
     const overlaid = new Set(householdStore.overlay.map((o) => JSON.stringify(o.command)))
@@ -386,17 +417,21 @@ export const useLogStore = defineStore('log', () => {
       if (!overlaid.has(JSON.stringify(item.command))) householdStore.addOverlay(item.command, new Date(item.enqueuedAt))
     }
     syncPendingCount()
-
-    await replay()
+    return true
   }
 
-  /** Removes the online listener and the retry timer. */
-  function stop(): void {
+  function removeListeners(): void {
     window.removeEventListener('online', handleOnline)
     if (replayTimer !== null) {
       clearInterval(replayTimer)
       replayTimer = null
     }
+  }
+
+  /** Removes the online listener and the retry timer, and cancels an init that hasn't started yet. */
+  function stop(): void {
+    initToken++
+    removeListeners()
   }
 
   /** Checks an adult's PIN with the writer (for PIN pads guarding dose voids and alert acknowledgements). */

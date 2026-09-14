@@ -461,6 +461,78 @@ describe('useLogStore', () => {
       logStore.stop()
     })
 
+    /** A queue whose `list()` (opening it) waits until released. */
+    function slowToOpen(inner: OfflineQueue): OfflineQueue & { open: () => void } {
+      const gate = deferred()
+      return { ...inner, list: async () => { await gate.promise; return inner.list() }, open: gate.resolve }
+    }
+
+    it('a submit made while init is still opening the queue waits for it instead of failing with NO_QUEUE', async () => {
+      const { householdStore, logStore, writer, queue } = await setup()
+      const slow = slowToOpen(queue)
+      const initing = logStore.init(writer, slow)
+      setOnline(false)
+
+      let result: unknown = null
+      const saving = logStore.submit(feedingCmd('feed-early')).then((r) => (result = r), (e: unknown) => (result = e))
+      await Promise.resolve()
+      expect(result).toBeNull() // waiting, not NO_QUEUE
+
+      slow.open()
+      await saving
+      await initing
+      expect(result).toBe('queued')
+      expect(await queue.count()).toBe(1)
+      expect(householdStore.view?.feedings.some((f) => f.id === 'feed-early')).toBe(true)
+      logStore.stop()
+    })
+
+    it('re-opening the queue on a re-init makes a submit wait, not report NO_QUEUE', async () => {
+      const { logStore, writer, queue } = await setup()
+      await logStore.init(writer, queue)
+      const slow = slowToOpen(queue)
+      const reiniting = logStore.init(writer, slow)
+      setOnline(false)
+
+      const saving = logStore.submit(feedingCmd('feed-reinit')).catch((e: unknown) => e)
+      slow.open()
+
+      expect(await saving).toBe('queued')
+      await reiniting
+      logStore.stop()
+    })
+
+    it('init accepts a writer that is still loading, and a submit waits for it', async () => {
+      const { logStore, writer, queue } = await setup()
+      let provide!: (w: LogWriter) => void
+      const initing = logStore.init(new Promise<LogWriter>((r) => (provide = r)), queue)
+
+      const saving = logStore.submit(dinnerCmd('Pizza'))
+      await Promise.resolve()
+      expect(writer.calls).toEqual([])
+      provide(writer)
+
+      expect(await saving).toBe('saved')
+      expect(writer.calls).toEqual([dinnerCmd('Pizza')])
+      await initing
+      logStore.stop()
+    })
+
+    it('stop while init waits for its writer leaves nothing running once the writer arrives', async () => {
+      const { logStore, writer, queue } = await setup()
+      let provide!: (w: LogWriter) => void
+      const addListener = vi.spyOn(window, 'addEventListener')
+      const initing = logStore.init(new Promise<LogWriter>((r) => (provide = r)), queue)
+      logStore.stop()
+      const timersBefore = vi.getTimerCount()
+
+      provide(writer)
+      await initing
+
+      expect(addListener).not.toHaveBeenCalledWith('online', expect.any(Function))
+      expect(vi.getTimerCount()).toBe(timersBefore)
+    })
+
     it('stop removes the online listener and the retry timer', async () => {
       const { logStore, writer, queue } = await setup()
       await logStore.init(writer, queue)

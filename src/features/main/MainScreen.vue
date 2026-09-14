@@ -91,9 +91,9 @@ async function startLogging(): Promise<void> {
   if (loggingStarted) return
   loggingStarted = true
   try {
-    const writer = await selectWriter()
-    if (disposed) return
-    await logStore.init(writer, createOfflineQueue())
+    // Hand the store the writer while it's still loading, so saves made meanwhile wait for it instead of
+    // failing. (Unmounting calls logStore.stop(), which cancels this init if the writer hasn't arrived.)
+    await logStore.init(selectWriter(), createOfflineQueue())
   } catch (e) {
     console.warn('Could not start logging; retrying', e)
     loggingStarted = false
