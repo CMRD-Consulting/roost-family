@@ -4,6 +4,7 @@ import {
   SettingsError,
   type AddChildInput,
   type AdultClient,
+  type AdultMembershipRow,
   type DisplayRow,
   type EntryPatch,
   type HouseholdSettingsInput,
@@ -387,6 +388,22 @@ export function createDemoSettingsApi(): SettingsApi {
     }))
   }
 
+  /** No accounts in demo: the "user" is one of the demo adults, identified by their membership id. */
+  async function myMemberships(_client: AdultClient, userId: string): Promise<AdultMembershipRow[]> {
+    const snapshot = getDemoSnapshot(new Date())
+    return snapshot.members
+      .filter((m) => m.id === userId)
+      .map((m) => ({
+        membershipId: m.id,
+        householdId: snapshot.household.id,
+        householdName: snapshot.household.name,
+        timeZone: snapshot.household.timeZone,
+        role: m.role,
+        displayName: m.displayName,
+        color: m.color,
+      }))
+  }
+
   async function listDisplays(): Promise<DisplayRow[]> {
     return [{ displayId: DEMO_DISPLAY_ID, name: demoDisplayName, lastSeenAt: new Date().toISOString() }]
   }
@@ -438,6 +455,7 @@ export function createDemoSettingsApi(): SettingsApi {
     leaveHousehold: notAvailable,
     setMyPin: notAvailable,
     adultMembership: notAvailable,
+    myMemberships,
     recordConsent: notAvailable,
     listMembers,
     listDisplays,

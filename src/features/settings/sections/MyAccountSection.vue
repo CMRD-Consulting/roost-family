@@ -1,44 +1,32 @@
 <script setup lang="ts">
 /**
- * Settings > My account (spec §7.9): my color (PIN session), and two actions that need a full sign-in as the
- * Settings adult (spec §6.3): changing my PIN and leaving the household. The adult session ends after 5
- * minutes without a touch, when the action is done, or when this section closes. Calendars come in Phase 4.
+ * My account (spec §7.9). On a display (Settings): my color (PIN session), and two actions that need a full sign-in
+ * as the Settings adult (spec §6.3): changing my PIN and leaving the household. The adult session ends after 5
+ * minutes without a touch, when the action is done, or when this section closes. In a browser (Manage household,
+ * spec §7.10) the adult is already signed in: only leaving the household, with no sign-in of its own. `host` is
+ * where the section is shown (see sectionHosts). The `calendars` slot is where the calendar settings go.
  */
 import { computed, ref, shallowRef } from 'vue'
 import { isDemo } from '@/data/householdSource'
 import { SettingsError } from '@/data/settingsApi'
 import type { AdultSession } from '@/session/adultSession'
 import { useAdultSessionIdle } from '@/session/useAdultSessionIdle'
-import { useHouseholdStore } from '@/stores/householdStore'
-import { useSettingsSessionStore } from '@/stores/settingsSession'
 import RButton from '@/ui/RButton.vue'
 import RInput from '@/ui/RInput.vue'
 import AdultSignIn from '../AdultSignIn.vue'
 import { useNightHold } from '../useNightHold'
-import ColorPicker from '../forms/ColorPicker.vue'
-import SaveRow from '../forms/SaveRow.vue'
-import { isLastOwner, validateNewPin } from '../myAccountForm'
-import { loadSettingsApi } from '../settingsApiLoader'
+import { validateNewPin } from '../myAccountForm'
+import { useDisplayAccountHost, type AccountSectionHost } from '../sectionHosts'
 import { settingsErrorMessage } from '../settingsErrors'
-import { useSettingsOffline, useSettingsSave } from '../useSettingsSave'
+import MyColorCard from './MyColorCard.vue'
 
-const store = useHouseholdStore()
-const session = useSettingsSessionStore()
-const offline = useSettingsOffline()
+defineSlots<{ calendars?: () => unknown }>()
+const props = defineProps<{ host?: AccountSectionHost }>()
+const host = props.host ?? useDisplayAccountHost()
+const { offline, lastOwner } = host
 
-const me = computed(() => store.view?.members.find((m) => m.id === session.info?.membershipId) ?? null)
-const myName = computed(() => session.info?.displayName ?? me.value?.displayName ?? '')
-const householdName = computed(() => store.view?.household.name ?? 'this household')
-
-// ─── My color ──────────────────────────────────────────────────────────────
-const color = ref<string | null>(me.value?.color ?? null)
-const { saving: colorSaving, saved: colorSaved, error: colorError, save: saveColor } = useSettingsSave()
-
-async function submitColor(): Promise<void> {
-  const chosen = color.value
-  if (!chosen) return
-  await saveColor((api, auth) => api.setMyColor(auth, chosen))
-}
+const myName = computed(() => host.me.value?.displayName ?? '')
+const householdName = computed(() => host.household.value?.name ?? 'this household')
 
 // ─── Full sign-in actions ──────────────────────────────────────────────────
 type Action = 'pin' | 'leave'
@@ -47,15 +35,13 @@ type Phase = 'idle' | 'signIn' | 'act'
 const action = ref<Action | null>(null)
 const phase = ref<Phase>('idle')
 // Night Mode waits while the full sign-in (and what it unlocked) is open.
-useNightHold(() => phase.value !== 'idle')
+if (host.holdsNight) useNightHold(() => phase.value !== 'idle')
 const adult = shallowRef<AdultSession | null>(null)
 const busy = ref(false)
 const error = ref<string | null>(null)
 const notice = ref<string | null>(null)
 /** Bumped to give the sign-in form a fresh client after a refused account. */
 const signInKey = ref(0)
-
-const lastOwner = computed(() => (store.view && session.info ? isLastOwner(store.view.members, session.info.membershipId) : false))
 
 function reset(): void {
   action.value = null
@@ -88,7 +74,8 @@ function start(next: Action): void {
   }
   endAdult()
   action.value = next
-  phase.value = 'signIn'
+  // Already signed in (Manage household): straight to the action.
+  phase.value = host.signedIn ? 'act' : 'signIn'
 }
 
 function cancel(): void {
@@ -105,12 +92,12 @@ function actionErrorMessage(e: unknown): string {
 
 async function onSignedIn(signedIn: AdultSession): Promise<void> {
   adult.value = signedIn
-  const info = session.info
-  const householdId = store.view?.household.id
+  const info = host.me.value
+  const householdId = host.household.value?.id
   if (!info || !householdId) return cancel()
   busy.value = true
   try {
-    const api = await loadSettingsApi()
+    const api = await host.loadApi()
     const membership = await api.adultMembership(signedIn.client, householdId, signedIn.userId)
     if (membership?.membershipId !== info.membershipId) {
       error.value = `That account isn’t ${myName.value}’s. Sign in with ${myName.value}’s email.`
@@ -135,15 +122,16 @@ const newPinAgain = ref('')
 
 async function submitPin(): Promise<void> {
   const signedIn = adult.value
-  const info = session.info
-  const householdId = store.view?.household.id
-  if (!signedIn || !info || !householdId || busy.value || offline.value) return
+  const info = host.me.value
+  const householdId = host.household.value?.id
+  const pinSession = host.pinSession
+  if (!signedIn || !info || !householdId || !pinSession || busy.value || offline.value) return
   error.value = validateNewPin(newPin.value, newPinAgain.value)
   if (error.value) return
   const pin = newPin.value
   busy.value = true
   try {
-    const api = await loadSettingsApi()
+    const api = await host.loadApi()
     await api.setMyPin(signedIn.client, householdId, pin)
   } catch (e) {
     error.value = actionErrorMessage(e)
@@ -154,25 +142,19 @@ async function submitPin(): Promise<void> {
   newPinAgain.value = ''
   endAdult()
   reset()
-  // The settings session holds the old PIN; reopen it with the new one so Settings keeps working.
-  try {
-    await session.enter(info.membershipId, pin)
-    notice.value = 'Your PIN is changed.'
-  } catch {
-    session.end()
-  }
+  if (await pinSession.afterPinChanged(info.membershipId, pin)) notice.value = 'Your PIN is changed.'
 }
 
 // Leave household
 async function confirmLeave(): Promise<void> {
-  const signedIn = adult.value
-  const householdId = store.view?.household.id
-  if (!signedIn || !householdId || busy.value || offline.value) return
+  const client = host.signedIn?.client ?? adult.value?.client
+  const householdId = host.household.value?.id
+  if (!client || !householdId || busy.value || offline.value) return
   error.value = null
   busy.value = true
   try {
-    const api = await loadSettingsApi()
-    await api.leaveHousehold(signedIn.client, householdId)
+    const api = await host.loadApi()
+    await api.leaveHousehold(client, householdId)
   } catch (e) {
     error.value = actionErrorMessage(e)
     busy.value = false
@@ -180,8 +162,9 @@ async function confirmLeave(): Promise<void> {
   }
   endAdult()
   reset()
-  // This adult is no longer a member: Settings closes and the tablet returns to the main screen.
-  session.end()
+  // This adult is no longer a member: Settings closes and the tablet returns to the main screen (a browser goes
+  // back to its households).
+  host.afterLeft()
 }
 </script>
 
@@ -190,17 +173,15 @@ async function confirmLeave(): Promise<void> {
     <h2 id="settings-my-account-title" class="text-[32px] font-semibold text-ink">My account</h2>
     <p class="text-[18px] text-ink-3">Settings for {{ myName }} in {{ householdName }}.</p>
 
-    <div class="flex flex-col gap-4 rounded-[var(--radius-card)] bg-surface px-6 py-5">
-      <ColorPicker v-model="color" label="My color" />
-      <p class="text-[18px] text-ink-3">Shown with your initial wherever your entries appear.</p>
-      <SaveRow :saving="colorSaving" :saved="colorSaved" :error="colorError" :disabled="offline || !color" @save="submitColor" />
-    </div>
+    <MyColorCard v-if="host.pinSession" />
+
+    <slot name="calendars" />
 
     <p v-if="notice" role="status" class="text-[18px] font-medium text-green-deep">{{ notice }}</p>
     <p v-if="error && phase !== 'signIn'" role="alert" class="text-[18px] text-warn-ink">{{ error }}</p>
 
     <template v-if="phase === 'idle'">
-      <div class="flex flex-col gap-3 rounded-[var(--radius-card)] bg-surface px-6 py-5">
+      <div v-if="host.pinSession" class="flex flex-col gap-3 rounded-[var(--radius-card)] bg-surface px-6 py-5">
         <h3 class="text-[22px] font-semibold text-ink">PIN</h3>
         <p class="text-[18px] text-ink-3">Changing your PIN needs a full sign-in with your email.</p>
         <div>
@@ -244,7 +225,9 @@ async function confirmLeave(): Promise<void> {
     <div v-else class="flex flex-col gap-4 rounded-[var(--radius-card)] bg-surface px-6 py-5">
       <h3 class="text-[22px] font-semibold text-ink">Leave {{ householdName }}?</h3>
       <p class="text-[18px] text-ink-2">
-        You won’t be able to open Settings or use your PIN here. Your past entries stay, attributed to you as a former member.
+        <template v-if="host.surface === 'display'">You won’t be able to open Settings or use your PIN here.</template>
+        <template v-else>You’ll lose access to {{ householdName }}, and your PIN stops working on its displays.</template>
+        Your past entries stay, attributed to you as a former member.
       </p>
       <div class="flex flex-wrap gap-3">
         <RButton variant="secondary" :disabled="busy" @click="cancel">Cancel</RButton>

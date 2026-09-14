@@ -284,6 +284,17 @@ describe('createDemoSettingsApi', () => {
       expect(await api.listDisplays({} as never, 'household-1')).toEqual([{ displayId: 'demo-display', name: 'Hall', lastSeenAt: expect.any(String) }])
     })
 
+    it('myMemberships treats the user id as a demo membership id', async () => {
+      const api = createDemoSettingsApi()
+      const snapshot = getDemoSnapshot(new Date())
+      expect(await api.myMemberships({} as never, SAM_ID)).toEqual([{
+        membershipId: SAM_ID, householdId: snapshot.household.id, householdName: snapshot.household.name,
+        timeZone: snapshot.household.timeZone, role: 'owner', displayName: 'Sam', color: expect.any(String),
+      }])
+      expect((await api.myMemberships({} as never, ALEX_ID))[0]?.role).toBe('adult')
+      expect(await api.myMemberships({} as never, 'someone-else')).toEqual([])
+    })
+
     it('setMemberRole mutates the demo household', async () => {
       const api = createDemoSettingsApi()
       await api.setMemberRole({} as never, ALEX_ID, 'owner')

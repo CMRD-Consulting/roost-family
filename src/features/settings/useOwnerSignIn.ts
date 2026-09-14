@@ -1,4 +1,4 @@
-import { markRaw, ref, shallowRef } from 'vue'
+import { markRaw, ref, shallowRef, type Ref, type ShallowRef } from 'vue'
 import { isDemo } from '@/data/householdSource'
 import { SettingsError, type AdultClient } from '@/data/settingsApi'
 import type { AdultSession } from '@/session/adultSession'
@@ -18,6 +18,25 @@ export interface SignedInOwner {
 
 export type OwnerSignInPhase = 'idle' | 'signIn' | 'checking' | 'notOwner' | 'ready'
 
+/** An owner's sign-in as the Members, Displays and Delete household sections use it (and OwnerSignInPanel shows it). */
+export interface OwnerSignIn {
+  demo: boolean
+  phase: Ref<OwnerSignInPhase>
+  owner: ShallowRef<SignedInOwner | null>
+  /** True while an owner action runs; the idle sign-out waits for it. */
+  busy: Ref<boolean>
+  error: Ref<string | null>
+  notice: Ref<string | null>
+  signInKey: Ref<number>
+  startSignIn: () => void
+  cancelSignIn: () => void
+  onSignedIn: (signedIn: AdultSession) => Promise<void>
+  /** Ends the owner's sign-in, optionally saying why. */
+  signOut: (message?: string | null) => void
+  /** Runs an owner action, holding off the idle sign-out while it's in flight. */
+  run: <T>(action: (owner: SignedInOwner) => Promise<T>) => Promise<T>
+}
+
 /** Demo mode has no accounts: the demo API ignores the client for the few owner actions it supports. */
 const DEMO_CLIENT = markRaw({}) as AdultClient
 
@@ -34,7 +53,7 @@ export function ownerActionMessage(e: unknown): string {
  * 5 minutes without a touch, on `signOut`, or when the section using this closes. In demo mode there are no
  * accounts: the PIN session's owner stands in, and only the actions the demo API supports work.
  */
-export function useOwnerSignIn() {
+export function useOwnerSignIn(): OwnerSignIn {
   const store = useHouseholdStore()
   const session = useSettingsSessionStore()
 
@@ -123,8 +142,12 @@ export function useOwnerSignIn() {
     phase.value = 'idle'
   }
 
-  /** Runs an owner action, holding off the idle sign-out while it's in flight. */
-  async function run<T>(action: (owner: SignedInOwner) => Promise<T>): Promise<T> {
+  return { demo: isDemo, phase, owner, busy, error, notice, signInKey, startSignIn, cancelSignIn, onSignedIn, signOut, run: runAs(owner, busy) }
+}
+
+/** Runs an owner action as `owner`, setting `busy` while it's in flight. */
+function runAs(owner: ShallowRef<SignedInOwner | null>, busy: Ref<boolean>): OwnerSignIn['run'] {
+  return async (action) => {
     const current = owner.value
     if (!current) throw new SettingsError('Sign in as an owner first', 'auth')
     busy.value = true
@@ -134,8 +157,31 @@ export function useOwnerSignIn() {
       busy.value = false
     }
   }
-
-  return { demo: isDemo, phase, owner, busy, error, notice, signInKey, startSignIn, cancelSignIn, onSignedIn, signOut, run }
 }
 
-export type OwnerSignIn = ReturnType<typeof useOwnerSignIn>
+/**
+ * An owner who has already signed in somewhere else (Manage household's own sign-in, spec §7.10), as the owner
+ * sections expect it: always ready, with no sign-in form of its own. `busy` is shared with whoever owns the
+ * session's idle sign-out; `signOut` hands the end of the sign-in back to that owner.
+ */
+export function signedInOwner(
+  signedIn: SignedInOwner,
+  options: { demo: boolean; busy: Ref<boolean>; signOut: (message: string | null) => void },
+): OwnerSignIn {
+  const owner = shallowRef<SignedInOwner | null>(signedIn)
+  const nothing = () => {}
+  return {
+    demo: options.demo,
+    phase: ref<OwnerSignInPhase>('ready'),
+    owner,
+    busy: options.busy,
+    error: ref(null),
+    notice: ref(null),
+    signInKey: ref(0),
+    startSignIn: nothing,
+    cancelSignIn: nothing,
+    onSignedIn: async () => {},
+    signOut: (message = null) => options.signOut(message),
+    run: runAs(owner, options.busy),
+  }
+}

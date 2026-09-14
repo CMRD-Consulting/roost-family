@@ -4,6 +4,7 @@ import {
   SettingsError,
   type AddChildInput,
   type AdultClient,
+  type AdultMembershipRow,
   type DisplayRow,
   type EntryPatch,
   type HouseholdSettingsInput,
@@ -371,6 +372,39 @@ export function createSupabaseSettingsApi(client: RoostClient): SettingsApi {
     return row ? { membershipId: row.id, role: row.role } : null
   }
 
+  async function myMemberships(adult: AdultClient, userId: string): Promise<AdultMembershipRow[]> {
+    type Row = {
+      id: string
+      household_id: string
+      role: AdultMembershipRow['role']
+      display_name: string
+      color: string
+      households: { name: string; time_zone: string } | { name: string; time_zone: string }[] | null
+    }
+    const rows = await run<Row[] | null>(() =>
+      adult
+        .from('memberships')
+        .select('id, household_id, role, display_name, color, households(name, time_zone)')
+        .eq('user_id', userId)
+        .is('left_at', null)
+        .order('joined_at', { ascending: true }),
+    )
+    return (rows ?? []).flatMap((r) => {
+      // A deleted household is hidden from its members by RLS, so it embeds as null: leave it out.
+      const household = Array.isArray(r.households) ? r.households[0] : r.households
+      if (!household) return []
+      return [{
+        membershipId: r.id,
+        householdId: r.household_id,
+        householdName: household.name,
+        timeZone: household.time_zone,
+        role: r.role,
+        displayName: r.display_name,
+        color: r.color,
+      }]
+    })
+  }
+
   async function renameDisplay(adult: AdultClient, displayId: string, name: string): Promise<void> {
     await run(() => adult.rpc('rename_display', { p_display_id: displayId, p_name: name }))
   }
@@ -443,6 +477,7 @@ export function createSupabaseSettingsApi(client: RoostClient): SettingsApi {
     leaveHousehold,
     setMyPin,
     adultMembership,
+    myMemberships,
     recordConsent,
     listMembers,
     listDisplays,

@@ -1,5 +1,6 @@
 import { markRaw, type Raw } from 'vue'
-import { createAdultClient, type RoostClient } from '@/data/supabase'
+import { createAdultClient } from '@/data/sessionlessClients'
+import type { RoostClient } from '@/data/supabase'
 
 export interface AdultSession {
   /** Raw so storing the session in reactive state never proxies the Supabase client. */

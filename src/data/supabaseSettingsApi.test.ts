@@ -392,6 +392,31 @@ describe('createSupabaseSettingsApi', () => {
       }])
     })
 
+    it("myMemberships lists the adult's current households, skipping deleted ones", async () => {
+      const { client, calls } = createFakeClient({
+        from: {
+          error: null,
+          data: [
+            { id: 'm1', household_id: 'h1', role: 'owner', display_name: 'Sam', color: '#653437', households: { name: 'Rivera', time_zone: 'America/New_York' } },
+            { id: 'm2', household_id: 'h2', role: 'adult', display_name: 'Sammy', color: '#2C7F8C', households: [{ name: 'Lake house', time_zone: 'America/Chicago' }] },
+            { id: 'm3', household_id: 'h3', role: 'owner', display_name: 'Sam', color: '#653437', households: null },
+          ],
+        },
+      })
+      const result = await createSupabaseSettingsApi(client).myMemberships(client, 'user-1')
+      expect(result).toEqual([
+        { membershipId: 'm1', householdId: 'h1', householdName: 'Rivera', timeZone: 'America/New_York', role: 'owner', displayName: 'Sam', color: '#653437' },
+        { membershipId: 'm2', householdId: 'h2', householdName: 'Lake house', timeZone: 'America/Chicago', role: 'adult', displayName: 'Sammy', color: '#2C7F8C' },
+      ])
+      expect(calls).toEqual([{
+        op: 'from', table: 'memberships',
+        chain: [
+          ['select', 'id, household_id, role, display_name, color, households(name, time_zone)'],
+          ['eq', 'user_id', 'user-1'], ['is', 'left_at', null], ['order', 'joined_at', { ascending: true }],
+        ],
+      }])
+    })
+
     it('adultMembership is null when the adult is not a member', async () => {
       const { client } = createFakeClient({ from: { error: null, data: [] } })
       await expect(createSupabaseSettingsApi(client).adultMembership(client, 'household-1', 'user-1')).resolves.toBeNull()

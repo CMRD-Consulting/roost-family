@@ -1,47 +1,40 @@
 <script setup lang="ts">
 /**
- * Settings > Delete household (spec §11.3), owners only after a full sign-in and a typed confirmation of the
- * household name. Every display (this one included) is removed at once and every adult loses access; the data
- * is purged within 30 days. This tablet then forgets the household and shows "This display was removed".
+ * Delete household (spec §11.3), owners only after a full sign-in and a typed confirmation of the household name.
+ * Every display is removed at once and every adult loses access; the data is purged within 30 days. On a display
+ * this tablet then forgets the household and shows "This display was removed". `host` is where the section is
+ * shown (see sectionHosts); without one it is Settings on this display.
  */
 import { computed, ref } from 'vue'
-import { useRouter } from 'vue-router'
-import { useDisplayStore } from '@/session/displayStore'
-import { useHouseholdStore } from '@/stores/householdStore'
 import RButton from '@/ui/RButton.vue'
 import RInput from '@/ui/RInput.vue'
 import OwnerSignInPanel from '../OwnerSignInPanel.vue'
 import { confirmsHouseholdName } from '../ownerForms'
-import { loadSettingsApi } from '../settingsApiLoader'
-import { ownerActionMessage, useOwnerSignIn } from '../useOwnerSignIn'
-import { useSettingsOffline } from '../useSettingsSave'
+import { useDisplayOwnerHost, type OwnerSectionHost } from '../sectionHosts'
+import { ownerActionMessage } from '../useOwnerSignIn'
 
-const store = useHouseholdStore()
-const display = useDisplayStore()
-const router = useRouter()
-const offline = useSettingsOffline()
-const gate = useOwnerSignIn()
+const props = defineProps<{ host?: OwnerSectionHost }>()
+const host = props.host ?? useDisplayOwnerHost()
+const { gate, offline } = host
 
-const householdName = computed(() => store.view?.household.name ?? '')
+const householdName = computed(() => host.household.value?.name ?? '')
 const typedName = ref('')
 const error = ref<string | null>(null)
 const confirmed = computed(() => confirmsHouseholdName(typedName.value, householdName.value))
 
 async function deleteHousehold(): Promise<void> {
-  const householdId = store.view?.household.id
+  const householdId = host.household.value?.id
   if (!householdId || !confirmed.value || gate.busy.value || offline.value) return
   error.value = null
   const confirmName = typedName.value.trim()
   try {
-    const api = await loadSettingsApi()
+    const api = await host.loadApi()
     await gate.run((o) => api.deleteHousehold(o.client, householdId, confirmName))
   } catch (e) {
     error.value = ownerActionMessage(e)
     return
   }
-  gate.signOut()
-  await display.markRemoved()
-  await router.replace('/removed')
+  await host.afterHouseholdDeleted()
 }
 </script>
 
@@ -52,7 +45,7 @@ async function deleteHousehold(): Promise<void> {
     <div class="flex flex-col gap-3 rounded-[var(--radius-card)] bg-surface px-6 py-5">
       <p class="text-[20px] text-ink">Deleting {{ householdName }}:</p>
       <ul class="flex list-disc flex-col gap-1 pl-6 text-[18px] text-ink-2">
-        <li>Removes every display right away, including this one.</li>
+        <li>Removes every display right away<template v-if="host.surface === 'display'">, including this one</template>.</li>
         <li>Ends access for every adult, and every PIN stops working.</li>
         <li>
           Erases the children’s profiles, logs, medicines, routines and all other household data within 30 days,

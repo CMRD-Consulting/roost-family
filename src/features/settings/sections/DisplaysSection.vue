@@ -1,31 +1,25 @@
 <script setup lang="ts">
 /**
- * Settings > Displays (spec §6.3, §6.4, §7.9), owners only after a full sign-in: the household's displays with
- * when each last checked in; rename; remove (revoke) with a confirmation. Removing the tablet in use forgets
- * the household on it and shows "This display was removed". Adding a display happens on the new tablet.
+ * Displays (spec §6.3, §6.4, §7.9), owners only after a full sign-in: the household's displays with when each
+ * last checked in; rename; remove (revoke) with a confirmation. Removing the tablet in use forgets the household
+ * on it and shows "This display was removed". Adding a display happens on the new tablet. `host` is where the
+ * section is shown (see sectionHosts); without one it is Settings on this display.
  */
 import { computed, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import type { DisplayRow } from '@/data/settingsApi'
 import { validateDisplayLabel } from '@/features/setup/validation'
-import { useDisplayStore } from '@/session/displayStore'
-import { useHouseholdStore } from '@/stores/householdStore'
 import RButton from '@/ui/RButton.vue'
 import RInput from '@/ui/RInput.vue'
 import OwnerSignInPanel from '../OwnerSignInPanel.vue'
 import { formatLastSeen } from '../ownerForms'
-import { loadSettingsApi } from '../settingsApiLoader'
-import { ownerActionMessage, useOwnerSignIn } from '../useOwnerSignIn'
-import { useSettingsOffline } from '../useSettingsSave'
+import { useDisplayOwnerHost, type OwnerSectionHost } from '../sectionHosts'
+import { ownerActionMessage } from '../useOwnerSignIn'
 
-const store = useHouseholdStore()
-const display = useDisplayStore()
-const router = useRouter()
-const offline = useSettingsOffline()
-const gate = useOwnerSignIn()
+const props = defineProps<{ host?: OwnerSectionHost }>()
+const host = props.host ?? useDisplayOwnerHost()
+const { gate, offline, thisDisplayId } = host
 
-const householdName = computed(() => store.view?.household.name ?? 'this household')
-const thisDisplayId = computed(() => display.identity?.displayId ?? null)
+const householdName = computed(() => host.household.value?.name ?? 'this household')
 
 const rows = ref<DisplayRow[]>([])
 const loading = ref(false)
@@ -36,11 +30,11 @@ const renameValue = ref('')
 const confirmRemoveId = ref<string | null>(null)
 
 async function load(): Promise<void> {
-  const householdId = store.view?.household.id
+  const householdId = host.household.value?.id
   if (!gate.owner.value || !householdId) return
   loading.value = true
   try {
-    const api = await loadSettingsApi()
+    const api = await host.loadApi()
     rows.value = await gate.run((o) => api.listDisplays(o.client, householdId))
   } catch (e) {
     error.value = ownerActionMessage(e)
@@ -74,7 +68,7 @@ async function saveRename(row: DisplayRow): Promise<void> {
   if (error.value) return
   const name = renameValue.value.trim()
   try {
-    const api = await loadSettingsApi()
+    const api = await host.loadApi()
     await gate.run((o) => api.renameDisplay(o.client, row.displayId, name))
   } catch (e) {
     error.value = ownerActionMessage(e)
@@ -82,8 +76,7 @@ async function saveRename(row: DisplayRow): Promise<void> {
   }
   renamingId.value = null
   notice.value = `Renamed to ${name}.`
-  // This tablet's own name shows elsewhere; pick the new one up now rather than at the next check-in.
-  if (row.displayId === thisDisplayId.value && !gate.demo) void display.refresh()
+  host.afterDisplayRenamed(row.displayId)
   await load()
 }
 
@@ -98,7 +91,7 @@ async function remove(row: DisplayRow): Promise<void> {
   if (gate.busy.value || offline.value) return
   error.value = null
   try {
-    const api = await loadSettingsApi()
+    const api = await host.loadApi()
     await gate.run((o) => api.revokeDisplay(o.client, row.displayId))
   } catch (e) {
     error.value = ownerActionMessage(e)
@@ -106,9 +99,7 @@ async function remove(row: DisplayRow): Promise<void> {
   }
   confirmRemoveId.value = null
   if (row.displayId === thisDisplayId.value) {
-    gate.signOut()
-    await display.markRemoved()
-    await router.replace('/removed')
+    await host.afterThisDisplayRemoved()
     return
   }
   notice.value = `${row.name} was removed from ${householdName.value}.`

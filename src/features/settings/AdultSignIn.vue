@@ -13,10 +13,19 @@ import RButton from '@/ui/RButton.vue'
 import RInput from '@/ui/RInput.vue'
 import { useNightHold } from './useNightHold'
 
-withDefaults(defineProps<{ title?: string; hint?: string; /** The title's heading element: h1 when this is the whole screen. */ heading?: 'h1' | 'h3' }>(), {
-  title: 'Sign in',
-  heading: 'h3',
-})
+const props = withDefaults(
+  defineProps<{
+    title?: string
+    hint?: string
+    /** The title's heading element: h1 when this is the whole screen. */
+    heading?: 'h1' | 'h3'
+    /** Hold Night Mode off while the form shows (a display). A browser that isn't a display has no Night Mode. */
+    holdNight?: boolean
+    /** Offer Cancel (emits `cancel`). */
+    cancellable?: boolean
+  }>(),
+  { title: 'Sign in', heading: 'h3', holdNight: true, cancellable: true },
+)
 const emit = defineEmits<{ signedIn: [session: AdultSession]; cancel: [] }>()
 
 type SessionModule = typeof import('@/session/adultSession')
@@ -32,7 +41,7 @@ const code = ref('')
 const busy = ref(false)
 const error = ref<string | null>(null)
 const isDev = import.meta.env.DEV
-useNightHold()
+if (props.holdNight) useNightHold()
 const headingEl = useTemplateRef<HTMLElement>('titleHeading')
 
 // A new step (email → code, or back): focus its heading so a screen reader announces where the adult is.
@@ -113,16 +122,16 @@ onBeforeUnmount(() => {
     <template v-if="phase === 'email'">
       <RInput v-model="email" label="Email" type="email" inputmode="email" autocomplete="off" :maxlength="254" />
       <div class="flex flex-wrap gap-3">
-        <RButton variant="secondary" @click="emit('cancel')">Cancel</RButton>
+        <RButton v-if="cancellable" variant="secondary" @click="emit('cancel')">Cancel</RButton>
         <RButton :disabled="busy" @click="sendCode">Email me a 6-digit code</RButton>
       </div>
     </template>
     <template v-else>
       <p class="text-[20px] text-ink-2">We sent a code to <strong>{{ email }}</strong>.</p>
       <RInput v-model="code" label="6-digit code" inputmode="numeric" autocomplete="one-time-code" :maxlength="6" />
-      <p v-if="isDev" class="text-[18px] text-ink-3">Local dev: read the code at http://127.0.0.1:55324</p>
+      <p v-if="isDev" class="break-words text-[18px] text-ink-3">Local dev: read the code at http://127.0.0.1:55324</p>
       <div class="flex flex-wrap gap-3">
-        <RButton variant="secondary" @click="emit('cancel')">Cancel</RButton>
+        <RButton v-if="cancellable" variant="secondary" @click="emit('cancel')">Cancel</RButton>
         <RButton :disabled="busy" @click="verify">Sign in</RButton>
         <RButton variant="ghost" @click="useDifferentEmail">Use a different email</RButton>
       </div>

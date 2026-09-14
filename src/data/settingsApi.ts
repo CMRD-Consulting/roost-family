@@ -151,6 +151,18 @@ export interface DisplayRow {
   lastSeenAt: string | null
 }
 
+/** One of the signed-in adult's current memberships, for Manage household's household picker (spec §7.10). */
+export interface AdultMembershipRow {
+  membershipId: string
+  householdId: string
+  householdName: string
+  /** IANA zone of the household, for dates shown in its lists. */
+  timeZone: string
+  role: 'owner' | 'adult' | 'caregiver'
+  displayName: string
+  color: string
+}
+
 /**
  * Every configuration change goes through this interface (spec §7.9). Most methods are PIN-checked
  * (`SettingsAuth`, re-verified by the server on every call); the members/displays/deletion methods instead
@@ -221,6 +233,9 @@ export interface SettingsApi {
   setMyPin(client: AdultClient, householdId: string, pin: string): Promise<void>
   /** The signed-in adult's current membership in the household, or null when they aren't a member. */
   adultMembership(client: AdultClient, householdId: string, userId: string): Promise<{ membershipId: string; role: string } | null>
+  /** Every household the signed-in adult is a current member of (deleted households excluded), oldest first. In
+   *  demo mode, where there are no accounts, `userId` is the demo adult's membership id. */
+  myMemberships(client: AdultClient, userId: string): Promise<AdultMembershipRow[]>
   /** Records the signed-in adult's acceptance of `policyVersion` with health-data consent (spec §6.4 step 3),
    *  which `acceptMemberInvite` requires. */
   recordConsent(client: AdultClient, policyVersion: string): Promise<void>

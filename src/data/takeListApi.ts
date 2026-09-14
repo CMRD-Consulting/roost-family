@@ -127,6 +127,6 @@ export async function loadTakeListDisplayApi(): Promise<TakeListDisplayApi> {
 
 /** The phone page's API, on its own session-less anon client: it never touches the display's session. */
 export async function loadTakeListPageApi(): Promise<TakeListPageApi> {
-  const { createAnonClient } = await import('./supabase')
+  const { createAnonClient } = await import('./sessionlessClients')
   return createTakeListPageApi(createAnonClient())
 }
