@@ -52,6 +52,8 @@ interface FakeWriter extends LogWriter {
   calls: LogCommand[]
   failNextWith: LogWriteError | Error | null
   failAlwaysWith: LogWriteError | Error | null
+  /** While set, every execute() waits for it before resolving (after recording the call). */
+  gate: Promise<void> | null
 }
 
 function createFakeWriter(): FakeWriter {
@@ -59,8 +61,10 @@ function createFakeWriter(): FakeWriter {
     calls: [],
     failNextWith: null,
     failAlwaysWith: null,
+    gate: null,
     async execute(cmd: LogCommand) {
       writer.calls.push(cmd)
+      if (writer.gate) await writer.gate
       if (writer.failAlwaysWith) throw writer.failAlwaysWith
       if (writer.failNextWith) {
         const err = writer.failNextWith
@@ -113,6 +117,27 @@ async function setup() {
   const writer = createFakeWriter()
   const queue = createFakeQueue()
   return { householdStore, logStore, writer, queue }
+}
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void
+  const promise = new Promise<void>((r) => {
+    resolve = r
+  })
+  return { promise, resolve }
+}
+
+function sleepStartCmd(id = 'sleep-x'): LogCommand {
+  return {
+    kind: 'sleep.start',
+    householdId: HOUSEHOLD_ID,
+    entry: { id, childId: 'cccccccc-0000-0000-0000-000000000002', startAt: '2026-09-14T18:00:00.000Z', endAt: null, type: 'nap' },
+    attribution: { displayId: 'demo-display', loggedByMembershipId: null, sitterSessionId: null, loggedByName: null },
+  }
+}
+
+function sleepEndCmd(id = 'sleep-x'): LogCommand {
+  return { kind: 'sleep.end', householdId: HOUSEHOLD_ID, entryId: id, endAt: '2026-09-14T19:00:00.000Z', previousEndAt: null }
 }
 
 function setOnline(value: boolean) {
@@ -310,7 +335,111 @@ describe('useLogStore', () => {
     })
   })
 
+  describe('ordering', () => {
+    it('a command submitted while an earlier one is queued is queued behind it and executes after it', async () => {
+      const { householdStore, logStore, writer, queue } = await setup()
+      await logStore.init(writer, queue)
+      writer.failNextWith = new LogWriteError('fetch failed', true, null)
+      expect(await logStore.submit(sleepStartCmd())).toBe('queued')
+
+      const result = await logStore.submit(sleepEndCmd())
+      await logStore.replay()
+
+      expect(result).toBe('queued')
+      expect(writer.calls.map((c) => c.kind)).toEqual(['sleep.start', 'sleep.start', 'sleep.end'])
+      expect(await queue.count()).toBe(0)
+      expect(logStore.pendingCount).toBe(0)
+      expect(householdStore.view?.sleeps.find((s) => s.id === 'sleep-x')?.endAt).toBe('2026-09-14T19:00:00.000Z')
+    })
+
+    it('a command submitted while a replay is in flight is queued and sent after the replay items', async () => {
+      const { logStore, writer, queue } = await setup()
+      await queue.enqueue(sleepStartCmd())
+      writer.failAlwaysWith = new LogWriteError('fetch failed', true, null)
+      await logStore.init(writer, queue)
+      writer.failAlwaysWith = null
+
+      const gate = deferred()
+      writer.gate = gate.promise
+      const replaying = logStore.replay()
+      const result = await logStore.submit(sleepEndCmd())
+      writer.gate = null
+      gate.resolve()
+      await replaying
+      await logStore.replay()
+
+      expect(result).toBe('queued')
+      expect(writer.calls.map((c) => c.kind)).toEqual(['sleep.start', 'sleep.start', 'sleep.end'])
+      expect(await queue.count()).toBe(0)
+    })
+
+    it('a command submitted while a direct send is in flight waits for it instead of overtaking it', async () => {
+      const { logStore, writer, queue } = await setup()
+      await logStore.init(writer, queue)
+      const gate = deferred()
+      writer.gate = gate.promise
+      writer.failNextWith = new LogWriteError('fetch failed', true, null)
+
+      const first = logStore.submit(sleepStartCmd())
+      const second = logStore.submit(sleepEndCmd())
+      writer.gate = null
+      gate.resolve()
+
+      expect(await first).toBe('queued')
+      expect(await second).toBe('queued')
+      await logStore.replay()
+      expect(writer.calls.map((c) => c.kind)).toEqual(['sleep.start', 'sleep.start', 'sleep.end'])
+    })
+
+    it('concurrent replay() calls share one run and execute each queued item once', async () => {
+      const { logStore, writer, queue } = await setup()
+      await queue.enqueue(dinnerCmd('Pizza'))
+      await queue.enqueue(feedingCmd('feed-1'))
+      writer.failAlwaysWith = new LogWriteError('fetch failed', true, null)
+      await logStore.init(writer, queue)
+      writer.failAlwaysWith = null
+      writer.calls = []
+
+      const gate = deferred()
+      writer.gate = gate.promise
+      const a = logStore.replay()
+      const b = logStore.replay()
+      writer.gate = null
+      gate.resolve()
+      await Promise.all([a, b])
+
+      expect(writer.calls).toEqual([dinnerCmd('Pizza'), feedingCmd('feed-1')])
+      expect(await queue.count()).toBe(0)
+    })
+  })
+
   describe('undo', () => {
+    it('undo of a queued command that is being sent waits for the send, then submits the inverse', async () => {
+      const { householdStore, logStore, writer, queue } = await setup()
+      await logStore.init(writer, queue)
+      writer.failNextWith = new LogWriteError('fetch failed', true, null)
+      expect(await logStore.submit(dinnerCmd('Pizza'))).toBe('queued')
+      writer.calls = []
+
+      const gate = deferred()
+      writer.gate = gate.promise
+      const replaying = logStore.replay()
+      await Promise.resolve()
+      expect(writer.calls).toEqual([dinnerCmd('Pizza')]) // in flight
+
+      const undoing = logStore.undo()
+      writer.gate = null
+      gate.resolve()
+      await replaying
+      expect(await undoing).toBe('undone')
+      await logStore.replay()
+
+      expect(writer.calls.map((c) => (c as { text: string }).text)).toEqual(['Pizza', 'Tacos'])
+      expect(await queue.count()).toBe(0)
+      expect(householdStore.view?.household.dinnerTonight).toBe('Tacos')
+      expect(logStore.lastAction).toBeNull()
+    })
+
     it('undoes a saved dinner.set by submitting its inverse', async () => {
       const { householdStore, logStore, writer, queue } = await setup()
       await logStore.init(writer, queue)
