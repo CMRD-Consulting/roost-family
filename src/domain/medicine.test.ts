@@ -33,7 +33,8 @@ describe('checkDose', () => {
         kind: 'early',
         nearestDoseAt: new Date('2026-09-14T12:00:00Z'),
         nearestDoseBy: 'Sam',
-        elapsedMs: 200 * 60_000,
+        gapMs: 200 * 60_000,
+        direction: 'before',
         minIntervalHours: 6,
       },
     ])
@@ -43,9 +44,18 @@ describe('checkDose', () => {
     expect(checkDose(ibuprofen, [dose({ at: '2026-09-14T12:00:00Z' })], new Date('2026-09-14T18:00:00Z'))).toEqual([])
   })
 
-  it('warns for a backdated dose close to a later one', () => {
+  it('warns for a backdated dose close to a later one, with the nearest dose after it', () => {
     const warnings = checkDose(ibuprofen, [dose({ at: '2026-09-14T12:00:00Z' })], new Date('2026-09-14T10:00:00Z'))
-    expect(warnings.map((w) => w.kind)).toEqual(['early'])
+    expect(warnings).toEqual([
+      {
+        kind: 'early',
+        nearestDoseAt: new Date('2026-09-14T12:00:00Z'),
+        nearestDoseBy: 'Sam',
+        gapMs: 120 * 60_000,
+        direction: 'after',
+        minIntervalHours: 6,
+      },
+    ])
   })
 
   it('warns when over the daily maximum', () => {

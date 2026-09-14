@@ -4,7 +4,14 @@ const HOUR_MS = 3_600_000
 const DAY_MS = 24 * HOUR_MS
 
 export type DoseWarning =
-  | { kind: 'early'; nearestDoseAt: Date; nearestDoseBy: string | null; elapsedMs: number; minIntervalHours: number }
+  | {
+      kind: 'early'
+      nearestDoseAt: Date
+      nearestDoseBy: string | null
+      gapMs: number
+      direction: 'before' | 'after'
+      minIntervalHours: number
+    }
   | { kind: 'overMax'; doseNumber: number; max: number }
 
 export interface DoseSummary {
@@ -38,7 +45,8 @@ export function checkDose(medicine: Medicine, doses: DoseEntry[], at: Date, excl
       kind: 'early',
       nearestDoseAt: new Date(nearest.d.at),
       nearestDoseBy: nearest.d.loggedByName,
-      elapsedMs: nearest.gap,
+      gapMs: nearest.gap,
+      direction: Date.parse(nearest.d.at) <= t ? 'before' : 'after',
       minIntervalHours: medicine.minIntervalHours,
     })
   }
