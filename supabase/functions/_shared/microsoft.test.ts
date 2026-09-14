@@ -56,6 +56,7 @@ const calendarViewFixture = {
       body: { contentType: 'html', content: '<html><body>Room 12</body></html>' },
       isAllDay: false,
       isCancelled: false,
+      responseStatus: { response: 'accepted', time: '2026-09-10T12:00:00Z' },
       start: { dateTime: '2026-09-14T19:00:00.0000000', timeZone: 'UTC' },
       end: { dateTime: '2026-09-14T19:30:00.0000000', timeZone: 'UTC' },
       location: { displayName: 'Oak Elementary', locationType: 'default', address: { street: '1 School Rd' } },
@@ -90,6 +91,15 @@ const calendarViewFixture = {
       end: { dateTime: '2026-09-14T09:45:00.0000000', timeZone: 'America/New_York' },
       location: { displayName: 'Kitchen' },
     },
+    {
+      id: 'AAMkAGI2TG97AAA=',
+      subject: 'Declined review',
+      isAllDay: false,
+      isCancelled: false,
+      responseStatus: { response: 'declined', time: '2026-09-10T12:00:00Z' },
+      start: { dateTime: '2026-09-14T15:00:00.0000000', timeZone: 'UTC' },
+      end: { dateTime: '2026-09-14T16:00:00.0000000', timeZone: 'UTC' },
+    },
     { id: 'broken', subject: 'Broken', isAllDay: false, start: { dateTime: 'soon' }, end: null },
   ],
 }
@@ -112,7 +122,7 @@ describe('mapMicrosoftCalendars', () => {
 })
 
 describe('mapMicrosoftEvents', () => {
-  it('maps calendarView events to the shared shape, dropping cancelled and unusable ones', () => {
+  it('maps calendarView events to the shared shape, dropping cancelled, declined and unusable ones', () => {
     const { events, nextLink } = mapMicrosoftEvents(calendarViewFixture, TZ)
     expect(nextLink).toBeNull()
     expect(events).toEqual([
@@ -120,7 +130,7 @@ describe('mapMicrosoftEvents', () => {
       { title: 'Field trip', startAt: '2026-09-14T04:00:00.000Z', endAt: '2026-09-15T04:00:00.000Z', allDay: true, location: null },
       { title: 'Local-zone meeting', startAt: '2026-09-14T13:00:00.000Z', endAt: '2026-09-14T13:45:00.000Z', allDay: false, location: 'Kitchen' },
     ])
-    expect(JSON.stringify(events)).not.toMatch(/reading log|Room 12|teams\.microsoft|lee@school/)
+    expect(JSON.stringify(events)).not.toMatch(/reading log|Room 12|teams\.microsoft|lee@school|Declined|accepted/)
   })
 })
 
@@ -158,7 +168,7 @@ describe('classifyMicrosoftError', () => {
   it('classifies Graph and token endpoint failures', () => {
     expect(classifyMicrosoftError(401, { error: { code: 'InvalidAuthenticationToken', message: 'Lifetime validation failed' } })).toBe('auth_expired')
     expect(classifyMicrosoftError(403, { error: { code: 'ErrorAccessDenied' } })).toBe('auth_expired')
-    expect(classifyMicrosoftError(404, { error: { code: 'ErrorItemNotFound' } })).toBe('auth_expired')
+    expect(classifyMicrosoftError(404, { error: { code: 'ErrorItemNotFound' } })).toBe('calendar_gone')
     expect(classifyMicrosoftError(400, { error: 'invalid_grant' })).toBe('auth_expired')
     expect(classifyMicrosoftError(429, { error: { code: 'TooManyRequests' } })).toBe('unreachable')
     expect(classifyMicrosoftError(503, { error: { code: 'ServiceNotAvailable' } })).toBe('unreachable')
@@ -207,7 +217,7 @@ describe('Microsoft network paths (injected fetch)', () => {
     expect(urls).toHaveLength(1)
   })
 
-  it('requests calendarView for the day in UTC with a minimal $select', async () => {
+  it('requests calendarView for the day widened by a day each side, in UTC, with a minimal $select', async () => {
     const window = householdDayWindow(NOW, TZ)
     let requested: { url: string; prefer: string | null } | undefined
     const events = await listMicrosoftEventsForDay(
@@ -222,11 +232,24 @@ describe('Microsoft network paths (injected fetch)', () => {
     )
     const url = new URL(requested!.url)
     expect(url.origin + url.pathname).toBe('https://graph.microsoft.com/v1.0/me/calendars/AAMkAGI2TGuLBBB%3D/calendarView')
-    expect(url.searchParams.get('startDateTime')).toBe('2026-09-14T04:00:00.000Z')
-    expect(url.searchParams.get('endDateTime')).toBe('2026-09-15T04:00:00.000Z')
-    expect(url.searchParams.get('$select')).not.toMatch(/body|attendees/)
+    expect(url.searchParams.get('startDateTime')).toBe('2026-09-13T04:00:00.000Z')
+    expect(url.searchParams.get('endDateTime')).toBe('2026-09-16T04:00:00.000Z')
+    expect(url.searchParams.get('$select')).toContain('responseStatus')
+    expect(url.searchParams.get('$select')).not.toMatch(/body|attendees|organizer|webLink|onlineMeeting/)
     expect(requested!.prefer).toBe('outlook.timezone="UTC"')
     expect(events).toHaveLength(3)
+  })
+
+  it('throws calendar_gone for a 404 on one calendar, but not for the calendar list or token', async () => {
+    const window = householdDayWindow(NOW, TZ)
+    const notFound = async () => jsonResponse(404, { error: { code: 'ErrorItemNotFound' } })
+    expect(await listMicrosoftEventsForDay(notFound, 'tok', 'gone', window, TZ).catch((e: CalendarProviderError) => e.status)).toBe('calendar_gone')
+    expect(await listMicrosoftCalendars(notFound, 'tok').catch((e: CalendarProviderError) => e.status)).toBe('unreachable')
+    expect(
+      await refreshMicrosoftAccessToken(notFound, { clientId: 'c', clientSecret: 's', refreshToken: 'r' }, NOW).catch(
+        (e: CalendarProviderError) => e.status,
+      ),
+    ).toBe('unreachable')
   })
 
   it('throws auth_expired when Graph returns 401', async () => {

@@ -101,6 +101,50 @@ const eventsFixture = {
       end: { dateTime: '2026-09-14T22:00:00Z', timeZone: 'UTC' },
       visibility: 'private',
     },
+    {
+      kind: 'calendar#event',
+      id: 'declined',
+      status: 'confirmed',
+      summary: 'Declined meeting',
+      start: { dateTime: '2026-09-14T11:00:00-04:00' },
+      end: { dateTime: '2026-09-14T12:00:00-04:00' },
+      attendees: [
+        { email: 'boss@example.com', responseStatus: 'accepted', organizer: true },
+        { email: 'sam@example.com', self: true, responseStatus: 'declined' },
+      ],
+    },
+    {
+      kind: 'calendar#event',
+      id: 'accepted',
+      status: 'confirmed',
+      summary: 'School meeting',
+      eventType: 'default',
+      start: { dateTime: '2026-09-14T15:00:00-04:00' },
+      end: { dateTime: '2026-09-14T15:30:00-04:00' },
+      attendees: [
+        { email: 'teacher@example.com', displayName: 'Ms. Lee', responseStatus: 'accepted' },
+        { email: 'sam@example.com', self: true, responseStatus: 'needsAction' },
+      ],
+    },
+    {
+      kind: 'calendar#event',
+      id: 'wfh',
+      status: 'confirmed',
+      summary: 'Home',
+      eventType: 'workingLocation',
+      start: { date: '2026-09-14' },
+      end: { date: '2026-09-15' },
+      workingLocationProperties: { type: 'homeOffice', homeOffice: {} },
+    },
+    {
+      kind: 'calendar#event',
+      id: 'focus',
+      status: 'confirmed',
+      summary: 'Focus time',
+      eventType: 'focusTime',
+      start: { dateTime: '2026-09-14T13:00:00-04:00' },
+      end: { dateTime: '2026-09-14T14:00:00-04:00' },
+    },
     { kind: 'calendar#event', id: 'broken', status: 'confirmed', summary: 'Broken', start: {}, end: {} },
   ],
 }
@@ -128,15 +172,16 @@ describe('mapGoogleCalendarList', () => {
 })
 
 describe('mapGoogleEvents', () => {
-  it('maps timed and all-day events to the shared shape, dropping cancelled and unusable ones', () => {
+  it('maps timed and all-day events to the shared shape, dropping cancelled, declined, working-location, focus-time and unusable ones', () => {
     const { events, nextPageToken } = mapGoogleEvents(eventsFixture, TZ)
     expect(nextPageToken).toBe('page-2')
     expect(events).toEqual([
       { title: 'Dentist', startAt: '2026-09-14T13:30:00.000Z', endAt: '2026-09-14T14:30:00.000Z', allDay: false, location: '12 Oak St, Raleigh, NC' },
       { title: 'Teacher workday', startAt: '2026-09-14T04:00:00.000Z', endAt: '2026-09-15T04:00:00.000Z', allDay: true, location: null },
       { title: '(No title)', startAt: '2026-09-14T21:00:00.000Z', endAt: '2026-09-14T22:00:00.000Z', allDay: false, location: null },
+      { title: 'School meeting', startAt: '2026-09-14T19:00:00.000Z', endAt: '2026-09-14T19:30:00.000Z', allDay: false, location: null },
     ])
-    expect(JSON.stringify(events)).not.toMatch(/insurance|meet\.google|office@example/)
+    expect(JSON.stringify(events)).not.toMatch(/insurance|meet\.google|office@example|teacher@example|Ms\. Lee|needsAction/)
   })
 })
 
@@ -168,12 +213,22 @@ describe('classifyGoogleError', () => {
     expect(classifyGoogleError(400, { error: 'invalid_grant' })).toBe('auth_expired')
     expect(classifyGoogleError(401, { error: { code: 401, status: 'UNAUTHENTICATED', errors: [{ reason: 'authError' }] } })).toBe('auth_expired')
     expect(classifyGoogleError(403, { error: { code: 403, errors: [{ reason: 'insufficientPermissions' }] } })).toBe('auth_expired')
-    expect(classifyGoogleError(404, { error: { code: 404, errors: [{ reason: 'notFound' }] } })).toBe('auth_expired')
+    expect(classifyGoogleError(403, { error: { code: 403, errors: [{ reason: 'forbidden' }] } })).toBe('auth_expired')
+    expect(classifyGoogleError(403, { error: { code: 403, errors: [{ reason: 'authError' }] } })).toBe('auth_expired')
+  })
+
+  it('reports a missing calendar as calendar_gone, for that selection only', () => {
+    expect(classifyGoogleError(404, { error: { code: 404, errors: [{ reason: 'notFound' }] } })).toBe('calendar_gone')
+    expect(classifyGoogleError(410, { error: { code: 410, errors: [{ reason: 'deleted' }] } })).toBe('calendar_gone')
   })
 
   it('treats rate limits, server errors and our own misconfiguration as unreachable', () => {
     expect(classifyGoogleError(403, { error: { code: 403, errors: [{ reason: 'rateLimitExceeded' }] } })).toBe('unreachable')
     expect(classifyGoogleError(403, { error: { code: 403, errors: [{ reason: 'userRateLimitExceeded' }] } })).toBe('unreachable')
+    expect(classifyGoogleError(403, { error: { code: 403, errors: [{ reason: 'dailyLimitExceeded' }] } })).toBe('unreachable')
+    expect(classifyGoogleError(403, { error: { code: 403, errors: [{ reason: 'accessNotConfigured' }] } })).toBe('unreachable')
+    expect(classifyGoogleError(403, { error: { code: 403, status: 'PERMISSION_DENIED' } })).toBe('unreachable')
+    expect(classifyGoogleError(403, '<html>Forbidden</html>')).toBe('unreachable')
     expect(classifyGoogleError(429, {})).toBe('unreachable')
     expect(classifyGoogleError(500, 'Internal error')).toBe('unreachable')
     expect(classifyGoogleError(503, null)).toBe('unreachable')
@@ -222,7 +277,7 @@ describe('Google network paths (injected fetch)', () => {
     expect(urls[0]).toMatch(/^https:\/\/www\.googleapis\.com\/calendar\/v3\/users\/me\/calendarList\?/)
   })
 
-  it('lists the day’s events with singleEvents, the window and a minimal field mask', async () => {
+  it('lists the day’s events with singleEvents, a window widened by a day each side, event types and a minimal field mask', async () => {
     const window = householdDayWindow(NOW, TZ)
     let requested = ''
     const events = await listGoogleEventsForDay(
@@ -238,10 +293,26 @@ describe('Google network paths (injected fetch)', () => {
     const url = new URL(requested)
     expect(url.pathname).toBe('/calendar/v3/calendars/abc123%40group.calendar.google.com/events')
     expect(url.searchParams.get('singleEvents')).toBe('true')
-    expect(url.searchParams.get('timeMin')).toBe('2026-09-14T04:00:00.000Z')
-    expect(url.searchParams.get('timeMax')).toBe('2026-09-15T04:00:00.000Z')
-    expect(url.searchParams.get('fields')).not.toMatch(/description|attendees/)
-    expect(events).toHaveLength(3)
+    expect(url.searchParams.get('timeMin')).toBe('2026-09-13T04:00:00.000Z')
+    expect(url.searchParams.get('timeMax')).toBe('2026-09-16T04:00:00.000Z')
+    const fields = url.searchParams.get('fields')!
+    expect(fields).toContain('attendees(self,responseStatus)')
+    expect(fields).toContain('eventType')
+    expect(fields).not.toMatch(/description|email|displayName|hangoutLink|conferenceData|htmlLink/)
+    expect(url.searchParams.getAll('eventTypes')).toContain('default')
+    expect(url.searchParams.getAll('eventTypes')).not.toContain('workingLocation')
+    expect(url.searchParams.getAll('eventTypes')).not.toContain('focusTime')
+    expect(events.map((e) => e.title)).toEqual(['Dentist', 'Teacher workday', '(No title)', 'School meeting'])
+  })
+
+  it('throws calendar_gone for a 404 on one calendar, but not for the calendar list or token', async () => {
+    const window = householdDayWindow(NOW, TZ)
+    const notFound = async () => jsonResponse(404, { error: { code: 404, errors: [{ reason: 'notFound' }] } })
+    expect(await listGoogleEventsForDay(notFound, 'tok', 'gone', window, TZ).catch((e: CalendarProviderError) => e.status)).toBe('calendar_gone')
+    expect(await listGoogleCalendars(notFound, 'tok').catch((e: CalendarProviderError) => e.status)).toBe('unreachable')
+    expect(
+      await refreshGoogleAccessToken(notFound, { clientId: 'c', clientSecret: 's', refreshToken: 'r' }, NOW).catch((e: CalendarProviderError) => e.status),
+    ).toBe('unreachable')
   })
 
   it('throws auth_expired when the events call returns 401', async () => {

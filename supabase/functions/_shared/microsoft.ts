@@ -9,6 +9,7 @@
 import {
   CalendarProviderError,
   MAX_PAGES,
+  connectionLevel,
   dateTimeToUtcMs,
   dateToUtcMs,
   isExpiredGrantError,
@@ -32,19 +33,18 @@ export const MICROSOFT_SCOPES = 'offline_access Calendars.Read'
 const DAY_MS = 86_400_000
 
 /**
- * Whether a failed Microsoft response means the owner must reconnect (`auth_expired`) or it may recover on its own
- * (`unreachable`).
- * - Token endpoint `invalid_grant` / `interaction_required` (expired or revoked refresh token, MFA or consent
- *   required): `auth_expired`.
- * - Graph 401, 403 (access denied) and 404 (calendar removed or unshared — reconnecting refreshes the list):
- *   `auth_expired`.
- * - `invalid_client` / `unauthorized_client` (our credentials are wrong), 429, 5xx, other 4xx, unparseable: `unreachable`.
+ * What a failed Microsoft response means.
+ * - `auth_expired` (the owner must reconnect): token endpoint `invalid_grant` / `interaction_required` (expired or
+ *   revoked refresh token, MFA or consent required), Graph 401 and 403 (access denied).
+ * - `calendar_gone`: 404/410 for one calendar (deleted or unshared); only that selection is affected.
+ * - `unreachable`: `invalid_client` / `unauthorized_client` (our credentials), 429, 5xx, other 4xx, unparseable.
  */
 export function classifyMicrosoftError(status: number, body: unknown): ProviderFailure {
   if (isExpiredGrantError(body)) return 'auth_expired'
   const oauthCode = oauthErrorCode(body)
   if (oauthCode === 'invalid_client' || oauthCode === 'unauthorized_client') return 'unreachable'
-  if (status === 401 || status === 403 || status === 404) return 'auth_expired'
+  if (status === 401 || status === 403) return 'auth_expired'
+  if (status === 404 || status === 410) return 'calendar_gone'
   return 'unreachable'
 }
 
@@ -69,7 +69,8 @@ export function mapMicrosoftCalendars(body: unknown): { calendars: ProviderCalen
 /**
  * Maps a `calendarView` page (requested with `Prefer: outlook.timezone="UTC"`). Timed events read `start.dateTime`
  * in `start.timeZone` (UTC, or any IANA name; a non-IANA name is read as UTC since UTC was requested). All-day events
- * (`isAllDay`) take the date part and place it at midnight in the household zone. Cancelled events are dropped.
+ * (`isAllDay`) take the date part and place it at midnight in the household zone. Cancelled events and events the
+ * owner declined are dropped.
  */
 export function mapMicrosoftEvents(body: unknown, timeZone: string): { events: SourceEvent[]; nextLink: string | null } {
   if (!isRecord(body)) return { events: [], nextLink: null }
@@ -77,6 +78,7 @@ export function mapMicrosoftEvents(body: unknown, timeZone: string): { events: S
   const events: SourceEvent[] = []
   for (const item of items) {
     if (!isRecord(item) || item.isCancelled === true) continue
+    if (isRecord(item.responseStatus) && item.responseStatus.response === 'declined') continue
     const start = isRecord(item.start) ? item.start : {}
     const end = isRecord(item.end) ? item.end : {}
     const allDay = item.isAllDay === true
@@ -148,7 +150,7 @@ export async function listMicrosoftCalendars(fetch: FetchLike, accessToken: stri
   const calendars: ProviderCalendar[] = []
   let url: string | null = `${MICROSOFT_GRAPH_API}/me/calendars?${new URLSearchParams({ $select: 'id,name,isDefaultCalendar', $top: '100' })}`
   for (let page = 0; page < MAX_PAGES && url; page++) {
-    const { body } = await requestJson(fetch, url, { headers: graphHeaders(accessToken) }, classifyMicrosoftError)
+    const { body } = await requestJson(fetch, url, { headers: graphHeaders(accessToken) }, connectionLevel(classifyMicrosoftError))
     const mapped = mapMicrosoftCalendars(body)
     calendars.push(...mapped.calendars)
     url = mapped.nextLink ? assertGraphLink(mapped.nextLink) : null
@@ -156,7 +158,11 @@ export async function listMicrosoftCalendars(fetch: FetchLike, accessToken: stri
   return calendars
 }
 
-/** Events overlapping the household day; `calendarView` expands recurring series into instances. */
+/**
+ * Events around the household day; `calendarView` expands recurring series into instances. The query is widened by
+ * a day on each side so zone and all-day edge cases are never cut off; `mergeDayEvents` clamps to the day. A 404
+ * throws `calendar_gone`.
+ */
 export async function listMicrosoftEventsForDay(
   fetch: FetchLike,
   accessToken: string,
@@ -166,10 +172,10 @@ export async function listMicrosoftEventsForDay(
 ): Promise<SourceEvent[]> {
   const events: SourceEvent[] = []
   const params = new URLSearchParams({
-    startDateTime: window.dayStartUtc.toISOString(),
-    endDateTime: window.dayEndUtc.toISOString(),
-    // Only what Roost shows: never bodies, attendees, organizers or links.
-    $select: 'subject,start,end,isAllDay,isCancelled,location',
+    startDateTime: new Date(window.dayStartUtc.getTime() - DAY_MS).toISOString(),
+    endDateTime: new Date(window.dayEndUtc.getTime() + DAY_MS).toISOString(),
+    // Only what Roost shows, plus the owner's response for filtering: never bodies, attendees, organizers or links.
+    $select: 'subject,start,end,isAllDay,isCancelled,location,responseStatus',
     $orderby: 'start/dateTime',
     $top: '250',
   })

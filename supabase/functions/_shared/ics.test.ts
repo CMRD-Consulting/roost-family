@@ -36,9 +36,22 @@ function calendar(...body: string[]): string {
 }
 
 /** Parses `text` for the household day containing `isoDay` (noon local, so any DST day works). */
-function eventsOn(text: string, isoDay: string, timeZone = TZ) {
+function parseOn(text: string, isoDay: string, timeZone = TZ) {
   const { dayStartUtc, dayEndUtc } = householdDayWindow(new Date(`${isoDay}T16:00:00Z`), timeZone)
   return parseIcsForDay(text, dayStartUtc, dayEndUtc, timeZone)
+}
+
+function eventsOn(text: string, isoDay: string, timeZone = TZ) {
+  const result = parseOn(text, isoDay, timeZone)
+  expect(result.partial).toBe(false)
+  return result.events
+}
+
+/** Parses and returns the events plus the elapsed milliseconds. */
+function timed(text: string, isoDay: string) {
+  const started = performance.now()
+  const result = parseOn(text, isoDay)
+  return { ...result, ms: performance.now() - started }
 }
 
 function titles(events: Array<{ title: string }>): string[] {
@@ -331,19 +344,278 @@ describe('parseIcsForDay: recurrence', () => {
     }
   })
 
-  it('expands a long-running daily series quickly', () => {
+  it('handles DTEND with its own TZID (no VTIMEZONE), for single and recurring events', () => {
+    const text = ics(
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'BEGIN:VEVENT',
+      'UID:cross-zone',
+      'DTSTART;TZID=America/New_York:20260914T090000',
+      'DTEND;TZID=America/Chicago:20260914T090000',
+      'SUMMARY:Flight',
+      'END:VEVENT',
+      'BEGIN:VEVENT',
+      'UID:cross-zone-weekly',
+      'DTSTART;TZID=America/New_York:20260831T180000',
+      'DTEND;TZID=America/Chicago:20260831T180000',
+      'RRULE:FREQ=WEEKLY',
+      'SUMMARY:Weekly flight',
+      'END:VEVENT',
+      'END:VCALENDAR',
+    )
+    expect(eventsOn(text, '2026-09-14')).toMatchObject([
+      { title: 'Flight', startAt: '2026-09-14T13:00:00.000Z', endAt: '2026-09-14T14:00:00.000Z' },
+      { title: 'Weekly flight', startAt: '2026-09-14T22:00:00.000Z', endAt: '2026-09-14T23:00:00.000Z' },
+    ])
+  })
+})
+
+describe('parseIcsForDay: EXDATE and RECURRENCE-ID in a different form than DTSTART', () => {
+  it('honors a UTC EXDATE and a UTC RECURRENCE-ID when DTSTART has an IANA TZID without VTIMEZONE', () => {
+    const text = ics(
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'BEGIN:VEVENT',
+      'UID:standup',
+      'DTSTART;TZID=America/New_York:20260831T090000',
+      'DURATION:PT15M',
+      'RRULE:FREQ=WEEKLY',
+      'EXDATE:20260914T130000Z',
+      'SUMMARY:Standup',
+      'END:VEVENT',
+      'BEGIN:VEVENT',
+      'UID:lesson',
+      'DTSTART;TZID=America/New_York:20260831T150000',
+      'DURATION:PT1H',
+      'RRULE:FREQ=WEEKLY',
+      'SUMMARY:Lesson',
+      'END:VEVENT',
+      'BEGIN:VEVENT',
+      'UID:lesson',
+      'RECURRENCE-ID:20260914T190000Z',
+      'DTSTART;TZID=America/New_York:20260914T170000',
+      'DURATION:PT1H',
+      'SUMMARY:Lesson (moved)',
+      'END:VEVENT',
+      'END:VCALENDAR',
+    )
+    expect(eventsOn(text, '2026-09-14')).toEqual([
+      { title: 'Lesson (moved)', startAt: '2026-09-14T21:00:00.000Z', endAt: '2026-09-14T22:00:00.000Z', allDay: false, location: null },
+    ])
+    expect(titles(eventsOn(text, '2026-09-21'))).toEqual(['Standup', 'Lesson'])
+  })
+
+  it('honors a TZID EXDATE and RECURRENCE-ID (no VTIMEZONE) when DTSTART is UTC', () => {
+    const text = ics(
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'BEGIN:VEVENT',
+      'UID:utc-series',
+      'DTSTART:20260831T130000Z',
+      'DURATION:PT15M',
+      'RRULE:FREQ=WEEKLY',
+      'EXDATE;TZID=America/New_York:20260914T090000',
+      'SUMMARY:UTC standup',
+      'END:VEVENT',
+      'BEGIN:VEVENT',
+      'UID:utc-lesson',
+      'DTSTART:20260831T190000Z',
+      'DURATION:PT1H',
+      'RRULE:FREQ=WEEKLY',
+      'SUMMARY:UTC lesson',
+      'END:VEVENT',
+      'BEGIN:VEVENT',
+      'UID:utc-lesson',
+      'RECURRENCE-ID;TZID=America/New_York:20260914T150000',
+      'DTSTART:20260914T210000Z',
+      'DURATION:PT1H',
+      'SUMMARY:UTC lesson (moved)',
+      'END:VEVENT',
+      'END:VCALENDAR',
+    )
+    expect(titles(eventsOn(text, '2026-09-14'))).toEqual(['UTC lesson (moved)'])
+  })
+})
+
+describe('parseIcsForDay: duplicate UIDs and stray overrides', () => {
+  it('shows every non-recurring VEVENT that shares a UID, and links overrides only to the recurring one', () => {
     const text = calendar(
       'BEGIN:VEVENT',
-      'UID:vitamins',
-      'DTSTART;TZID=America/New_York:20000101T080000',
-      'DURATION:PT5M',
-      'RRULE:FREQ=DAILY',
-      'SUMMARY:Vitamins',
+      'UID:shared',
+      'DTSTART;TZID=America/New_York:20260914T080000',
+      'DURATION:PT30M',
+      'SUMMARY:First copy',
+      'END:VEVENT',
+      'BEGIN:VEVENT',
+      'UID:shared',
+      'DTSTART;TZID=America/New_York:20260914T120000',
+      'DURATION:PT30M',
+      'SUMMARY:Second copy',
+      'END:VEVENT',
+      'BEGIN:VEVENT',
+      'UID:shared',
+      'DTSTART;TZID=America/New_York:20260831T160000',
+      'DURATION:PT1H',
+      'RRULE:FREQ=WEEKLY',
+      'SUMMARY:Series',
+      'END:VEVENT',
+      'BEGIN:VEVENT',
+      'UID:shared',
+      'RECURRENCE-ID;TZID=America/New_York:20260914T160000',
+      'DTSTART;TZID=America/New_York:20260914T170000',
+      'DURATION:PT1H',
+      'SUMMARY:Series (moved)',
+      'END:VEVENT',
+      'BEGIN:VEVENT',
+      'UID:shared',
+      'DTSTART;TZID=America/New_York:20260901T070000',
+      'DURATION:PT1H',
+      'RRULE:FREQ=WEEKLY',
+      'SUMMARY:Second series',
       'END:VEVENT',
     )
-    const started = Date.now()
-    expect(eventsOn(text, '2026-09-14')).toMatchObject([{ title: 'Vitamins', startAt: '2026-09-14T12:00:00.000Z' }])
-    expect(Date.now() - started).toBeLessThan(2000)
+    expect(titles(eventsOn(text, '2026-09-14'))).toEqual(['First copy', 'Second copy', 'Series (moved)'])
+    expect(titles(eventsOn(text, '2026-09-21'))).toEqual(['Series'])
+    expect(titles(eventsOn(text, '2026-09-15'))).toEqual(['Second series'])
+  })
+
+  it('shows an override moved into today whose RECURRENCE-ID is not a generated instance', () => {
+    const text = calendar(
+      'BEGIN:VEVENT',
+      'UID:odd',
+      'DTSTART;TZID=America/New_York:20260831T100000',
+      'DURATION:PT1H',
+      'RRULE:FREQ=WEEKLY;BYDAY=MO',
+      'SUMMARY:Tutoring',
+      'END:VEVENT',
+      'BEGIN:VEVENT',
+      'UID:odd',
+      'RECURRENCE-ID;TZID=America/New_York:20261007T103000',
+      'DTSTART;TZID=America/New_York:20260914T190000',
+      'DURATION:PT1H',
+      'SUMMARY:Tutoring (extra)',
+      'END:VEVENT',
+    )
+    expect(titles(eventsOn(text, '2026-09-14'))).toEqual(['Tutoring', 'Tutoring (extra)'])
+  })
+
+  it('shows an override moved into today after a COUNT series has ended', () => {
+    const text = calendar(
+      'BEGIN:VEVENT',
+      'UID:short',
+      'DTSTART;TZID=America/New_York:20260831T100000',
+      'DURATION:PT1H',
+      'RRULE:FREQ=WEEKLY;COUNT=2',
+      'SUMMARY:Short course',
+      'END:VEVENT',
+      'BEGIN:VEVENT',
+      'UID:short',
+      'RECURRENCE-ID;TZID=America/New_York:20260907T100000',
+      'DTSTART;TZID=America/New_York:20260914T100000',
+      'DURATION:PT1H',
+      'SUMMARY:Short course (make-up)',
+      'END:VEVENT',
+    )
+    expect(titles(eventsOn(text, '2026-09-14'))).toEqual(['Short course (make-up)'])
+    expect(eventsOn(text, '2026-09-07')).toEqual([])
+  })
+})
+
+describe('parseIcsForDay: long-running series', () => {
+  const series = (i: number, tzid: string, start: string, rule: string, duration = 'PT15M') => [
+    'BEGIN:VEVENT',
+    `UID:series-${i}`,
+    `DTSTART;TZID=${tzid}:${start}`,
+    `DURATION:${duration}`,
+    `RRULE:${rule}`,
+    `SUMMARY:Series ${i}`,
+    'END:VEVENT',
+  ]
+  const sixtyDaily = (withVtimezone: boolean) =>
+    ics(
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      ...(withVtimezone ? NEW_YORK_VTIMEZONE : []),
+      ...Array.from({ length: 60 }, (_, i) =>
+        series(i, 'America/New_York', `20200101T${String(6 + Math.floor(i / 5)).padStart(2, '0')}${String(i % 60).padStart(2, '0')}00`, 'FREQ=DAILY'),
+      ).flat(),
+      'END:VCALENDAR',
+    )
+
+  for (const withVtimezone of [false, true]) {
+    it(`returns all of 60 daily series since 2020 quickly (${withVtimezone ? 'with' : 'without'} VTIMEZONE)`, () => {
+      const text = sixtyDaily(withVtimezone)
+      parseOn(text, '2026-09-13') // warm up
+      const { events, partial, ms } = timed(text, '2026-09-14')
+      expect(partial).toBe(false)
+      expect(events).toHaveLength(60)
+      expect(events[0]).toMatchObject({ title: 'Series 0', startAt: '2026-09-14T10:00:00.000Z' })
+      expect(ms).toBeLessThan(500)
+    })
+  }
+
+  it('returns a daily series from 1970 quickly', () => {
+    const text = calendar(...series(1, 'America/New_York', '19700101T080000', 'FREQ=DAILY', 'PT5M'))
+    const { events, partial, ms } = timed(text, '2026-09-14')
+    expect(partial).toBe(false)
+    expect(events).toMatchObject([{ startAt: '2026-09-14T12:00:00.000Z' }])
+    expect(ms).toBeLessThan(100)
+  })
+
+  it("returns today's instances of an hourly series from 2023", () => {
+    const text = calendar(...series(1, 'America/New_York', '20230101T000000', 'FREQ=HOURLY', 'PT30M'))
+    const { events, partial, ms } = timed(text, '2026-09-14')
+    expect(partial).toBe(false)
+    expect(events).toHaveLength(24)
+    expect(events[0]!.startAt).toBe('2026-09-14T04:00:00.000Z')
+    expect(events[23]!.startAt).toBe('2026-09-15T03:00:00.000Z')
+    expect(ms).toBeLessThan(100)
+  })
+
+  it('keeps BYDAY, BYMONTHDAY, BYSETPOS, INTERVAL and leap-day anchors when skipping ahead', () => {
+    const text = calendar(
+      // Every other week on Mon/Wed/Fri from Mon 2015-01-05: 2026-09-14 is 610 weeks later (even).
+      ...series(1, 'America/New_York', '20150105T070000', 'FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE,FR'),
+      // Every other week from Mon 2015-01-12: odd weeks, so not on 2026-09-14.
+      ...series(2, 'America/New_York', '20150112T070000', 'FREQ=WEEKLY;INTERVAL=2;BYDAY=MO'),
+      // Second Tuesday monthly: 2026-09-08.
+      ...series(3, 'America/New_York', '20100112T080000', 'FREQ=MONTHLY;BYDAY=2TU'),
+      // Monthly on the 31st: months without one are skipped.
+      ...series(4, 'America/New_York', '20190131T090000', 'FREQ=MONTHLY'),
+      // Last weekday of the month.
+      ...series(5, 'America/New_York', '20100129T100000', 'FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1'),
+      // Every 3 days from 2000-01-01: 2026-09-14 is 9753 days later (multiple of 3).
+      ...series(6, 'America/New_York', '20000101T110000', 'FREQ=DAILY;INTERVAL=3'),
+      // Leap day yearly.
+      ...series(7, 'America/New_York', '20000229T120000', 'FREQ=YEARLY'),
+    )
+    expect(titles(eventsOn(text, '2026-09-14'))).toEqual(['Series 1', 'Series 6'])
+    expect(titles(eventsOn(text, '2026-09-16'))).toEqual(['Series 1'])
+    expect(titles(eventsOn(text, '2026-09-21'))).toEqual(['Series 2'])
+    expect(titles(eventsOn(text, '2026-09-08'))).toEqual(['Series 3', 'Series 6'])
+    expect(titles(eventsOn(text, '2026-08-31'))).toEqual(['Series 1', 'Series 4', 'Series 5'])
+    expect(titles(eventsOn(text, '2026-09-30'))).toEqual(['Series 1', 'Series 5'])
+    expect(titles(eventsOn(text, '2026-10-31'))).toEqual(['Series 4'])
+    expect(titles(eventsOn(text, '2028-02-29'))).toContain('Series 7')
+    expect(titles(eventsOn(text, '2027-02-28'))).not.toContain('Series 7')
+  })
+
+  it('iterates COUNT series from the start and still finds today', () => {
+    const text = calendar(...series(1, 'America/New_York', '20000101T080000', 'FREQ=DAILY;COUNT=20000', 'PT5M'))
+    const { events, partial, ms } = timed(text, '2026-09-14')
+    expect(partial).toBe(false)
+    expect(events).toHaveLength(1)
+    expect(ms).toBeLessThan(500)
+  })
+
+  it('reports partial results instead of silently dropping a series that exceeds the budget', () => {
+    const text = calendar(
+      ...series(1, 'America/New_York', '20000101T000000', 'FREQ=MINUTELY;COUNT=50000000', 'PT1M'),
+      ...series(2, 'America/New_York', '20260914T090000', 'FREQ=DAILY'),
+    )
+    const { events, partial } = parseOn(text, '2026-09-14')
+    expect(partial).toBe(true)
+    expect(titles(events)).toContain('Series 2')
   })
 })
 

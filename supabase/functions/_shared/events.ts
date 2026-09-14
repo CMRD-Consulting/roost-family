@@ -60,7 +60,8 @@ export function isValidTimeZone(timeZone: string): boolean {
 
 const formatters = new Map<string, Intl.DateTimeFormat>()
 
-function wallTimeAt(utcMs: number, timeZone: string): WallTime {
+/** The wall-clock reading in `timeZone` at the instant `utcMs`. */
+export function wallTimeAt(utcMs: number, timeZone: string): WallTime {
   let formatter = formatters.get(timeZone)
   if (!formatter) {
     formatter = new Intl.DateTimeFormat('en-US', {

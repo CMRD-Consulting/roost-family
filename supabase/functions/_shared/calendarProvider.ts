@@ -9,7 +9,12 @@ import { isValidTimeZone, zonedWallTimeToUtc } from './events.ts'
 
 /** A connection's health as shown to the household. `auth_expired` asks the owner to reconnect. */
 export type ConnectionStatus = 'ok' | 'auth_expired' | 'unreachable'
-export type ProviderFailure = Exclude<ConnectionStatus, 'ok'>
+/**
+ * Why a provider call failed. `calendar_gone` (the calendar was deleted or unshared) applies only to the selection
+ * whose events were requested; the connection's other calendars are unaffected.
+ */
+export type ProviderFailure = Exclude<ConnectionStatus, 'ok'> | 'calendar_gone'
+export type Classifier = (status: number, body: unknown) => ProviderFailure
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>
 
@@ -65,12 +70,23 @@ async function readBody(res: Response): Promise<unknown> {
   }
 }
 
+/**
+ * For calls about the whole connection (token, calendar list), where "not found" cannot mean one calendar went
+ * away: `calendar_gone` becomes `unreachable`.
+ */
+export function connectionLevel(classify: Classifier): Classifier {
+  return (status, body) => {
+    const failure = classify(status, body)
+    return failure === 'calendar_gone' ? 'unreachable' : failure
+  }
+}
+
 /** Performs a request and returns the parsed body, throwing `CalendarProviderError` on network or HTTP failure. */
 export async function requestJson(
   fetch: FetchLike,
   url: string,
   init: RequestInit,
-  classify: (status: number, body: unknown) => ProviderFailure,
+  classify: Classifier,
 ): Promise<{ status: number; body: unknown }> {
   let res: Response
   try {
@@ -92,14 +108,9 @@ export async function requestJson(
  * Reads an OAuth 2.0 token endpoint response (refresh or authorization-code grant). Failures throw with the
  * provider's classification; a 2xx without an access token is treated as `unreachable`.
  */
-export function parseTokenResponse(
-  status: number,
-  body: unknown,
-  now: Date,
-  classify: (status: number, body: unknown) => ProviderFailure,
-): AccessToken {
+export function parseTokenResponse(status: number, body: unknown, now: Date, classify: Classifier): AccessToken {
   if (status < 200 || status >= 300) {
-    throw new CalendarProviderError(classify(status, body), `token request failed (HTTP ${status})`)
+    throw new CalendarProviderError(connectionLevel(classify)(status, body), `token request failed (HTTP ${status})`)
   }
   const accessToken = isRecord(body) ? stringOrNull(body.access_token) : null
   if (!isRecord(body) || !accessToken) throw new CalendarProviderError('unreachable', 'token response has no access_token')

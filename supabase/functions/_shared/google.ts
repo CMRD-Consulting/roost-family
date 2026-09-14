@@ -8,6 +8,7 @@
 import {
   CalendarProviderError,
   MAX_PAGES,
+  connectionLevel,
   dateTimeToUtcMs,
   dateToUtcMs,
   isExpiredGrantError,
@@ -30,8 +31,11 @@ export const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.r
 
 const DAY_MS = 86_400_000
 
-/** Google API error reasons that are temporary, not a lost grant. */
-const TRANSIENT_REASONS = new Set(['rateLimitExceeded', 'userRateLimitExceeded', 'quotaExceeded', 'backendError'])
+/** 403 reasons that reconnecting fixes. Every other 403 (quotas, rate limits, API not enabled) is `unreachable`. */
+const RECONNECT_REASONS = new Set(['insufficientPermissions', 'forbidden', 'authError'])
+
+/** Event types shown on the Today panel; `workingLocation` and `focusTime` are left out. */
+const SHOWN_EVENT_TYPES = ['default', 'birthday', 'fromGmail', 'outOfOffice']
 
 function googleErrorReasons(body: unknown): string[] {
   if (!isRecord(body) || !isRecord(body.error) || !Array.isArray(body.error.errors)) return []
@@ -39,21 +43,26 @@ function googleErrorReasons(body: unknown): string[] {
 }
 
 /**
- * Whether a failed Google response means the owner must reconnect (`auth_expired`) or it may recover on its own
- * (`unreachable`).
- * - Token endpoint `invalid_grant` (revoked, expired, or a Testing-status app's 7-day token): `auth_expired`.
- * - 401 from the API, 403 other than rate limits (e.g. `insufficientPermissions`), and 404 (the calendar was
- *   removed or unshared — reconnecting refreshes the calendar list): `auth_expired`.
- * - `invalid_client` / `unauthorized_client` (our credentials are wrong; reconnecting cannot help), 429, 5xx,
- *   other 4xx and anything unparseable: `unreachable`.
+ * What a failed Google response means.
+ * - `auth_expired` (the owner must reconnect): token endpoint `invalid_grant` (revoked, expired, or a Testing-status
+ *   app's 7-day token), API 401, and 403 with `insufficientPermissions`, `forbidden` or `authError`.
+ * - `calendar_gone`: 404/410 for one calendar (deleted or unshared); only that selection is affected.
+ * - `unreachable`: `invalid_client` / `unauthorized_client` (our credentials; reconnecting cannot help), any other 403
+ *   (`dailyLimitExceeded`, `rateLimitExceeded`, `accessNotConfigured`, unparseable), 429, 5xx and everything else.
  */
 export function classifyGoogleError(status: number, body: unknown): ProviderFailure {
   if (isExpiredGrantError(body)) return 'auth_expired'
   const oauthCode = oauthErrorCode(body)
   if (oauthCode === 'invalid_client' || oauthCode === 'unauthorized_client') return 'unreachable'
-  if (status === 401 || status === 404) return 'auth_expired'
-  if (status === 403) return googleErrorReasons(body).some((r) => TRANSIENT_REASONS.has(r)) ? 'unreachable' : 'auth_expired'
+  if (status === 401) return 'auth_expired'
+  if (status === 403) return googleErrorReasons(body).some((r) => RECONNECT_REASONS.has(r)) ? 'auth_expired' : 'unreachable'
+  if (status === 404 || status === 410) return 'calendar_gone'
   return 'unreachable'
+}
+
+/** True when the calendar owner declined the event. Attendee data is read for this check only, never copied. */
+function selfDeclined(attendees: unknown): boolean {
+  return Array.isArray(attendees) && attendees.some((a) => isRecord(a) && a.self === true && a.responseStatus === 'declined')
 }
 
 export function parseGoogleTokenResponse(status: number, body: unknown, now: Date): AccessToken {
@@ -81,7 +90,8 @@ export function mapGoogleCalendarList(body: unknown): { calendars: ProviderCalen
 /**
  * Maps an `events.list` page (requested with `singleEvents=true`, so recurring events arrive as instances).
  * All-day events use `date` values (end exclusive) placed at midnight in the household zone; timed events use
- * `dateTime` with its offset. Cancelled instances and events without usable times are dropped.
+ * `dateTime` with its offset. Cancelled instances, events the owner declined, working-location and focus-time
+ * blocks, and events without usable times are dropped.
  */
 export function mapGoogleEvents(body: unknown, timeZone: string): { events: SourceEvent[]; nextPageToken: string | null } {
   if (!isRecord(body)) return { events: [], nextPageToken: null }
@@ -89,6 +99,8 @@ export function mapGoogleEvents(body: unknown, timeZone: string): { events: Sour
   const events: SourceEvent[] = []
   for (const item of items) {
     if (!isRecord(item) || item.status === 'cancelled') continue
+    if (item.eventType === 'workingLocation' || item.eventType === 'focusTime') continue
+    if (selfDeclined(item.attendees)) continue
     const start = isRecord(item.start) ? item.start : {}
     const end = isRecord(item.end) ? item.end : {}
     const allDay = typeof start.date === 'string'
@@ -156,7 +168,7 @@ export async function listGoogleCalendars(fetch: FetchLike, accessToken: string)
       fetch,
       `${GOOGLE_CALENDAR_API}/users/me/calendarList?${params}`,
       { headers: authHeaders(accessToken) },
-      classifyGoogleError,
+      connectionLevel(classifyGoogleError),
     )
     const mapped = mapGoogleCalendarList(body)
     calendars.push(...mapped.calendars)
@@ -166,7 +178,11 @@ export async function listGoogleCalendars(fetch: FetchLike, accessToken: string)
   return calendars
 }
 
-/** Events overlapping the household day (Google's `timeMin` filters by end, `timeMax` by start). */
+/**
+ * Events around the household day (Google's `timeMin` filters by end, `timeMax` by start). The query is widened by a
+ * day on each side so zone and all-day edge cases are never cut off; `mergeDayEvents` clamps to the day. A 404 throws
+ * `calendar_gone`.
+ */
 export async function listGoogleEventsForDay(
   fetch: FetchLike,
   accessToken: string,
@@ -180,12 +196,14 @@ export async function listGoogleEventsForDay(
     const params = new URLSearchParams({
       singleEvents: 'true',
       orderBy: 'startTime',
-      timeMin: window.dayStartUtc.toISOString(),
-      timeMax: window.dayEndUtc.toISOString(),
+      timeMin: new Date(window.dayStartUtc.getTime() - DAY_MS).toISOString(),
+      timeMax: new Date(window.dayEndUtc.getTime() + DAY_MS).toISOString(),
       maxResults: '250',
-      // Only what Roost shows: never descriptions, attendees, links or conference data.
-      fields: 'items(status,summary,location,start,end),nextPageToken',
+      // Only what Roost shows, plus the owner's own response and the event type for filtering: never descriptions,
+      // other attendees' details, links or conference data.
+      fields: 'items(status,summary,location,start,end,eventType,attendees(self,responseStatus)),nextPageToken',
     })
+    for (const type of SHOWN_EVENT_TYPES) params.append('eventTypes', type)
     if (pageToken) params.set('pageToken', pageToken)
     const { body } = await requestJson(
       fetch,
