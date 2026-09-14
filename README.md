@@ -40,14 +40,44 @@ pnpm dev               # http://localhost:5173
   `apple-touch-icon-180x180.png`, `favicon.ico`) are generated from `public/logo.svg` with `pnpm icons`
   (config: `pwa-assets.config.ts`).
 - A new version waits and is applied only at a safe moment (spec §5.8, `src/app/appUpdates.ts`): during
-  Night Mode, or after 5 minutes without a touch outside Kids' Corner, never while a visual timer runs.
+  Night Mode, or after 5 minutes without a touch outside Kids' Corner, never while a visual timer runs or photos
+  upload. A critical build (`ROOST_CRITICAL=1 pnpm build` writes `critical: true` to `version.json`) skips those waits
+  but still needs a minute without a touch or key press, no open sheet or dialog, no Settings PIN session and no adult
+  sign-in.
+- Public pages (`/list/:token`, `/manage`, `/manage/export/:id`) never register the service worker when the app is
+  opened on them, so a shopper's phone doesn't precache the whole app, and never reload themselves for an update.
+
+## Hosting (production)
+
+The app is a static build (`dist/`). There is no hosting config in the repo; configure the host to send:
+
+| Header | Paths | Why |
+|---|---|---|
+| `Referrer-Policy: strict-origin` | all | the Take list token (`/list/<token>`) and export ids live in the URL path; `index.html` also sets `<meta name="referrer" content="strict-origin">`, but the header covers responses before the page parses |
+| `Cache-Control: no-store` | `/list/*` HTML (the SPA fallback served for it) | a shared or back-forward cache never keeps a page whose URL is the list's only credential |
+| `Cache-Control: no-store` | `/version.json` | the update check must never see a stale copy (spec §5.8) |
+
+Error tracking (`VITE_SENTRY_DSN`) replaces path tokens with `/list/[token]` and `/manage/export/[id]` in every event
+and breadcrumb, names events by route pattern, and sends no console arguments or request bodies
+(`src/app/errorTracking.ts`).
+
+## Weather
+
+The `weather` Edge Function (spec §5.6) refreshes a household's National Weather Service forecast when the cached row
+is older than 30 minutes, and asks NWS at most once per household every 5 minutes, whether the last attempt succeeded
+or failed (`household_weather.attempted_at`). Forecast URLs from NWS are used only if they are `https://api.weather.gov`.
+
+| Variable | Notes |
+|---|---|
+| `NWS_CONTACT` | contact NWS can reach about this app's traffic, sent in the User-Agent as `RoostFamily/1.0 (roost.cmrd.dev; <contact>)`: set it to an operator email address or URL in production. Default `roost.cmrd.dev` |
 
 ## Scheduled jobs (production)
 
 Deleted households, deleted photo files and expired exports are erased only by scheduled jobs (spec §11.3; launch gate
 §15). SQL can't erase Storage file bytes, so `delete_photo`, the household purge and export expiry leave the files
 (unreadable at once) for the `storage-sweep` Edge Function, which erases them through the Storage API. The daily purge
-also fails exports stuck pending for 15 minutes and deletes export rows older than 7 days.
+also fails exports stuck pending for 15 minutes, deletes export rows older than 7 days and deletes Take list links that
+ended (expired or were revoked) more than 7 days ago.
 
 1. Enable **pg_cron** and **pg_net** (Dashboard → Database → Extensions).
 2. Purge households deleted more than 30 days ago, daily (SQL editor, as `postgres`):
@@ -70,7 +100,8 @@ also fails exports stuck pending for 15 minutes and deletes export rows older th
        timeout_milliseconds := 60000)
    $$);
    ```
-   It erases files with no `photos` row older than 60 minutes and every file of a household that no longer exists,
+   It erases files with no `photos` row older than 60 minutes (a Settings thumbnail, `<photo>.thumb.jpg`, goes with its
+   photo) and every file of a household that no longer exists,
    then export ZIPs whose `household_exports` row is failed, expired (24 hours after it became ready) or gone, and
    returns counts (`scanned`, `kept`, `removedOrphans`, `removedGoneHousehold`, `skipped`, `failed`, and
    `exports: { scanned, kept, removedExpired, removedUnrecorded, skipped, failed }`); pg_net keeps

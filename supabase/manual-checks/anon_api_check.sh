@@ -53,6 +53,15 @@ status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/rest/v1/rpc/svc_ma
   -d '{"p_export_id":"00000000-0000-0000-0000-000000000000","p_storage_path":"x"}')
 check "anon calls svc_mark_export_ready" 401 "$status"
 
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/rest/v1/rpc/svc_claim_weather_attempt" \
+  -H "apikey: $KEY" -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d "{\"p_household_id\":\"$HOUSEHOLD\"}")
+check "anon calls svc_claim_weather_attempt" 401 "$status"
+
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/storage/v1/object/household-photos/$HOUSEHOLD/00000000-0000-0000-0000-000000000000.thumb.jpg" \
+  -H "apikey: $KEY" -H "Authorization: Bearer $KEY" -H 'Content-Type: image/jpeg' --data-binary 'x')
+check "anon uploads a photo thumbnail (refused)" 400/403 "$([[ "$status" == 400 || "$status" == 403 ]] && echo 400/403 || echo "$status")"
+
 status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/storage/v1/object/list/exports" \
   -H "apikey: $KEY" -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' -d "{\"prefix\":\"$HOUSEHOLD\"}")
 body=$(curl -s -X POST "$API/storage/v1/object/list/exports" \
