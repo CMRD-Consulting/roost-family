@@ -1,0 +1,176 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { flushPromises, mount } from '@vue/test-utils'
+import RChips from './RChips.vue'
+import RTimeStepper from './RTimeStepper.vue'
+import RPinPad from './RPinPad.vue'
+import RSheet from './RSheet.vue'
+import RInput from './RInput.vue'
+import type { Member } from '@/data/snapshot'
+
+/** Mount a `defineModel`-based component, wiring modelValue <-> update:modelValue like a real v-model. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mountModel(Component: any, modelValue: unknown, props: Record<string, unknown> = {}): any {
+  const wrapper: any = mount(Component, {
+    props: {
+      modelValue,
+      'onUpdate:modelValue': (v: unknown) => wrapper.setProps({ modelValue: v }),
+      ...props,
+    },
+  })
+  return wrapper
+}
+
+describe('RChips', () => {
+  const options = [
+    { value: 'a', label: 'A' },
+    { value: 'b', label: 'B' },
+    { value: 'c', label: 'C', disabled: true },
+    { value: 'd', label: 'D' },
+  ]
+
+  it('is a radiogroup with radio chips reflecting the selection', () => {
+    const w = mountModel(RChips, null, { options, label: 'Type' })
+    expect(w.get('[role="radiogroup"]').attributes('aria-label')).toBe('Type')
+    const radios = w.findAll('[role="radio"]')
+    expect(radios).toHaveLength(4)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect(radios.every((r: any) => r.attributes('aria-checked') === 'false')).toBe(true)
+  })
+
+  it('selects a chip on click and marks it checked', async () => {
+    const w = mountModel(RChips, null, { options, label: 'Type' })
+    await w.findAll('[role="radio"]')[0]!.trigger('click')
+    expect(w.props('modelValue')).toBe('a')
+    expect(w.findAll('[role="radio"]')[0]!.attributes('aria-checked')).toBe('true')
+  })
+
+  it('ignores clicks on a disabled chip', async () => {
+    const w = mountModel(RChips, 'a', { options, label: 'Type' })
+    await w.findAll('[role="radio"]')[2]!.trigger('click')
+    expect(w.props('modelValue')).toBe('a')
+  })
+
+  it('moves selection with arrow keys, skipping disabled options', async () => {
+    const w = mountModel(RChips, 'a', { options, label: 'Type' })
+    await w.findAll('[role="radio"]')[0]!.trigger('keydown', { key: 'ArrowRight' })
+    expect(w.props('modelValue')).toBe('b')
+    // From 'b', the next enabled option skips disabled 'c' and lands on 'd'.
+    await w.findAll('[role="radio"]')[1]!.trigger('keydown', { key: 'ArrowRight' })
+    expect(w.props('modelValue')).toBe('d')
+    await w.findAll('[role="radio"]')[3]!.trigger('keydown', { key: 'ArrowLeft' })
+    expect(w.props('modelValue')).toBe('b')
+  })
+})
+
+describe('RTimeStepper', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-09-14T19:00:00.000Z'))
+  })
+  afterEach(() => vi.useRealTimers())
+
+  const now = '2026-09-14T19:00:00.000Z'
+  const min = '2026-09-14T18:50:00.000Z' // now - 10 min
+
+  it('shows the clock time and "now" at the max bound, with +5 disabled', () => {
+    const w = mountModel(RTimeStepper, now, { min, max: now, timeZone: 'UTC' })
+    expect(w.text()).toContain('now')
+    const buttons = w.findAll('button')
+    expect(buttons[1]!.attributes('disabled')).toBeDefined() // +5 min
+    expect(buttons[0]!.attributes('disabled')).toBeUndefined() // -5 min
+  })
+
+  it('steps by 5 minutes, clamps at the bounds, and disables the exhausted button', async () => {
+    const w = mountModel(RTimeStepper, now, { min, max: now, timeZone: 'UTC' })
+    const buttons = w.findAll('button')
+    await buttons[0]!.trigger('click') // -5 min
+    expect(w.props('modelValue')).toBe('2026-09-14T18:55:00.000Z')
+    expect(w.text()).toContain('5m ago')
+
+    await w.findAll('button')[0]!.trigger('click') // -5 min again -> hits min
+    expect(w.props('modelValue')).toBe(min)
+    expect(w.findAll('button')[0]!.attributes('disabled')).toBeDefined()
+
+    // Further clicks stay clamped at min.
+    await w.findAll('button')[0]!.trigger('click')
+    expect(w.props('modelValue')).toBe(min)
+  })
+})
+
+describe('RPinPad', () => {
+  const members: Member[] = [
+    { id: 'm1', displayName: 'Sam', color: '#653437', role: 'owner' },
+    { id: 'm2', displayName: 'Alex', color: '#2C7F8C', role: 'adult' },
+  ]
+
+  it('walks the wrong-then-right PIN flow with a fake verify', async () => {
+    const verify = vi.fn(async (membershipId: string, pin: string) => membershipId === 'm1' && pin === '1234')
+    const w = mount(RPinPad, { props: { members, verify } })
+
+    expect(w.text()).toContain('Sam')
+    expect(w.text()).toContain('Alex')
+    await w.findAll('button')[0]!.trigger('click') // pick Sam
+
+    const digit = (label: string) => w.findAll('button').find((b) => b.text() === label)!
+
+    await digit('1').trigger('click')
+    await digit('1').trigger('click')
+    await digit('1').trigger('click')
+    await digit('1').trigger('click')
+    await flushPromises()
+
+    expect(verify).toHaveBeenCalledWith('m1', '1111')
+    expect(w.text()).toContain("That PIN didn't match.")
+    expect(w.emitted('verified')).toBeUndefined()
+
+    await digit('1').trigger('click')
+    await digit('2').trigger('click')
+    await digit('3').trigger('click')
+    await digit('4').trigger('click')
+    await flushPromises()
+
+    expect(verify).toHaveBeenCalledWith('m1', '1234')
+    expect(w.emitted('verified')).toEqual([[{ membershipId: 'm1', pin: '1234' }]])
+  })
+
+  it('emits cancel', async () => {
+    const w = mount(RPinPad, { props: { members, verify: async () => true } })
+    await w.findAll('button').find((b) => b.text() === 'Cancel')!.trigger('click')
+    expect(w.emitted('cancel')).toHaveLength(1)
+  })
+})
+
+describe('RSheet', () => {
+  it('renders a dialog with aria-modal and closes on Escape', async () => {
+    const w = mount(RSheet, { props: { title: 'Log feeding', open: true } })
+    const dialog = w.get('[role="dialog"]')
+    expect(dialog.attributes('aria-modal')).toBe('true')
+    expect(dialog.attributes('aria-labelledby')).toBeTruthy()
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await w.vm.$nextTick()
+    expect(w.emitted('close')).toHaveLength(1)
+    w.unmount()
+  })
+
+  it('closes when the close button is tapped', async () => {
+    const w = mount(RSheet, { props: { title: 'Log feeding', open: true } })
+    await w.get('button[aria-label="Close"]').trigger('click')
+    expect(w.emitted('close')).toHaveLength(1)
+    w.unmount()
+  })
+
+  it('renders nothing when closed', () => {
+    const w = mount(RSheet, { props: { title: 'Log feeding', open: false } })
+    expect(w.find('[role="dialog"]').exists()).toBe(false)
+  })
+})
+
+describe('RInput', () => {
+  it('associates the label with the input via a generated id', () => {
+    const w = mountModel(RInput, '', { label: 'Note' })
+    const input = w.get('input').element as HTMLInputElement
+    expect(input.labels).toHaveLength(1)
+    expect(input.labels![0]!.textContent).toBe('Note')
+  })
+})
