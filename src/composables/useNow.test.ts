@@ -65,5 +65,6 @@ describe('useNow', () => {
 
     expect(now!.value.getTime()).toBe(before)
     expect(removeSpy).toHaveBeenCalledWith('visibilitychange', expect.any(Function))
+    removeSpy.mockRestore()
   })
 })
