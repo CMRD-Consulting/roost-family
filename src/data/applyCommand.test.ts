@@ -25,7 +25,7 @@ function expectIdempotent(snapshot = base, cmd: LogCommand) {
 
 describe('applyCommand', () => {
   describe('sleep.start', () => {
-    const entry = { id: 'new-sleep', childId: ivy.id, startAt: now.toISOString(), endAt: null, type: 'nap' as const }
+    const entry = { id: 'new-sleep', childId: ivy.id, startAt: now.toISOString(), endAt: null, type: 'nap' as const, sitterSessionId: null }
     const cmd: LogCommand = { kind: 'sleep.start', householdId: base.household.id, entry, attribution }
 
     it('appends the entry without mutating the input', () => {
@@ -41,7 +41,7 @@ describe('applyCommand', () => {
   })
 
   describe('sleep.end', () => {
-    const open = { id: 'open-sleep', childId: theo.id, startAt: now.toISOString(), endAt: null, type: 'nap' as const }
+    const open = { id: 'open-sleep', childId: theo.id, startAt: now.toISOString(), endAt: null, type: 'nap' as const, sitterSessionId: null }
     const withOpen = applyCommand(base, { kind: 'sleep.start', householdId: base.household.id, entry: open, attribution }, now)
 
     it('sets endAt on the matching entry', () => {
@@ -82,7 +82,7 @@ describe('applyCommand', () => {
 
   describe('feeding.add / sticker.add / diaper.add', () => {
     it('feeding.add appends and is idempotent', () => {
-      const entry = { id: 'new-feed', childId: ivy.id, at: now.toISOString(), type: 'milk' as const, amount: '4 oz', note: null }
+      const entry = { id: 'new-feed', childId: ivy.id, at: now.toISOString(), type: 'milk' as const, amount: '4 oz', note: null, sitterSessionId: null }
       const cmd: LogCommand = { kind: 'feeding.add', householdId: base.household.id, entry, attribution }
       const next = applyCommand(base, cmd, now)
       expect(next.feedings).toContainEqual(entry)
@@ -90,7 +90,7 @@ describe('applyCommand', () => {
     })
 
     it('sticker.add appends and is idempotent', () => {
-      const entry = { id: 'new-sticker', childId: ivy.id, categoryId: base.stickerCategories[0]!.id, at: now.toISOString() }
+      const entry = { id: 'new-sticker', childId: ivy.id, categoryId: base.stickerCategories[0]!.id, at: now.toISOString(), sitterSessionId: null }
       const cmd: LogCommand = { kind: 'sticker.add', householdId: base.household.id, entry, attribution }
       const next = applyCommand(base, cmd, now)
       expect(next.stickers).toContainEqual(entry)
@@ -98,11 +98,32 @@ describe('applyCommand', () => {
     })
 
     it('diaper.add appends and is idempotent', () => {
-      const entry = { id: 'new-diaper', childId: theo.id, at: now.toISOString(), kind: 'wet' as const }
+      const entry = { id: 'new-diaper', childId: theo.id, at: now.toISOString(), kind: 'wet' as const, sitterSessionId: null }
       const cmd: LogCommand = { kind: 'diaper.add', householdId: base.household.id, entry, attribution }
       const next = applyCommand(base, cmd, now)
       expect(next.diapers).toContainEqual(entry)
       expectIdempotent(base, cmd)
+    })
+
+    it("entries take their sitter session from the command's attribution", () => {
+      const sitter = { ...attribution, loggedByMembershipId: null, sitterSessionId: 'sitter-1', loggedByName: 'Jess (sitter)' }
+      const h = base.household.id
+      let next = applyCommand(base, { kind: 'feeding.add', householdId: h, entry: { id: 'sf', childId: ivy.id, at: now.toISOString(), type: 'milk', amount: null, note: null, sitterSessionId: null }, attribution: sitter }, now)
+      next = applyCommand(next, { kind: 'sticker.add', householdId: h, entry: { id: 'ss', childId: ivy.id, categoryId: base.stickerCategories[0]!.id, at: now.toISOString(), sitterSessionId: null }, attribution: sitter }, now)
+      next = applyCommand(next, { kind: 'diaper.add', householdId: h, entry: { id: 'sd', childId: theo.id, at: now.toISOString(), kind: 'wet', sitterSessionId: null }, attribution: sitter }, now)
+      next = applyCommand(next, { kind: 'sleep.start', householdId: h, entry: { id: 'sl', childId: theo.id, startAt: now.toISOString(), endAt: null, type: 'nap', sitterSessionId: null }, attribution: sitter }, now)
+      next = applyCommand(next, {
+        kind: 'dose.add', householdId: h, attribution: sitter,
+        entry: {
+          id: 'sdo', childId: theo.id, medicineId: base.medicines[0]!.id, at: now.toISOString(), loggedByName: null, loggedOffline: false,
+          voidedAt: null, conflictAcknowledgedAt: null, createdAt: '', note: null, warningsConfirmed: [], sitterSessionId: null,
+        },
+      }, now)
+      expect(next.feedings.find((e) => e.id === 'sf')?.sitterSessionId).toBe('sitter-1')
+      expect(next.stickers.find((e) => e.id === 'ss')?.sitterSessionId).toBe('sitter-1')
+      expect(next.diapers.find((e) => e.id === 'sd')?.sitterSessionId).toBe('sitter-1')
+      expect(next.sleeps.find((e) => e.id === 'sl')?.sitterSessionId).toBe('sitter-1')
+      expect(next.doses.find((e) => e.id === 'sdo')?.sitterSessionId).toBe('sitter-1')
     })
   })
 
@@ -111,7 +132,7 @@ describe('applyCommand', () => {
       const entry = {
         id: 'new-dose', childId: theo.id, medicineId: base.medicines[0]!.id, at: now.toISOString(),
         loggedByName: null, loggedOffline: false, voidedAt: null, conflictAcknowledgedAt: null,
-        createdAt: '', note: null, warningsConfirmed: [],
+        createdAt: '', note: null, warningsConfirmed: [], sitterSessionId: null,
       }
       const cmd: LogCommand = { kind: 'dose.add', householdId: base.household.id, entry, attribution }
       const next = applyCommand(base, cmd, now)
@@ -123,7 +144,7 @@ describe('applyCommand', () => {
       const entry = {
         id: 'new-dose-2', childId: theo.id, medicineId: base.medicines[0]!.id, at: now.toISOString(),
         loggedByName: 'Alex', loggedOffline: false, voidedAt: null, conflictAcknowledgedAt: null,
-        createdAt: '2026-09-14T18:00:00.000Z', note: null, warningsConfirmed: [],
+        createdAt: '2026-09-14T18:00:00.000Z', note: null, warningsConfirmed: [], sitterSessionId: null,
       }
       const cmd: LogCommand = { kind: 'dose.add', householdId: base.household.id, entry, attribution }
       const next = applyCommand(base, cmd, now)
@@ -179,7 +200,7 @@ describe('applyCommand', () => {
     })
 
     it('removes a diaper entry', () => {
-      const diaperEntry = { id: 'diaper-x', childId: theo.id, at: now.toISOString(), kind: 'wet' as const }
+      const diaperEntry = { id: 'diaper-x', childId: theo.id, at: now.toISOString(), kind: 'wet' as const, sitterSessionId: null }
       const withDiaper = applyCommand(base, { kind: 'diaper.add', householdId: base.household.id, entry: diaperEntry, attribution }, now)
       const cmd: LogCommand = { kind: 'entry.delete', householdId: base.household.id, table: 'diaper_entries', entryId: 'diaper-x' }
       const next = applyCommand(withDiaper, cmd, now)

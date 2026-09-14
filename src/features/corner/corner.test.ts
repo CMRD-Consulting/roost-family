@@ -356,7 +356,7 @@ describe("Kids' Corner (demo source)", () => {
     it('shows up to five stars, then "+N"', async () => {
       mutateDemo((s) => ({
         ...s,
-        stickers: Array.from({ length: 7 }, (_, i) => ({ id: `s${i}`, childId: IVY, categoryId: s.stickerCategories[0]!.id, at: '2026-09-14T14:00:00Z' })),
+        stickers: Array.from({ length: 7 }, (_, i) => ({ id: `s${i}`, childId: IVY, categoryId: s.stickerCategories[0]!.id, at: '2026-09-14T14:00:00Z', sitterSessionId: null })),
       }))
       const wrapper = await mountAt('/corner')
       await tab(wrapper, 'Stickers').trigger('click')

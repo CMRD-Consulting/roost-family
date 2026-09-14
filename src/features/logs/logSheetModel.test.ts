@@ -23,7 +23,7 @@ describe('eligibleChildren', () => {
 
   it('sleep: includes an older child who has a sleep started in the last 18 h', () => {
     const s = buildDemoSnapshot(now)
-    s.sleeps.push({ id: 's-ivy', childId: IVY, startAt: ago(17 * H), endAt: ago(6 * H), type: 'night' })
+    s.sleeps.push({ id: 's-ivy', childId: IVY, startAt: ago(17 * H), endAt: ago(6 * H), type: 'night', sitterSessionId: null })
     expect(ids(s, 'sleep')).toEqual([IVY, THEO])
     s.sleeps = s.sleeps.map((e) => (e.id === 's-ivy' ? { ...e, startAt: ago(19 * H) } : e))
     expect(ids(s, 'sleep')).toEqual([THEO])
@@ -76,9 +76,9 @@ describe('openSleepFor', () => {
   it('returns the latest open sleep for that child only', () => {
     const s = buildDemoSnapshot(now)
     s.sleeps.push(
-      { id: 'open-old', childId: THEO, startAt: ago(90 * 60_000), endAt: null, type: 'nap' },
-      { id: 'open-new', childId: THEO, startAt: ago(30 * 60_000), endAt: null, type: 'nap' },
-      { id: 'open-ivy', childId: IVY, startAt: ago(10 * 60_000), endAt: null, type: 'nap' },
+      { id: 'open-old', childId: THEO, startAt: ago(90 * 60_000), endAt: null, type: 'nap', sitterSessionId: null },
+      { id: 'open-new', childId: THEO, startAt: ago(30 * 60_000), endAt: null, type: 'nap', sitterSessionId: null },
+      { id: 'open-ivy', childId: IVY, startAt: ago(10 * 60_000), endAt: null, type: 'nap', sitterSessionId: null },
     )
     expect(openSleepFor(s, THEO)?.id).toBe('open-new')
     expect(openSleepFor(s, IVY)?.id).toBe('open-ivy')
@@ -86,7 +86,7 @@ describe('openSleepFor', () => {
 
   it('ignores an open sleep followed by a later ended sleep', () => {
     const s = buildDemoSnapshot(now)
-    s.sleeps.push({ id: 'stray', childId: THEO, startAt: ago(5 * H), endAt: null, type: 'nap' })
+    s.sleeps.push({ id: 'stray', childId: THEO, startAt: ago(5 * H), endAt: null, type: 'nap', sitterSessionId: null })
     expect(openSleepFor(s, THEO)).toBeNull()
   })
 })

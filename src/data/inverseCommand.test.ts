@@ -18,7 +18,7 @@ const attribution: Attribution = {
 
 describe('inverseCommand', () => {
   it('sleep.start -> entry.delete on sleep_entries for the same id', () => {
-    const entry = { id: 'sleep-1', childId: ivy.id, startAt: now.toISOString(), endAt: null, type: 'nap' as const }
+    const entry = { id: 'sleep-1', childId: ivy.id, startAt: now.toISOString(), endAt: null, type: 'nap' as const, sitterSessionId: null }
     const cmd: LogCommand = { kind: 'sleep.start', householdId, entry, attribution }
     expect(inverseCommand(cmd)).toEqual({ kind: 'entry.delete', householdId, table: 'sleep_entries', entryId: 'sleep-1' })
   })

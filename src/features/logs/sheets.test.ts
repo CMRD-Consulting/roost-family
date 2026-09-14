@@ -109,7 +109,7 @@ describe('log sheets', () => {
       const cmd = writer.calls[0]!
       expect(cmd.kind).toBe('sleep.start')
       if (cmd.kind !== 'sleep.start') return
-      expect(cmd.entry).toMatchObject({ childId: THEO, startAt: '2026-09-14T21:50:00.000Z', endAt: null, type: 'night' })
+      expect(cmd.entry).toMatchObject({ childId: THEO, startAt: '2026-09-14T21:50:00.000Z', endAt: null, type: 'night', sitterSessionId: null })
       expect(cmd.attribution).toEqual({ displayId: 'display-1', loggedByMembershipId: SAM, sitterSessionId: null, loggedByName: 'Sam' })
       expect(w.emitted('saved')).toEqual([['saved']])
       expect(w.emitted('close')).toHaveLength(1)
@@ -117,7 +117,7 @@ describe('log sheets', () => {
 
     it('ends the open sleep', async () => {
       await setup('2026-09-14T19:00:00Z', (s) => {
-        s.sleeps.push({ id: 'open-theo', childId: THEO, startAt: '2026-09-14T18:30:00.000Z', endAt: null, type: 'nap' })
+        s.sleeps.push({ id: 'open-theo', childId: THEO, startAt: '2026-09-14T18:30:00.000Z', endAt: null, type: 'nap', sitterSessionId: null })
       })
       const w = mountSheet(SleepSheet)
       await flushPromises()
@@ -134,7 +134,7 @@ describe('log sheets', () => {
 
     it('reopening after ending a sleep (and a reload that confirms it) offers Start sleep', async () => {
       await setup('2026-09-14T19:00:00Z', (s) => {
-        s.sleeps.push({ id: 'open-theo', childId: THEO, startAt: '2026-09-14T18:30:00.000Z', endAt: null, type: 'nap' })
+        s.sleeps.push({ id: 'open-theo', childId: THEO, startAt: '2026-09-14T18:30:00.000Z', endAt: null, type: 'nap', sitterSessionId: null })
       })
       const w = mountSheet(SleepSheet)
       await flushPromises()
@@ -174,7 +174,7 @@ describe('log sheets', () => {
       for (let i = 0; i < 6; i++) await click(button(w, '−5 min')) // 2:30 PM
       expect(footerButton(w).text()).toBe('Start sleep')
 
-      serverSnapshot.sleeps.push({ id: 'other-display', childId: THEO, startAt: '2026-09-14T18:50:00.000Z', endAt: null, type: 'nap' })
+      serverSnapshot.sleeps.push({ id: 'other-display', childId: THEO, startAt: '2026-09-14T18:50:00.000Z', endAt: null, type: 'nap', sitterSessionId: null })
       await useHouseholdStore().reload()
       await flushPromises()
 
@@ -195,7 +195,7 @@ describe('log sheets', () => {
 
     it('an open sleep ended by another display while the sheet is open flips to Start sleep with a notice', async () => {
       await setup('2026-09-14T19:00:00Z', (s) => {
-        s.sleeps.push({ id: 'open-theo', childId: THEO, startAt: '2026-09-14T18:30:00.000Z', endAt: null, type: 'nap' })
+        s.sleeps.push({ id: 'open-theo', childId: THEO, startAt: '2026-09-14T18:30:00.000Z', endAt: null, type: 'nap', sitterSessionId: null })
       })
       const w = mountSheet(SleepSheet)
       await flushPromises()
@@ -291,7 +291,7 @@ describe('log sheets', () => {
       const cmd = writer.calls[0]!
       expect(cmd.kind).toBe('feeding.add')
       if (cmd.kind !== 'feeding.add') return
-      expect(cmd.entry).toMatchObject({ childId: THEO, type: 'meal', amount: 'All', note: 'loved the peas', at: '2026-09-14T19:00:00.000Z' })
+      expect(cmd.entry).toMatchObject({ childId: THEO, type: 'meal', amount: 'All', note: 'loved the peas', at: '2026-09-14T19:00:00.000Z', sitterSessionId: null })
       expect(cmd.attribution.loggedByMembershipId).toBeNull()
       expect(cmd.attribution.displayId).toBe('display-1')
       expect(w.emitted('close')).toHaveLength(1)
@@ -529,7 +529,7 @@ describe('log sheets', () => {
 
   describe('StaleSleepSheet', () => {
     const staleIvy = (s: HouseholdSnapshot) => {
-      s.sleeps.push({ id: 'stale-ivy', childId: IVY, startAt: '2026-09-14T00:02:00.000Z', endAt: null, type: 'night' })
+      s.sleeps.push({ id: 'stale-ivy', childId: IVY, startAt: '2026-09-14T00:02:00.000Z', endAt: null, type: 'night', sitterSessionId: null })
     }
 
     it('ends the forgotten sleep at the chosen time', async () => {

@@ -1,5 +1,5 @@
 import type { HouseholdSnapshot } from './snapshot'
-import type { LogCommand } from './logCommands'
+import type { Attribution, LogCommand } from './logCommands'
 
 function upsertById<T extends { id: string }>(list: T[], item: T): T[] {
   if (list.some((x) => x.id === item.id)) return list
@@ -18,23 +18,28 @@ function updateById<T extends { id: string }>(list: T[], id: string, fn: (x: T) 
   return copy
 }
 
+/** The entry as the server will store it: its sitter session comes from the command's attribution. */
+function attributed<T extends { sitterSessionId: string | null }>(entry: T, attribution: Attribution): T {
+  return entry.sitterSessionId === attribution.sitterSessionId ? entry : { ...entry, sitterSessionId: attribution.sitterSessionId }
+}
+
 /** Pure, optimistic apply of a command to a snapshot. Never mutates `snapshot`. Idempotent per id. */
 export function applyCommand(snapshot: HouseholdSnapshot, cmd: LogCommand, now: Date): HouseholdSnapshot {
   switch (cmd.kind) {
     case 'sleep.start':
     case 'sleep.restore':
-      return { ...snapshot, sleeps: upsertById(snapshot.sleeps, cmd.entry) }
+      return { ...snapshot, sleeps: upsertById(snapshot.sleeps, attributed(cmd.entry, cmd.attribution)) }
     case 'sleep.end':
       return { ...snapshot, sleeps: updateById(snapshot.sleeps, cmd.entryId, (e) => ({ ...e, endAt: cmd.endAt })) }
     case 'sleep.discard':
       return { ...snapshot, sleeps: removeById(snapshot.sleeps, cmd.entry.id) }
 
     case 'feeding.add':
-      return { ...snapshot, feedings: upsertById(snapshot.feedings, cmd.entry) }
+      return { ...snapshot, feedings: upsertById(snapshot.feedings, attributed(cmd.entry, cmd.attribution)) }
     case 'sticker.add':
-      return { ...snapshot, stickers: upsertById(snapshot.stickers, cmd.entry) }
+      return { ...snapshot, stickers: upsertById(snapshot.stickers, attributed(cmd.entry, cmd.attribution)) }
     case 'diaper.add':
-      return { ...snapshot, diapers: upsertById(snapshot.diapers, cmd.entry) }
+      return { ...snapshot, diapers: upsertById(snapshot.diapers, attributed(cmd.entry, cmd.attribution)) }
 
     case 'dose.add': {
       if (snapshot.doses.some((d) => d.id === cmd.entry.id)) return snapshot
@@ -42,6 +47,7 @@ export function applyCommand(snapshot: HouseholdSnapshot, cmd: LogCommand, now: 
         ...cmd.entry,
         createdAt: cmd.entry.createdAt || now.toISOString(),
         loggedByName: cmd.entry.loggedByName ?? cmd.attribution.loggedByName,
+        sitterSessionId: cmd.attribution.sitterSessionId,
       }
       return { ...snapshot, doses: [...snapshot.doses, entry] }
     }

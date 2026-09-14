@@ -111,9 +111,9 @@ describe('stickerGridModel', () => {
     const sunday = new Date('2026-09-21T02:00:00Z') // Sun 10:00 PM EDT
     const s = demo()
     s.stickers = [
-      { id: 'a', childId: IVY, categoryId: POTTY, at: '2026-09-20T15:00:00Z' },
-      { id: 'b', childId: IVY, categoryId: POTTY, at: '2026-09-20T16:00:00Z' },
-      { id: 'c', childId: THEO, categoryId: POTTY, at: '2026-09-20T16:00:00Z' },
+      { id: 'a', childId: IVY, categoryId: POTTY, at: '2026-09-20T15:00:00Z', sitterSessionId: null },
+      { id: 'b', childId: IVY, categoryId: POTTY, at: '2026-09-20T16:00:00Z', sitterSessionId: null },
+      { id: 'c', childId: THEO, categoryId: POTTY, at: '2026-09-20T16:00:00Z', sitterSessionId: null },
     ]
     const grid = stickerGridModel(s, IVY, sunday)
     expect(grid.todayIndex).toBe(6)

@@ -131,7 +131,7 @@ export function summaryModel(s: HouseholdSnapshot, session: SitterSession, now: 
   const categoryName = new Map(s.stickerCategories.map((c) => [c.id, c.name]))
 
   const grouped = sitterSummary(
-    { startAt: session.startedAt, endAt: session.endedAt },
+    { id: session.id, startAt: session.startedAt, endAt: session.endedAt },
     children,
     { sleeps: s.sleeps, feedings: s.feedings, doses: s.doses, stickers: s.stickers, diapers: s.diapers },
     now,

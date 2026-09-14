@@ -11,6 +11,7 @@ const entry = (over: Partial<SleepEntry>): SleepEntry => ({
   startAt: '2026-09-14T17:00:00Z',
   endAt: null,
   type: 'nap',
+  sitterSessionId: null,
   ...over,
 })
 

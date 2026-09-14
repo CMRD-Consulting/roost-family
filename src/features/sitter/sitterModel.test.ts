@@ -41,6 +41,7 @@ const dose = (over: Partial<DoseEntry>): DoseEntry => ({
   createdAt: at('2026-09-14T18:00:00Z'),
   note: '2.5 ml',
   warningsConfirmed: [],
+  sitterSessionId: 'session-1',
   ...over,
 })
 
@@ -107,9 +108,9 @@ describe('summaryModel', () => {
   it('describes ended and open sleeps with their ranges', () => {
     const s = emptyLogs()
     s.sleeps = [
-      { id: 'nap', childId: THEO, startAt: at('2026-09-14T17:05:00Z'), endAt: at('2026-09-14T18:20:00Z'), type: 'nap' },
-      { id: 'cross', childId: IVY, startAt: at('2026-09-14T15:30:00Z'), endAt: at('2026-09-14T16:40:00Z'), type: 'nap' },
-      { id: 'night', childId: THEO, startAt: at('2026-09-14T18:40:00Z'), endAt: null, type: 'night' },
+      { id: 'nap', childId: THEO, startAt: at('2026-09-14T17:05:00Z'), endAt: at('2026-09-14T18:20:00Z'), type: 'nap', sitterSessionId: 'session-1' },
+      { id: 'cross', childId: IVY, startAt: at('2026-09-14T15:30:00Z'), endAt: at('2026-09-14T16:40:00Z'), type: 'nap', sitterSessionId: 'session-1' },
+      { id: 'night', childId: THEO, startAt: at('2026-09-14T18:40:00Z'), endAt: null, type: 'night', sitterSessionId: 'session-1' },
     ]
     const model = summaryModel(s, session({ startedAt: at('2026-09-14T16:00:00Z') }), now)
     expect(model.children[0]!.lines).toEqual([{ time: '11:30 AM', icon: 'sleep', text: 'Nap 11:30 AM–12:40 PM (1h 10m)' }])
@@ -122,8 +123,8 @@ describe('summaryModel', () => {
   it('describes feedings, doses with their flags, stickers and diapers, ordered by time', () => {
     const s = emptyLogs()
     s.feedings = [
-      { id: 'f1', childId: THEO, at: at('2026-09-14T17:00:00Z'), type: 'milk', amount: '6 oz', note: null },
-      { id: 'f2', childId: THEO, at: at('2026-09-14T16:45:00Z'), type: 'meal', amount: null, note: 'Pasta' },
+      { id: 'f1', childId: THEO, at: at('2026-09-14T17:00:00Z'), type: 'milk', amount: '6 oz', note: null, sitterSessionId: 'session-1' },
+      { id: 'f2', childId: THEO, at: at('2026-09-14T16:45:00Z'), type: 'meal', amount: null, note: 'Pasta', sitterSessionId: 'session-1' },
     ]
     s.doses = [
       dose({ at: at('2026-09-14T18:00:00Z') }),
@@ -131,10 +132,10 @@ describe('summaryModel', () => {
       dose({ at: at('2026-09-14T18:20:00Z'), voidedAt: at('2026-09-14T18:21:00Z'), warningsConfirmed: ['early'] }),
       dose({ at: at('2026-09-14T18:30:00Z'), loggedOffline: true }),
     ]
-    s.stickers = [{ id: 'st', childId: IVY, categoryId: 'dddddddd-0000-0000-0000-000000000001', at: at('2026-09-14T17:30:00Z') }]
+    s.stickers = [{ id: 'st', childId: IVY, categoryId: 'dddddddd-0000-0000-0000-000000000001', at: at('2026-09-14T17:30:00Z'), sitterSessionId: 'session-1' }]
     s.diapers = [
-      { id: 'd1', childId: THEO, at: at('2026-09-14T17:10:00Z'), kind: 'wet' },
-      { id: 'd2', childId: THEO, at: at('2026-09-14T17:20:00Z'), kind: 'both' },
+      { id: 'd1', childId: THEO, at: at('2026-09-14T17:10:00Z'), kind: 'wet', sitterSessionId: 'session-1' },
+      { id: 'd2', childId: THEO, at: at('2026-09-14T17:20:00Z'), kind: 'both', sitterSessionId: 'session-1' },
     ]
 
     const [ivy, theo] = summaryModel(s, session(), now).children
@@ -151,13 +152,18 @@ describe('summaryModel', () => {
     ])
   })
 
-  it('leaves out entries from before or after the session', () => {
+  it("counts the sitter's entries by session, not by time, and leaves out adults' entries during the session", () => {
     const s = emptyLogs()
     s.feedings = [
-      { id: 'before', childId: THEO, at: at('2026-09-14T16:00:00Z'), type: 'milk', amount: null, note: null },
-      { id: 'after', childId: THEO, at: at('2026-09-14T19:30:00Z'), type: 'milk', amount: null, note: null },
+      { id: 'backdated', childId: THEO, at: at('2026-09-14T16:00:00Z'), type: 'milk', amount: null, note: null, sitterSessionId: 'session-1' },
+      { id: 'skewed', childId: THEO, at: at('2026-09-14T19:30:00Z'), type: 'snack', amount: null, note: null, sitterSessionId: 'session-1' },
+      { id: 'parent', childId: THEO, at: at('2026-09-14T17:00:00Z'), type: 'meal', amount: null, note: null, sitterSessionId: null },
     ]
-    expect(summaryModel(s, session(), new Date(now.getTime() + H)).children[1]!.lines).toEqual([])
+    s.doses = [dose({ at: at('2026-09-14T18:00:00Z'), loggedByName: 'Sam', sitterSessionId: null })]
+    expect(summaryModel(s, session(), new Date(now.getTime() + H)).children[1]!.lines).toEqual([
+      { time: '12:00 PM', icon: 'feeding', text: 'Milk' },
+      { time: '3:30 PM', icon: 'feeding', text: 'Snack' },
+    ])
   })
 })
 

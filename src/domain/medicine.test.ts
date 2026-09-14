@@ -18,6 +18,7 @@ const dose = (over: Partial<DoseEntry>): DoseEntry => ({
   createdAt: over.at ?? '2026-09-14T12:00:00Z',
   note: null,
   warningsConfirmed: [],
+  sitterSessionId: null,
   ...over,
 })
 

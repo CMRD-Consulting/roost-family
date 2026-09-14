@@ -321,6 +321,7 @@ describe('toDose', () => {
           note: '2.5 ml',
           warnings_confirmed: ['early'],
         }),
+          sitter_session_id: 'sess-1',
       ),
     ).toEqual({
       id: 'd1',
@@ -335,6 +336,7 @@ describe('toDose', () => {
       note: '2.5 ml',
       warningsConfirmed: ['early'],
     })
+      sitterSessionId: 'sess-1',
   })
 })
 
@@ -399,13 +401,14 @@ describe('toRoutine', () => {
 
 describe('toSleep', () => {
   it('maps field by field', () => {
-    expect(toSleep(sleepRow())).toEqual({
+    expect(toSleep(sleepRow({ sitter_session_id: 'sess-1' }))).toEqual({
       id: 's1',
       childId: 'c1',
       startAt: '2026-09-14T04:00:00Z',
       endAt: '2026-09-14T09:00:00Z',
       type: 'night',
     })
+      sitterSessionId: 'sess-1',
   })
 
   it('maps an open (null end_at) entry', () => {
@@ -423,6 +426,7 @@ describe('toFeeding', () => {
       amount: '6 oz',
       note: null,
     })
+      sitterSessionId: null,
   })
 })
 
@@ -434,6 +438,7 @@ describe('toDiaper', () => {
       at: '2026-09-14T17:00:00Z',
       kind: 'both',
     })
+      sitterSessionId: null,
   })
 })
 
@@ -445,6 +450,7 @@ describe('toSticker', () => {
       categoryId: 'cat1',
       at: '2026-09-14T18:00:00Z',
     })
+      sitterSessionId: null,
   })
 })
 

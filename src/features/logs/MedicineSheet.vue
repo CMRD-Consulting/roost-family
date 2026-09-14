@@ -145,6 +145,7 @@ async function save(): Promise<void> {
         createdAt: new Date().toISOString(),
         note: note.value.trim() || null,
         warningsConfirmed: warnings.value.map((w) => w.kind),
+        sitterSessionId: attribution.sitterSessionId,
       },
       attribution,
     },

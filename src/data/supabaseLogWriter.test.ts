@@ -94,7 +94,7 @@ describe('createSupabaseLogWriter', () => {
     it('sleep.start', async () => {
       const { client, calls } = createFakeClient()
       const writer = createSupabaseLogWriter(client)
-      const entry = { id: 'sleep-1', childId, startAt: '2026-09-14T19:00:00Z', endAt: null, type: 'nap' as const }
+      const entry = { id: 'sleep-1', childId, startAt: '2026-09-14T19:00:00Z', endAt: null, type: 'nap' as const, sitterSessionId: null }
       await writer.execute({ kind: 'sleep.start', householdId, entry, attribution })
 
       expect(calls).toEqual([
@@ -120,7 +120,7 @@ describe('createSupabaseLogWriter', () => {
     it('sleep.restore (same shape as sleep.start)', async () => {
       const { client, calls } = createFakeClient()
       const writer = createSupabaseLogWriter(client)
-      const entry = { id: 'sleep-1', childId, startAt: '2026-09-14T19:00:00Z', endAt: '2026-09-14T20:00:00Z', type: 'night' as const }
+      const entry = { id: 'sleep-1', childId, startAt: '2026-09-14T19:00:00Z', endAt: '2026-09-14T20:00:00Z', type: 'night' as const, sitterSessionId: null }
       await writer.execute({ kind: 'sleep.restore', householdId, entry, attribution })
 
       expect(calls[0]).toMatchObject({ table: 'sleep_entries', op: 'upsert', options: { onConflict: 'id', ignoreDuplicates: true } })
@@ -130,7 +130,7 @@ describe('createSupabaseLogWriter', () => {
     it('feeding.add', async () => {
       const { client, calls } = createFakeClient()
       const writer = createSupabaseLogWriter(client)
-      const entry = { id: 'feed-1', childId, at: '2026-09-14T19:00:00Z', type: 'milk' as const, amount: '4 oz', note: null }
+      const entry = { id: 'feed-1', childId, at: '2026-09-14T19:00:00Z', type: 'milk' as const, amount: '4 oz', note: null, sitterSessionId: null }
       await writer.execute({ kind: 'feeding.add', householdId, entry, attribution })
 
       expect(calls).toEqual([
@@ -157,7 +157,7 @@ describe('createSupabaseLogWriter', () => {
     it('sticker.add', async () => {
       const { client, calls } = createFakeClient()
       const writer = createSupabaseLogWriter(client)
-      const entry = { id: 'sticker-1', childId, categoryId: 'cat-1', at: '2026-09-14T19:00:00Z' }
+      const entry = { id: 'sticker-1', childId, categoryId: 'cat-1', at: '2026-09-14T19:00:00Z', sitterSessionId: null }
       await writer.execute({ kind: 'sticker.add', householdId, entry, attribution })
 
       expect(calls).toEqual([
@@ -182,7 +182,7 @@ describe('createSupabaseLogWriter', () => {
     it('diaper.add (kind column)', async () => {
       const { client, calls } = createFakeClient()
       const writer = createSupabaseLogWriter(client)
-      const entry = { id: 'diaper-1', childId, at: '2026-09-14T19:00:00Z', kind: 'wet' as const }
+      const entry = { id: 'diaper-1', childId, at: '2026-09-14T19:00:00Z', kind: 'wet' as const, sitterSessionId: null }
       await writer.execute({ kind: 'diaper.add', householdId, entry, attribution })
 
       expect(calls).toEqual([
@@ -210,7 +210,7 @@ describe('createSupabaseLogWriter', () => {
       const entry = {
         id: 'dose-1', childId, medicineId: 'med-1', at: '2026-09-14T19:00:00Z',
         loggedByName: null, loggedOffline: true, voidedAt: null, conflictAcknowledgedAt: null,
-        createdAt: '2026-09-14T19:00:00Z', note: '5 ml', warningsConfirmed: ['early'],
+        createdAt: '2026-09-14T19:00:00Z', note: '5 ml', warningsConfirmed: ['early'], sitterSessionId: null,
       }
       await writer.execute({ kind: 'dose.add', householdId, entry, attribution })
 
@@ -370,7 +370,7 @@ describe('createSupabaseLogWriter', () => {
         },
       })
       const writer = createSupabaseLogWriter(client)
-      const entry = { id: 'sleep-1', childId, startAt: '2026-09-14T19:00:00Z', endAt: null, type: 'nap' as const }
+      const entry = { id: 'sleep-1', childId, startAt: '2026-09-14T19:00:00Z', endAt: null, type: 'nap' as const, sitterSessionId: null }
       await expect(writer.execute({ kind: 'sleep.discard', householdId, entry, attribution })).resolves.toBeUndefined()
       await expect(writer.execute({ kind: 'entry.delete', householdId, table: 'jots', entryId: 'jot-1' })).resolves.toBeUndefined()
       const item = { id: 'grocery-1', text: 'Milk', createdAt: '2026-09-14T19:00:00Z', checkedAt: null }
@@ -382,7 +382,7 @@ describe('createSupabaseLogWriter', () => {
     it('sleep.discard -> sleep_entries.delete().eq(id, entry.id)', async () => {
       const { client, calls } = createFakeClient()
       const writer = createSupabaseLogWriter(client)
-      const entry = { id: 'sleep-1', childId, startAt: '2026-09-14T19:00:00Z', endAt: null, type: 'nap' as const }
+      const entry = { id: 'sleep-1', childId, startAt: '2026-09-14T19:00:00Z', endAt: null, type: 'nap' as const, sitterSessionId: null }
       await writer.execute({ kind: 'sleep.discard', householdId, entry, attribution })
 
       expect(calls).toEqual([{ table: 'sleep_entries', op: 'delete', eq: ['id', 'sleep-1'], select: 'id' }])

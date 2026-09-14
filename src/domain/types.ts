@@ -25,6 +25,8 @@ export interface SleepEntry {
   startAt: IsoTimestamp
   endAt: IsoTimestamp | null
   type: 'nap' | 'night'
+  /** The sitter session it was logged in, or null for a log by an adult or display outside Sitter Mode. */
+  sitterSessionId: string | null
 }
 
 export interface FeedingEntry {
@@ -34,6 +36,8 @@ export interface FeedingEntry {
   type: 'milk' | 'meal' | 'snack'
   amount: string | null
   note: string | null
+  /** The sitter session it was logged in, or null for a log by an adult or display outside Sitter Mode. */
+  sitterSessionId: string | null
 }
 
 export interface DiaperEntry {
@@ -41,6 +45,8 @@ export interface DiaperEntry {
   childId: string
   at: IsoTimestamp
   kind: 'wet' | 'dirty' | 'both'
+  /** The sitter session it was logged in, or null for a log by an adult or display outside Sitter Mode. */
+  sitterSessionId: string | null
 }
 
 export interface Medicine {
@@ -65,6 +71,8 @@ export interface DoseEntry {
   note: string | null
   /** Warning kinds (e.g. "early", "overMax") the logging adult confirmed past. */
   warningsConfirmed: string[]
+  /** The sitter session it was logged in, or null for a log by an adult or display outside Sitter Mode. */
+  sitterSessionId: string | null
 }
 
 export interface StickerEntry {
@@ -72,6 +80,8 @@ export interface StickerEntry {
   childId: string
   categoryId: string
   at: IsoTimestamp
+  /** The sitter session it was logged in, or null for a log by an adult or display outside Sitter Mode. */
+  sitterSessionId: string | null
 }
 
 export interface RoutineStep {

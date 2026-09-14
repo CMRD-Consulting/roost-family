@@ -328,7 +328,7 @@ describe('MainScreen (demo source)', () => {
       entry: {
         id: 'dose-new', childId: THEO, medicineId: IBUPROFEN_THEO, at: '2026-09-14T19:00:00.000Z', loggedByName: 'Sam',
         loggedOffline: false, voidedAt: null, conflictAcknowledgedAt: null, createdAt: '2026-09-14T19:00:00.000Z', note: null,
-        warningsConfirmed: ['early'],
+        warningsConfirmed: ['early'], sitterSessionId: null,
       },
       attribution: { displayId: 'demo-display', loggedByMembershipId: SAM, sitterSessionId: null, loggedByName: 'Sam' },
     }
@@ -365,7 +365,7 @@ describe('MainScreen (demo source)', () => {
       ...s,
       sleeps: [
         ...s.sleeps.filter((e) => e.childId !== THEO),
-        { id: 'sleep-stale', childId: THEO, startAt: '2026-09-14T02:00:00.000Z', endAt: null, type: 'night' },
+        { id: 'sleep-stale', childId: THEO, startAt: '2026-09-14T02:00:00.000Z', endAt: null, type: 'night', sitterSessionId: null },
       ],
     }))
     const wrapper = await mountMain()
@@ -702,7 +702,7 @@ describe('MainScreen (demo source)', () => {
     it('nap ends automatically once the sleep open when it started has ended', async () => {
       mutateDemo((s) => ({
         ...s,
-        sleeps: [...s.sleeps, { id: 'sleep-nap-live', childId: THEO, startAt: '2026-09-14T18:30:00.000Z', endAt: null, type: 'nap' as const }],
+        sleeps: [...s.sleeps, { id: 'sleep-nap-live', childId: THEO, startAt: '2026-09-14T18:30:00.000Z', endAt: null, type: 'nap' as const, sitterSessionId: null }],
       }))
       const wrapper = await mountMain()
 

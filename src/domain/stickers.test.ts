@@ -3,7 +3,7 @@ import { weekStartDate, stickerWeek } from './stickers'
 import type { StickerEntry } from './types'
 
 const NY = 'America/New_York'
-const s = (at: string, categoryId = 'potty', childId = 'leona'): StickerEntry => ({ id: crypto.randomUUID(), childId, categoryId, at })
+const s = (at: string, categoryId = 'potty', childId = 'leona'): StickerEntry => ({ id: crypto.randomUUID(), childId, categoryId, at, sitterSessionId: null })
 
 describe('weekStartDate', () => {
   it('returns the Monday of the household week', () => {

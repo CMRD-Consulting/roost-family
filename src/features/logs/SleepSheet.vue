@@ -145,11 +145,15 @@ async function save(): Promise<void> {
     }
     cmd = { kind: 'sleep.end', householdId, entryId: openSleep.value.id, endAt: at.value, previousEndAt: openSleep.value.endAt }
   } else {
+    const attribution = attributionFor(identity.value, who.value, view.value.members, view.value.activeSitterSession ?? null)
     cmd = {
       kind: 'sleep.start',
       householdId,
-      entry: { id: newId(), childId: child.value.id, startAt: at.value, endAt: null, type: type.value as 'nap' | 'night' },
-      attribution: attributionFor(identity.value, who.value, view.value.members, view.value.activeSitterSession ?? null),
+      entry: {
+        id: newId(), childId: child.value.id, startAt: at.value, endAt: null, type: type.value as 'nap' | 'night',
+        sitterSessionId: attribution.sitterSessionId,
+      },
+      attribution,
     }
   }
   saving.value = true

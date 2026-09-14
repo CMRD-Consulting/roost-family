@@ -42,9 +42,9 @@ describe('startNap / napShouldEnd', () => {
 
   it('startNap records the ids of currently open sleep entries for any child', () => {
     const snapshot = snapshotWithSleeps([
-      { id: 'open-1', childId: 'child-a', startAt: now.toISOString(), endAt: null, type: 'nap' },
-      { id: 'closed-1', childId: 'child-b', startAt: now.toISOString(), endAt: now.toISOString(), type: 'nap' },
-      { id: 'open-2', childId: 'child-b', startAt: now.toISOString(), endAt: null, type: 'night' },
+      { id: 'open-1', childId: 'child-a', startAt: now.toISOString(), endAt: null, type: 'nap', sitterSessionId: null },
+      { id: 'closed-1', childId: 'child-b', startAt: now.toISOString(), endAt: now.toISOString(), type: 'nap', sitterSessionId: null },
+      { id: 'open-2', childId: 'child-b', startAt: now.toISOString(), endAt: null, type: 'night', sitterSessionId: null },
     ])
     const nap = startNap(snapshot, now)
     expect(nap.startedAt).toBe(now.toISOString())
@@ -53,41 +53,41 @@ describe('startNap / napShouldEnd', () => {
 
   it('napShouldEnd is false while a tracked sleep is still open, even if an unrelated sleep ends', () => {
     const snapshot = snapshotWithSleeps([
-      { id: 'tracked', childId: 'child-a', startAt: now.toISOString(), endAt: null, type: 'nap' },
+      { id: 'tracked', childId: 'child-a', startAt: now.toISOString(), endAt: null, type: 'nap', sitterSessionId: null },
     ])
     const nap = startNap(snapshot, now)
 
     // An unrelated sleep starts and ends after the nap began; it was never tracked.
     const withUnrelatedEnded = snapshotWithSleeps([
-      { id: 'tracked', childId: 'child-a', startAt: now.toISOString(), endAt: null, type: 'nap' },
-      { id: 'unrelated', childId: 'child-b', startAt: now.toISOString(), endAt: now.toISOString(), type: 'nap' },
+      { id: 'tracked', childId: 'child-a', startAt: now.toISOString(), endAt: null, type: 'nap', sitterSessionId: null },
+      { id: 'unrelated', childId: 'child-b', startAt: now.toISOString(), endAt: now.toISOString(), type: 'nap', sitterSessionId: null },
     ])
     expect(napShouldEnd(nap, withUnrelatedEnded, new Date(now.getTime() + 5 * 60_000))).toBe(false)
   })
 
   it('napShouldEnd is true once every tracked sleep has ended', () => {
     const snapshot = snapshotWithSleeps([
-      { id: 'tracked-1', childId: 'child-a', startAt: now.toISOString(), endAt: null, type: 'nap' },
-      { id: 'tracked-2', childId: 'child-b', startAt: now.toISOString(), endAt: null, type: 'nap' },
+      { id: 'tracked-1', childId: 'child-a', startAt: now.toISOString(), endAt: null, type: 'nap', sitterSessionId: null },
+      { id: 'tracked-2', childId: 'child-b', startAt: now.toISOString(), endAt: null, type: 'nap', sitterSessionId: null },
     ])
     const nap = startNap(snapshot, now)
 
     const oneStillOpen = snapshotWithSleeps([
-      { id: 'tracked-1', childId: 'child-a', startAt: now.toISOString(), endAt: now.toISOString(), type: 'nap' },
-      { id: 'tracked-2', childId: 'child-b', startAt: now.toISOString(), endAt: null, type: 'nap' },
+      { id: 'tracked-1', childId: 'child-a', startAt: now.toISOString(), endAt: now.toISOString(), type: 'nap', sitterSessionId: null },
+      { id: 'tracked-2', childId: 'child-b', startAt: now.toISOString(), endAt: null, type: 'nap', sitterSessionId: null },
     ])
     expect(napShouldEnd(nap, oneStillOpen, new Date(now.getTime() + 5 * 60_000))).toBe(false)
 
     const bothEnded = snapshotWithSleeps([
-      { id: 'tracked-1', childId: 'child-a', startAt: now.toISOString(), endAt: now.toISOString(), type: 'nap' },
-      { id: 'tracked-2', childId: 'child-b', startAt: now.toISOString(), endAt: now.toISOString(), type: 'nap' },
+      { id: 'tracked-1', childId: 'child-a', startAt: now.toISOString(), endAt: now.toISOString(), type: 'nap', sitterSessionId: null },
+      { id: 'tracked-2', childId: 'child-b', startAt: now.toISOString(), endAt: now.toISOString(), type: 'nap', sitterSessionId: null },
     ])
     expect(napShouldEnd(nap, bothEnded, new Date(now.getTime() + 5 * 60_000))).toBe(true)
   })
 
   it('napShouldEnd treats a tracked sleep that was discarded (no longer exists) as ended', () => {
     const snapshot = snapshotWithSleeps([
-      { id: 'tracked', childId: 'child-a', startAt: now.toISOString(), endAt: null, type: 'nap' },
+      { id: 'tracked', childId: 'child-a', startAt: now.toISOString(), endAt: null, type: 'nap', sitterSessionId: null },
     ])
     const nap = startNap(snapshot, now)
     const discarded = snapshotWithSleeps([])
@@ -105,7 +105,7 @@ describe('startNap / napShouldEnd', () => {
 
   it('napShouldEnd is true after 3 hours even if a tracked sleep is still open', () => {
     const snapshot = snapshotWithSleeps([
-      { id: 'tracked', childId: 'child-a', startAt: now.toISOString(), endAt: null, type: 'nap' },
+      { id: 'tracked', childId: 'child-a', startAt: now.toISOString(), endAt: null, type: 'nap', sitterSessionId: null },
     ])
     const nap = startNap(snapshot, now)
     expect(napShouldEnd(nap, snapshot, new Date(now.getTime() + 3 * 60 * 60_000))).toBe(true)
@@ -292,7 +292,7 @@ describe('useModesStore', () => {
   describe('nap', () => {
     it('toggleNap starts a nap that tracks currently open sleeps, and again ends it', () => {
       const householdStore = withHousehold(new Date('2026-09-14T18:00:00Z'))
-      const openSleep = { id: 'sleep-x', childId: 'cccccccc-0000-0000-0000-000000000002', startAt: new Date().toISOString(), endAt: null, type: 'nap' as const }
+      const openSleep = { id: 'sleep-x', childId: 'cccccccc-0000-0000-0000-000000000002', startAt: new Date().toISOString(), endAt: null, type: 'nap' as const, sitterSessionId: null }
       householdStore.snapshot = { ...householdStore.snapshot!, sleeps: [...householdStore.snapshot!.sleeps, openSleep] }
 
       const modes = useModesStore()

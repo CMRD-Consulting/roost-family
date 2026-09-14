@@ -93,7 +93,7 @@ describe('buildMainScreenModel', () => {
     it('shows "Sleeping Xh Ym" while sleeping', () => {
       const snapshot = minimalSnapshot({
         children: [makeChild()],
-        sleeps: [{ id: 's1', childId: 'kid1', startAt: new Date(now.getTime() - 45 * 60_000).toISOString(), endAt: null, type: 'nap' }],
+        sleeps: [{ id: 's1', childId: 'kid1', startAt: new Date(now.getTime() - 45 * 60_000).toISOString(), endAt: null, type: 'nap', sitterSessionId: null }],
       })
       const card = buildMainScreenModel(snapshot, now).kidCards[0]!
       expect(card.sleep).toEqual({ kind: 'sleeping', label: 'Sleeping 45m' })
@@ -102,7 +102,7 @@ describe('buildMainScreenModel', () => {
     it('shows "Still sleeping?" when stale', () => {
       const snapshot = minimalSnapshot({
         children: [makeChild()],
-        sleeps: [{ id: 's1', childId: 'kid1', startAt: new Date(now.getTime() - 17 * 3_600_000).toISOString(), endAt: null, type: 'night' }],
+        sleeps: [{ id: 's1', childId: 'kid1', startAt: new Date(now.getTime() - 17 * 3_600_000).toISOString(), endAt: null, type: 'night', sitterSessionId: null }],
       })
       const card = buildMainScreenModel(snapshot, now).kidCards[0]!
       expect(card.sleep).toEqual({ kind: 'stale', label: 'Still sleeping?' })
@@ -117,7 +117,7 @@ describe('buildMainScreenModel', () => {
     it('shows the sleep line for a child over 3 with a sleep entry started in the last 18h', () => {
       const snapshot = minimalSnapshot({
         children: [makeChild({ id: 'kid2', birthday: '2022-01-01' })], // well over 3 years old
-        sleeps: [{ id: 's1', childId: 'kid2', startAt: new Date(now.getTime() - 3 * 3_600_000).toISOString(), endAt: null, type: 'nap' }],
+        sleeps: [{ id: 's1', childId: 'kid2', startAt: new Date(now.getTime() - 3 * 3_600_000).toISOString(), endAt: null, type: 'nap', sitterSessionId: null }],
       })
       const card = buildMainScreenModel(snapshot, now).kidCards[0]!
       expect(card.sleep).not.toBeNull()
@@ -127,7 +127,7 @@ describe('buildMainScreenModel', () => {
     it('hides the sleep line for a child over 3 once an open sleep is more than 18h old', () => {
       const snapshot = minimalSnapshot({
         children: [makeChild({ id: 'kid2', birthday: '2022-01-01' })], // well over 3 years old
-        sleeps: [{ id: 's1', childId: 'kid2', startAt: new Date(now.getTime() - 20 * 3_600_000).toISOString(), endAt: null, type: 'night' }],
+        sleeps: [{ id: 's1', childId: 'kid2', startAt: new Date(now.getTime() - 20 * 3_600_000).toISOString(), endAt: null, type: 'night', sitterSessionId: null }],
       })
       const card = buildMainScreenModel(snapshot, now).kidCards[0]!
       expect(card.sleep).toBeNull()
@@ -142,7 +142,7 @@ describe('buildMainScreenModel', () => {
           id: 's1', childId: 'kid2',
           startAt: new Date(now.getTime() - 2 * 3_600_000).toISOString(),
           endAt: new Date(now.getTime() + 5 * 60_000).toISOString(),
-          type: 'nap',
+          type: 'nap', sitterSessionId: null,
         }],
       })
       const card = buildMainScreenModel(snapshot, now).kidCards[0]!
@@ -156,7 +156,7 @@ describe('buildMainScreenModel', () => {
           id: 's1', childId: 'kid1',
           startAt: new Date(now.getTime() - 2 * 3_600_000).toISOString(),
           endAt: new Date(now.getTime() + 5 * 60_000).toISOString(),
-          type: 'nap',
+          type: 'nap', sitterSessionId: null,
         }],
       })
       const card = buildMainScreenModel(snapshot, now).kidCards[0]!

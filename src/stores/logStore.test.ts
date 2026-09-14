@@ -107,7 +107,7 @@ function feedingCmd(id = 'feed-x'): LogCommand {
   return {
     kind: 'feeding.add',
     householdId: HOUSEHOLD_ID,
-    entry: { id, childId: 'cccccccc-0000-0000-0000-000000000002', at: '2026-09-14T19:00:00.000Z', type: 'milk', amount: '4 oz', note: null },
+    entry: { id, childId: 'cccccccc-0000-0000-0000-000000000002', at: '2026-09-14T19:00:00.000Z', type: 'milk', amount: '4 oz', note: null, sitterSessionId: null },
     attribution: { displayId: 'demo-display', loggedByMembershipId: 'bbbbbbbb-0000-0000-0000-000000000001', sitterSessionId: null, loggedByName: 'Sam' },
   }
 }
@@ -119,7 +119,7 @@ function doseCmd(id = 'dose-x'): LogCommand {
     entry: {
       id, childId: 'cccccccc-0000-0000-0000-000000000002', medicineId: 'eeeeeeee-0000-0000-0000-000000000001',
       at: '2026-09-14T19:00:00.000Z', loggedByName: 'Sam', loggedOffline: false, voidedAt: null,
-      conflictAcknowledgedAt: null, createdAt: '2026-09-14T19:00:00.000Z', note: null, warningsConfirmed: [],
+      conflictAcknowledgedAt: null, createdAt: '2026-09-14T19:00:00.000Z', note: null, warningsConfirmed: [], sitterSessionId: null,
     },
     attribution: { displayId: 'demo-display', loggedByMembershipId: 'bbbbbbbb-0000-0000-0000-000000000001', sitterSessionId: null, loggedByName: 'Sam' },
   }
@@ -149,7 +149,7 @@ function sleepStartCmd(id = 'sleep-x'): LogCommand {
   return {
     kind: 'sleep.start',
     householdId: HOUSEHOLD_ID,
-    entry: { id, childId: 'cccccccc-0000-0000-0000-000000000002', startAt: '2026-09-14T18:00:00.000Z', endAt: null, type: 'nap' },
+    entry: { id, childId: 'cccccccc-0000-0000-0000-000000000002', startAt: '2026-09-14T18:00:00.000Z', endAt: null, type: 'nap', sitterSessionId: null },
     attribution: { displayId: 'demo-display', loggedByMembershipId: null, sitterSessionId: null, loggedByName: null },
   }
 }

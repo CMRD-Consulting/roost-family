@@ -117,6 +117,7 @@ export function buildDemoSnapshot(now: Date, options: DemoOptions = {}): Househo
       createdAt: ago(2 * HOUR_MS),
       note: '2.5 ml',
       warningsConfirmed: [],
+      sitterSessionId: null,
     },
   ]
 
@@ -133,6 +134,7 @@ export function buildDemoSnapshot(now: Date, options: DemoOptions = {}): Househo
       createdAt: ago(30 * MIN_MS),
       note: null,
       warningsConfirmed: [],
+      sitterSessionId: null,
     })
   }
 
@@ -143,6 +145,7 @@ export function buildDemoSnapshot(now: Date, options: DemoOptions = {}): Househo
       startAt: ago(20 * HOUR_MS),
       endAt: ago(9 * HOUR_MS),
       type: 'night',
+      sitterSessionId: null,
     },
     {
       id: 'sleep-theo-nap',
@@ -150,6 +153,7 @@ export function buildDemoSnapshot(now: Date, options: DemoOptions = {}): Househo
       startAt: ago(4 * HOUR_MS),
       endAt: ago(2 * HOUR_MS + 40 * MIN_MS),
       type: 'nap',
+      sitterSessionId: null,
     },
   ]
 
@@ -161,6 +165,7 @@ export function buildDemoSnapshot(now: Date, options: DemoOptions = {}): Househo
       type: 'milk',
       amount: '6 oz',
       note: null,
+      sitterSessionId: null,
     },
   ]
 
@@ -171,7 +176,7 @@ export function buildDemoSnapshot(now: Date, options: DemoOptions = {}): Househo
   ]
 
   const stickers: HouseholdSnapshot['stickers'] = [
-    { id: 'sticker-ivy-potty', childId: ivy.id, categoryId: stickerCategories[0]!.id, at: ago(HOUR_MS) },
+    { id: 'sticker-ivy-potty', childId: ivy.id, categoryId: stickerCategories[0]!.id, at: ago(HOUR_MS), sitterSessionId: null },
   ]
 
   const homeDay: Routine = {
@@ -207,15 +212,16 @@ export function buildDemoSnapshot(now: Date, options: DemoOptions = {}): Househo
 
   let activeSitterSession: SitterSession | null = null
   if (options.sitter) {
+    const sitterSessionId = '99999999-0000-0000-0000-000000000001'
     activeSitterSession = {
-      id: '99999999-0000-0000-0000-000000000001',
+      id: sitterSessionId,
       sitterName: 'Jess',
       startedAt: ago(2 * HOUR_MS),
       endedAt: null,
       summaryShownAt: null,
     }
-    feedings.push({ id: 'feed-theo-sitter-meal', childId: theo.id, at: ago(90 * MIN_MS), type: 'meal', amount: null, note: 'Pasta and peas' })
-    stickers.push({ id: 'sticker-ivy-sitter-teeth', childId: ivy.id, categoryId: stickerCategories[1]!.id, at: ago(40 * MIN_MS) })
+    feedings.push({ id: 'feed-theo-sitter-meal', childId: theo.id, at: ago(90 * MIN_MS), type: 'meal', amount: null, note: 'Pasta and peas', sitterSessionId })
+    stickers.push({ id: 'sticker-ivy-sitter-teeth', childId: ivy.id, categoryId: stickerCategories[1]!.id, at: ago(40 * MIN_MS), sitterSessionId })
     doses.push({
       id: 'ffffffff-0000-0000-0000-000000000003',
       childId: theo.id,
@@ -228,6 +234,7 @@ export function buildDemoSnapshot(now: Date, options: DemoOptions = {}): Househo
       createdAt: ago(50 * MIN_MS),
       note: '5 ml',
       warningsConfirmed: [],
+      sitterSessionId,
     })
   }
 

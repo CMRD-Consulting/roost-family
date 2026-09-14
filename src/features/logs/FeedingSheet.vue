@@ -67,6 +67,7 @@ const canSave = computed(() => !busy.value && child.value !== null && type.value
 async function save(): Promise<void> {
   catchUp()
   if (!view.value || !child.value || !type.value || !canSave.value) return
+  const attribution = attributionFor(identity.value, who.value, view.value.members, view.value.activeSitterSession ?? null)
   const result = await submit({
     kind: 'feeding.add',
     householdId: view.value.household.id,
@@ -77,8 +78,9 @@ async function save(): Promise<void> {
       type: type.value as FeedingEntry['type'],
       amount: amount.value,
       note: note.value.trim() || null,
+      sitterSessionId: attribution.sitterSessionId,
     },
-    attribution: attributionFor(identity.value, who.value, view.value.members, view.value.activeSitterSession ?? null),
+    attribution,
   })
   if (result) {
     emit('saved', result)
