@@ -134,4 +134,108 @@ describe('createDeviceCache', () => {
     expect(warn).toHaveBeenCalledTimes(1)
     openSpy.mockRestore()
   })
+
+  describe('connection recovery', () => {
+    /** Wraps indexedDB.open so the test can reach each connection it opened. */
+    function trackOpens() {
+      const realOpen = indexedDB.open.bind(indexedDB)
+      const connections: IDBDatabase[] = []
+      const spy = vi.spyOn(indexedDB, 'open').mockImplementation((name: string, version?: number) => {
+        const request = realOpen(name, version)
+        request.addEventListener('success', () => connections.push(request.result))
+        return request
+      })
+      return { spy, connections }
+    }
+
+    it('reopens and retries once when the connection was closed under it (InvalidStateError)', async () => {
+      const cache = createDeviceCache(dbName)
+      await cache.saveIdentity(IDENTITY)
+      const { spy } = trackOpens()
+      const realTransaction = IDBDatabase.prototype.transaction
+      vi.spyOn(IDBDatabase.prototype, 'transaction').mockImplementationOnce(() => {
+        throw new DOMException('The database connection is closing.', 'InvalidStateError')
+      }).mockImplementation(function (this: IDBDatabase, ...args: Parameters<IDBDatabase['transaction']>) {
+        return realTransaction.apply(this, args)
+      })
+
+      expect(await cache.loadIdentity()).toEqual(IDENTITY)
+      expect(spy).toHaveBeenCalledTimes(1)
+    })
+
+    it('reopens and retries once after an UnknownError', async () => {
+      const cache = createDeviceCache(dbName)
+      await cache.saveIdentity(IDENTITY)
+      const realTransaction = IDBDatabase.prototype.transaction
+      vi.spyOn(IDBDatabase.prototype, 'transaction').mockImplementationOnce(() => {
+        throw new DOMException('Internal error.', 'UnknownError')
+      }).mockImplementation(function (this: IDBDatabase, ...args: Parameters<IDBDatabase['transaction']>) {
+        return realTransaction.apply(this, args)
+      })
+
+      expect(await cache.loadIdentity()).toEqual(IDENTITY)
+    })
+
+    it('reopens and retries once when a transaction aborts', async () => {
+      const cache = createDeviceCache(dbName)
+      await cache.saveIdentity(IDENTITY)
+      const realTransaction = IDBDatabase.prototype.transaction
+      vi.spyOn(IDBDatabase.prototype, 'transaction').mockImplementationOnce(function (this: IDBDatabase, ...args: Parameters<IDBDatabase['transaction']>) {
+        const tx = realTransaction.apply(this, args)
+        queueMicrotask(() => tx.abort())
+        return tx
+      }).mockImplementation(function (this: IDBDatabase, ...args: Parameters<IDBDatabase['transaction']>) {
+        return realTransaction.apply(this, args)
+      })
+
+      const other = fixture('h1', new Date().toISOString())
+      await cache.saveSnapshot(other)
+      expect(await cache.loadSnapshot('h1')).toEqual(other)
+    })
+
+    it('falls back when the retry fails too, and recovers on the next call', async () => {
+      const cache = createDeviceCache(dbName)
+      await cache.saveIdentity(IDENTITY)
+      const realTransaction = IDBDatabase.prototype.transaction
+      const failing = () => {
+        throw new DOMException('closing', 'InvalidStateError')
+      }
+      vi.spyOn(IDBDatabase.prototype, 'transaction')
+        .mockImplementationOnce(failing)
+        .mockImplementationOnce(failing)
+        .mockImplementation(function (this: IDBDatabase, ...args: Parameters<IDBDatabase['transaction']>) {
+          return realTransaction.apply(this, args)
+        })
+
+      expect(await cache.loadIdentity()).toBeNull()
+      expect(await cache.loadIdentity()).toEqual(IDENTITY)
+    })
+
+    it('opens a fresh connection after the browser closes the current one', async () => {
+      const { spy, connections } = trackOpens()
+      const cache = createDeviceCache(dbName)
+      await cache.saveIdentity(IDENTITY)
+      expect(spy).toHaveBeenCalledTimes(1)
+
+      // The browser closing a connection abnormally fires `close` on it.
+      connections[0]!.close()
+      connections[0]!.onclose?.(new Event('close'))
+
+      expect(await cache.loadIdentity()).toEqual(IDENTITY)
+      expect(spy).toHaveBeenCalledTimes(2)
+    })
+
+    it('steps aside when another tab upgrades the database', async () => {
+      const cache = createDeviceCache(dbName)
+      await cache.saveIdentity(IDENTITY)
+
+      const upgraded = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open(dbName, 2)
+        request.onsuccess = () => resolve(request.result)
+        request.onerror = () => reject(request.error)
+        request.onblocked = () => reject(new Error('blocked by the device cache'))
+      })
+      upgraded.close()
+    })
+  })
 })

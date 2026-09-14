@@ -25,15 +25,38 @@ function deepCopy<T>(value: T): T {
   return JSON.parse(JSON.stringify(toRaw(value))) as T
 }
 
-function openDb(dbName: string): Promise<IDBDatabase> {
+/** Opens the db. `onClosed` runs when the connection goes away (another tab upgrading, or the browser closing it). */
+function openDb(dbName: string, onClosed: () => void): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(dbName, VERSION)
+    let settled = false
     request.onupgradeneeded = () => {
       request.result.createObjectStore(STORE)
     }
-    request.onsuccess = () => resolve(request.result)
-    request.onerror = () => reject(request.error)
-    request.onblocked = () => reject(new DOMException('The device cache is blocked by another open tab.', 'UnknownError'))
+    request.onsuccess = () => {
+      const db = request.result
+      if (settled) {
+        // We already gave up on this open (it was blocked); don't leak the late connection.
+        db.close()
+        return
+      }
+      settled = true
+      db.onversionchange = () => {
+        // Another tab wants to upgrade: step aside instead of blocking it. The next operation reopens.
+        db.close()
+        onClosed()
+      }
+      db.onclose = onClosed
+      resolve(db)
+    }
+    request.onerror = () => {
+      settled = true
+      reject(request.error)
+    }
+    request.onblocked = () => {
+      settled = true
+      reject(new DOMException('The device cache is blocked by another open tab.', 'UnknownError'))
+    }
   })
 }
 
@@ -67,23 +90,48 @@ export function createDeviceCache(dbName = 'roost-cache'): DeviceCache {
 
   function getDb(): Promise<IDBDatabase> {
     if (dbPromise === null) {
-      dbPromise = openDb(dbName).catch((e: unknown) => {
-        dbPromise = null
+      const opening: Promise<IDBDatabase> = openDb(dbName, () => {
+        if (dbPromise === opening) dbPromise = null
+      }).catch((e: unknown) => {
+        // A failed open isn't cached: the next operation tries again.
+        if (dbPromise === opening) dbPromise = null
         if (!warned) {
           warned = true
           console.warn('Device cache unavailable; continuing without it.', e)
         }
         throw e
       })
+      dbPromise = opening
     }
     return dbPromise
   }
 
-  /** Runs one transaction; any failure (including "can't open the db at all") degrades to `fallback`. */
+  /** Drops the current connection so the next operation opens a fresh one. */
+  async function resetConnection(): Promise<void> {
+    const current = dbPromise
+    dbPromise = null
+    if (current) (await current.catch(() => null))?.close()
+  }
+
+  /**
+   * Runs one transaction. A failure on an open connection (closed under us: InvalidStateError; a transient
+   * browser failure: UnknownError; an aborted or failed transaction) resets the connection and retries once.
+   * Anything still failing (including "can't open the db at all") degrades to `fallback`.
+   */
   async function transact<T>(mode: IDBTransactionMode, fn: (store: IDBObjectStore) => IDBRequest<T>, fallback: T): Promise<T> {
+    let db: IDBDatabase
     try {
-      const db = await getDb()
+      db = await getDb()
+    } catch {
+      return fallback
+    }
+    try {
       return await runTransaction(db, mode, fn)
+    } catch {
+      await resetConnection()
+    }
+    try {
+      return await runTransaction(await getDb(), mode, fn)
     } catch {
       return fallback
     }
