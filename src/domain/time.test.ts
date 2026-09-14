@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import {
   parseHourMinute,
   minutesOfDay,
@@ -8,6 +8,7 @@ import {
   householdWeekday,
   formatDuration,
   formatClock,
+  normalizeSpaces,
 } from './time'
 
 const NY = 'America/New_York'
@@ -75,8 +76,41 @@ describe('formatDuration', () => {
   })
 })
 
+describe('normalizeSpaces', () => {
+  it('replaces U+202F (narrow no-break space) with a regular space', () => {
+    expect(normalizeSpaces('3:10 PM')).toBe('3:10 PM')
+  })
+  it('leaves regular spaces alone', () => {
+    expect(normalizeSpaces('3:10 PM')).toBe('3:10 PM')
+  })
+  it('does not touch a literal U+00A0 (non-breaking space)', () => {
+    // Only U+202F is normalized; other Unicode spaces pass through unchanged.
+    expect(normalizeSpaces('3:10 PM')).toBe('3:10 PM')
+  })
+})
+
 describe('formatClock', () => {
   it('formats 12-hour time in the household zone', () => {
     expect(formatClock(new Date('2026-09-14T19:10:00Z'), NY)).toBe('3:10 PM')
+  })
+
+  it('never leaves a U+202F in its output', () => {
+    const out = formatClock(new Date('2026-09-14T19:10:00Z'), NY)
+    expect(out.includes(' ')).toBe(false)
+  })
+
+  it('reuses one Intl.DateTimeFormat instance per time zone', () => {
+    // Use a zone not touched elsewhere in this file, so the module-level cache is
+    // guaranteed empty for it going in.
+    const zone = 'America/Chicago'
+    const spy = vi.spyOn(Intl, 'DateTimeFormat')
+    formatClock(new Date('2026-09-14T19:10:00Z'), zone)
+    formatClock(new Date('2026-09-14T20:10:00Z'), zone)
+    formatClock(new Date('2026-09-14T20:10:00Z'), zone)
+    const callsForZone = spy.mock.calls.filter(
+      (args) => (args[1] as Intl.DateTimeFormatOptions | undefined)?.timeZone === zone,
+    )
+    expect(callsForZone.length).toBe(1)
+    spy.mockRestore()
   })
 })

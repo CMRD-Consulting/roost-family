@@ -44,8 +44,23 @@ export function formatDuration(ms: number): string {
   return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`
 }
 
+/** Some ICU builds separate the time from AM/PM with U+202F (narrow no-break
+ * space) instead of a regular space; normalize it so layout and tests see ' '. */
+export function normalizeSpaces(s: string): string {
+  return s.replace(/ /g, ' ')
+}
+
+const clockFormatters = new Map<string, Intl.DateTimeFormat>()
+
+function clockFormatterFor(timeZone: string): Intl.DateTimeFormat {
+  let formatter = clockFormatters.get(timeZone)
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', timeZone })
+    clockFormatters.set(timeZone, formatter)
+  }
+  return formatter
+}
+
 export function formatClock(at: Date, timeZone: string): string {
-  return new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', timeZone })
-    .format(at)
-    .replace(/ /g, ' ')
+  return normalizeSpaces(clockFormatterFor(timeZone).format(at))
 }
