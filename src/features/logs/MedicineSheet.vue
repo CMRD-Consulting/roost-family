@@ -58,6 +58,24 @@ watch(childId, () => {
   if (medicineId.value !== null && !medicines.value.some((m) => m.id === medicineId.value)) medicineId.value = null
 })
 
+const warningKinds = computed(() => warnings.value.map((w) => w.kind).join(','))
+/**
+ * The warning kinds the adult is confirming: taken when the save button's label last changed and whenever the
+ * adult changes what is being logged. Warnings that change without either (the clock moving on, another
+ * display's dose arriving) must be looked at again before a tap confirms them.
+ */
+const acknowledgedWarningKinds = ref('')
+const warningsChanged = ref(false)
+
+function acknowledgeWarnings(): void {
+  acknowledgedWarningKinds.value = warningKinds.value
+}
+
+function onTimeAdjusted(value: string): void {
+  adjust(value)
+  acknowledgeWarnings()
+}
+
 watch(
   () => props.open,
   (open) => {
@@ -67,8 +85,10 @@ watch(
     who.value = null
     note.value = ''
     pendingOffline.value = null
+    warningsChanged.value = false
     clearError()
     childId.value = defaultChildId(children.value)
+    acknowledgeWarnings()
   },
   { immediate: true },
 )
@@ -77,6 +97,7 @@ const canSave = computed(
   () => !busy.value && child.value !== null && medicine.value !== null && who.value !== null,
 )
 const saveLabel = computed(() => (warnings.value.length > 0 ? 'Confirm and save' : 'Save'))
+watch([saveLabel, childId, medicineId], acknowledgeWarnings)
 
 async function send(cmd: LogCommand, confirmOffline: boolean): Promise<void> {
   let result: SaveResult | null
@@ -97,6 +118,13 @@ async function send(cmd: LogCommand, confirmOffline: boolean): Promise<void> {
 async function save(): Promise<void> {
   catchUp()
   if (!view.value || !child.value || !medicine.value || who.value === null || !canSave.value) return
+  if (warningKinds.value !== acknowledgedWarningKinds.value) {
+    // Not what the adult was looking at when they tapped: show the new warnings and wait for another tap.
+    acknowledgeWarnings()
+    warningsChanged.value = true
+    return
+  }
+  warningsChanged.value = false
   const attribution = attributionFor(identity.value, who.value, view.value.members)
   await send(
     {
@@ -166,9 +194,12 @@ async function logAnyway(): Promise<void> {
           </div>
           <div class="flex flex-col gap-2">
             <SheetLabel>Time given</SheetLabel>
-            <RTimeStepper :model-value="at" :min="minAt" :max="max" :time-zone="tz" @update:model-value="adjust" />
+            <RTimeStepper :model-value="at" :min="minAt" :max="max" :time-zone="tz" @update:model-value="onTimeAdjusted" />
           </div>
 
+          <p v-if="warningsChanged" role="alert" data-testid="warnings-changed" class="text-[22px] font-semibold text-warn-ink">
+            Warnings changed — review and confirm.
+          </p>
           <div
             v-if="warningMessages.length > 0"
             data-testid="dose-warnings"

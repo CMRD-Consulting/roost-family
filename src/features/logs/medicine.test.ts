@@ -4,6 +4,7 @@ import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import { buildDemoSnapshot } from '@/data/demo/demoFixture'
 import type { HouseholdSource } from '@/data/householdSource'
 import type { LogCommand } from '@/data/logCommands'
+import type { HouseholdSnapshot } from '@/data/snapshot'
 import { LogWriteError } from '@/data/logWriter'
 import { useDisplayStore } from '@/session/displayStore'
 import { useHouseholdStore } from '@/stores/householdStore'
@@ -24,6 +25,8 @@ const CONFLICT_DOSE = 'ffffffff-0000-0000-0000-000000000002'
 
 let pinia: Pinia
 let writer: FakeWriter
+/** What the (fake) server returns on the next load; tests change it and call `useHouseholdStore().reload()`. */
+let serverSnapshot: HouseholdSnapshot
 let wrapper: VueWrapper | null = null
 
 async function setup(opts: { realtime?: 'connected' | null; conflict?: boolean } = {}) {
@@ -31,9 +34,10 @@ async function setup(opts: { realtime?: 'connected' | null; conflict?: boolean }
   pinia = createPinia()
   setActivePinia(pinia)
   const snapshot = buildDemoSnapshot(new Date(NOW), { conflict: opts.conflict })
+  serverSnapshot = snapshot
   const realtime = opts.realtime === undefined ? 'connected' : opts.realtime
   const source: HouseholdSource = {
-    load: async () => structuredClone(snapshot),
+    load: async () => structuredClone(serverSnapshot),
     subscribe: (_id, _onChange, onStatus) => {
       if (realtime) onStatus?.(realtime)
       return () => {}
@@ -178,6 +182,47 @@ describe('medicine', () => {
       await click(button(w, 'Save'))
 
       expect(lastDose().entry.at).toBe('2026-09-14T18:55:00.000Z')
+    })
+
+    it('does not save when the warnings changed since they were shown; the next tap confirms the new ones', async () => {
+      await setup()
+      const w = mountIt(MedicineSheet)
+      await flushPromises()
+      await click(radio(w, 'Child', 'Theo'))
+      await click(radio(w, 'Medicine', 'Infant ibuprofen'))
+      await click(radio(w, 'Who', 'Sam'))
+      expect(button(w, 'Confirm and save').exists()).toBe(true) // early warning shown
+
+      // Another display's doses arrive: this one would now also be over the daily maximum. The label doesn't change.
+      const template = serverSnapshot.doses[0]!
+      for (const hour of ['05', '08', '11']) {
+        serverSnapshot.doses.push({ ...template, id: `other-${hour}`, at: `2026-09-14T${hour}:00:00.000Z`, loggedByName: 'Alex' })
+      }
+      await useHouseholdStore().reload()
+      await click(button(w, 'Confirm and save'))
+
+      expect(writer.calls).toEqual([])
+      expect(w.get('[data-testid="warnings-changed"]').text()).toBe('Warnings changed — review and confirm.')
+      expect(w.get('[data-testid="dose-warnings"]').text()).toContain('This would be dose 5 in 24 hours. Maximum is 4.')
+      expect(w.emitted('close')).toBeUndefined()
+
+      await click(button(w, 'Confirm and save'))
+      expect(lastDose().entry.warningsConfirmed).toEqual(['early', 'overMax'])
+      expect(w.emitted('close')).toHaveLength(1)
+    })
+
+    it("the adult's own changes to what's being logged don't count as warnings changing under them", async () => {
+      await setup()
+      const w = mountIt(MedicineSheet)
+      await flushPromises()
+      await click(radio(w, 'Child', 'Theo'))
+      await click(radio(w, 'Medicine', 'Infant acetaminophen'))
+      await click(radio(w, 'Who', 'Sam'))
+      await click(radio(w, 'Medicine', 'Infant ibuprofen')) // now warns early
+      await click(button(w, 'Confirm and save'))
+
+      expect(w.find('[data-testid="warnings-changed"]').exists()).toBe(false)
+      expect(lastDose().entry.warningsConfirmed).toEqual(['early'])
     })
 
     it('says "Save" with no warnings and records none', async () => {
