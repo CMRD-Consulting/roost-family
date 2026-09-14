@@ -155,3 +155,69 @@ end $$;
 
 revoke execute on function public.set_household_location(uuid, text, double precision, double precision) from public, anon;
 grant execute on function public.set_household_location(uuid, text, double precision, double precision) to authenticated;
+
+-- ═══ Household deletion and purge (spec §11.3) ═══
+
+-- ─── delete_household (replaces migration 3's): PINs end at once ─────────
+-- As before, plus every member's PIN is deleted immediately (nothing PIN-checked works on a deleted household anyway;
+-- this removes the hashes now rather than at the purge).
+create or replace function public.delete_household(p_household_id uuid, p_confirm_name text) returns void
+language plpgsql security definer set search_path = '' as $$
+declare
+  v_name text;
+  v_actor uuid;
+begin
+  perform private.require_adult();
+  select h.name into v_name from public.households h where h.id = p_household_id and h.deleted_at is null for update;
+  if v_name is null or not private.is_household_owner(p_household_id) then
+    raise exception 'only an owner can delete the household' using errcode = '42501';
+  end if;
+  if p_confirm_name is null or btrim(p_confirm_name) <> btrim(v_name) then
+    raise exception 'type the household name exactly to confirm' using errcode = '22023';
+  end if;
+  v_actor := private.my_membership_id(p_household_id);
+
+  update public.households set deleted_at = now() where id = p_household_id;
+  update public.displays set revoked_at = now() where household_id = p_household_id and revoked_at is null;
+  delete from public.display_claims c using public.displays d where d.id = c.display_id and d.household_id = p_household_id;
+  delete from public.member_invites where household_id = p_household_id;
+  delete from public.member_pins p using public.memberships m where m.id = p.membership_id and m.household_id = p_household_id;
+  update public.take_list_links set revoked_at = now() where household_id = p_household_id and revoked_at is null;
+
+  perform private.audit_setting(p_household_id, v_actor, 'household', 'delete', p_household_id,
+    jsonb_build_object('name', v_name));
+end $$;
+
+-- ─── Purge (replaces migration 6's) ──────────────────────────────────────
+-- Also deletes the anonymous device accounts bound to the purged households' displays (a display's credential is
+-- useless once its household is gone). Adult accounts are never deleted here.
+create or replace function private.purge_deleted_households() returns int
+language plpgsql security definer set search_path = '' as $$
+declare
+  v_count int;
+  v_household uuid;
+  v_devices uuid[];
+begin
+  select coalesce(array_agg(distinct d.auth_user_id), '{}') into v_devices
+  from public.displays d
+  join public.households h on h.id = d.household_id
+  join auth.users u on u.id = d.auth_user_id and u.is_anonymous
+  where h.deleted_at is not null and h.deleted_at < now() - interval '30 days';
+
+  for v_household in
+    select h.id from public.households h where h.deleted_at is not null and h.deleted_at < now() - interval '30 days'
+  loop
+    perform private.delete_photo_objects(v_household, null);
+  end loop;
+
+  delete from public.households where deleted_at is not null and deleted_at < now() - interval '30 days';
+  get diagnostics v_count = row_count;
+
+  -- After the households (and so their displays) are gone; a device bound to a display elsewhere is kept.
+  delete from auth.users u
+  where u.id = any (v_devices) and u.is_anonymous
+    and not exists (select 1 from public.displays d where d.auth_user_id = u.id);
+  return v_count;
+end $$;
+
+revoke execute on function private.purge_deleted_households() from public, anon, authenticated;

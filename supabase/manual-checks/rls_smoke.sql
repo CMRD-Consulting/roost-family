@@ -1198,6 +1198,10 @@ select pg_temp.expect('B household soft-deleted, displays revoked, invites gone'
   and not exists (select 1 from public.displays where household_id = pg_temp.v('household_b') and revoked_at is null)
   and not exists (select 1 from public.member_invites where household_id = pg_temp.v('household_b')));
 select pg_temp.expect('B data kept until purge', exists (select 1 from public.children where id = pg_temp.v('kid_b')));
+select pg_temp.expect('B PINs deleted at once', not exists (
+  select 1 from public.member_pins p join public.memberships m on m.id = p.membership_id where m.household_id = pg_temp.v('household_b')));
+select pg_temp.expect('other households keep their PINs', exists (
+  select 1 from public.member_pins p join public.memberships m on m.id = p.membership_id where m.household_id = pg_temp.v('household_f')));
 
 \echo '[62] purge_deleted_households removes only households deleted more than 30 days ago'
 update public.households set deleted_at = now() - interval '31 days' where id = :'household_b';
@@ -1205,7 +1209,18 @@ update public.households set deleted_at = now() - interval '29 days' where id = 
 insert into storage.objects (bucket_id, name) values
   ('household-photos', :'household_b' || '/00000000-0000-0000-0000-0000000000b1.jpg'),
   ('household-photos', :'household_f' || '/00000000-0000-0000-0000-0000000000f1.jpg');
+-- An adult account that happens to be bound to one of B's displays is an adult, not a device: it stays.
+insert into auth.users (id, instance_id, aud, role, email, raw_app_meta_data, raw_user_meta_data, is_anonymous, created_at, updated_at)
+values ('00000000-0000-0000-0000-0000000000b9', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'b9@roost.test', '{}', '{}', false, now(), now());
+insert into public.displays (household_id, name, auth_user_id, revoked_at) values (:'household_b', 'B odd', '00000000-0000-0000-0000-0000000000b9', now());
+select pg_temp.expect('B display device user exists before the purge', exists (
+  select 1 from auth.users where id = '00000000-0000-0000-0000-00000000000e'));
 select pg_temp.expect('one household purged', private.purge_deleted_households() = 1);
+select pg_temp.expect('B''s anonymous display users deleted with the household', not exists (
+  select 1 from auth.users where id = '00000000-0000-0000-0000-00000000000e'));
+select pg_temp.expect('non-anonymous users and other households'' display users kept', exists (
+  select 1 from auth.users where id = '00000000-0000-0000-0000-0000000000b9')
+  and exists (select 1 from auth.users where id = '00000000-0000-0000-0000-00000000000d'));
 select pg_temp.expect('B household and its data gone', not exists (select 1 from public.households where id = pg_temp.v('household_b'))
   and not exists (select 1 from public.children where id = pg_temp.v('kid_b'))
   and not exists (select 1 from public.memberships where household_id = pg_temp.v('household_b'))
