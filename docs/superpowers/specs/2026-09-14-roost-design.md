@@ -359,6 +359,7 @@ For times a sitter is in charge.
   - Emergency contacts, pediatrician, home address
   - "Where things are" notes (e.g., "Spare diapers: hall closet")
 - **Hidden:** calendar, Jot it, Grocery, Take list, Settings.
+- Sitters can undo their own non-medicine logs within 10 seconds; undoing a dose needs an adult PIN.
 
 **Exit:** Sitter Mode button → any adult PIN → **"While You Were Out" summary**.
 
