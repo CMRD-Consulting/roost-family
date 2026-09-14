@@ -49,7 +49,7 @@ It starts as one family's app (household #1, the author's) but is built as a mul
 |---|---|
 | **Name** | Public brand **Roost Family**; project and repo name **Roost**. A trademark clearance search happens before public launch |
 | **Brand** | Logo **1A "Gable"** (line-drawn birdhouse) with lowercase **"roost family"** wordmark; accent `#E2703A`; typeface **Outfit** (400/500/600/700) |
-| **Domain** | **roost.family** (to be registered) |
+| **Domain** | **roost.cmrd.dev** (CMRD subdomain) |
 | **Audience** | Families with kids about 0–6, with features that grow with the kids (age-based defaults, [7.2](#72-main-screen)) |
 | **Build order** | Household #1 first, built product-ready (accounts, household scoping) from the first commit. No billing or marketing site in v1 |
 | **Business model** | Free hosted service, closed source. Payment may be added later; the household record carries a `plan` field (always `free` for now) |
@@ -416,7 +416,7 @@ Opened with an adult PIN. Sections marked 🔐 require a full sign-in ([6.3](#63
 
 ### 7.10 Manage Household (any browser)
 
-- **roost.family/manage**, opened in any browser (laptop, borrowed phone), offers **Manage household** after a full sign-in.
+- **roost.cmrd.dev/manage**, opened in any browser (laptop, borrowed phone), offers **Manage household** after a full sign-in.
 - Uses the tablet layout; it isn't designed for phones, but works on them.
 - **Owners:** Displays (revoke), Members (remove), Export, Delete household.
 - **Adults:** My account (disconnect calendars, leave household).
@@ -576,7 +576,7 @@ All household-owned tables are scoped to a household, directly through `househol
 |---|---|
 | One household medicine list | Medicines defined **per child** |
 | One household night-sleep boundary | **Per-child** night-sleep window, defaulting to a household window |
-| Brand and domain unspecified | Logo 1A "Gable", accent `#E2703A`, Outfit typeface; domain **roost.family** |
+| Brand and domain unspecified | Logo 1A "Gable", accent `#E2703A`, Outfit typeface; domain **roost.cmrd.dev** (originally roost.family) |
 | All main-screen text ≥ 24 pt | Tiered: glanceable ≥ 24 pt, secondary ≥ 18 pt, nothing < 16 pt |
 | All touch targets ≥ 60 pt | Tiered: 60 pt on in-the-moment surfaces, 44 pt on Settings, wizard, Join, Manage household |
 | Person colors unspecified | Dedicated 10-color person palette, separate from log-button colors |

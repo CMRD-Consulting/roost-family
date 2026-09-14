@@ -87,7 +87,7 @@ Open http://localhost:5173/home. Try `?conflict`, `?manyKids`, or both. On the i
      - Revoking the display in the database sent the tablet to "removed" within about a minute, without a reload.
      - Join a household as `sam@roost.test` rendered the seeded Rivera household.
      - A feeding inserted in SQL appeared on screen within 3 s through realtime.
-2. **Register `roost.family`.** It had no DNS records.
+2. **Domain:** the app will live at `roost.cmrd.dev` (spec updated). Undo stays at 10 seconds.
 3. **Before any outside family** (spec §15): Supabase project, Google OAuth verification, Apple sign-in, custom SMTP (Supabase's default sender allows about 2 emails an hour), lawyer review, and a trademark search.
 4. **To re-run the database checks without containers:** start a throwaway Postgres on port 55432 first. The one I used lived in this session's scratch folder and is now stopped.
    ```bash
