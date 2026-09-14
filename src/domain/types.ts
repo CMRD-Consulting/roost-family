@@ -60,6 +60,8 @@ export interface DoseEntry {
   loggedOffline: boolean
   voidedAt: IsoTimestamp | null
   conflictAcknowledgedAt: IsoTimestamp | null
+  /** Server insert time (= sync time for offline-logged doses). */
+  createdAt: IsoTimestamp
 }
 
 export interface StickerEntry {

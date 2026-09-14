@@ -12,7 +12,7 @@ const feeding = (childId: string, at: string): FeedingEntry => ({
   id: crypto.randomUUID(), childId, at, type: 'milk', amount: '6 oz', note: null,
 })
 const dose = (childId: string, at: string): DoseEntry => ({
-  id: crypto.randomUUID(), childId, medicineId: 'ibu', at, loggedByName: 'Jess (sitter)', loggedOffline: false, voidedAt: null, conflictAcknowledgedAt: null,
+  id: crypto.randomUUID(), childId, medicineId: 'ibu', at, loggedByName: 'Jess (sitter)', loggedOffline: false, voidedAt: null, conflictAcknowledgedAt: null, createdAt: at,
 })
 
 describe('sitterSummary', () => {

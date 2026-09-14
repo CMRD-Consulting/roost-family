@@ -15,6 +15,7 @@ const dose = (over: Partial<DoseEntry>): DoseEntry => ({
   loggedOffline: false,
   voidedAt: null,
   conflictAcknowledgedAt: null,
+  createdAt: over.at ?? '2026-09-14T12:00:00Z',
   ...over,
 })
 
@@ -148,5 +149,15 @@ describe('unacknowledgedConflicts', () => {
     const acked = dose({ id: 'ack', at: '2026-09-14T13:30:00Z', loggedOffline: true, conflictAcknowledgedAt: '2026-09-14T14:00:00Z' })
     const online = dose({ id: 'on', at: '2026-09-14T12:00:00Z' })
     expect(unacknowledgedConflicts([ibuprofen], [online, offline, acked]).map((d) => d.id)).toEqual(['off'])
+  })
+
+  it('only judges a dose against doses that existed at its own sync time', () => {
+    // Offline dose logged at 10:00 but not synced (created) until 10:30, with no
+    // conflicting dose yet on the server at that point.
+    const offline = dose({ id: 'off', at: '2026-09-14T10:00:00Z', createdAt: '2026-09-14T10:30:00Z', loggedOffline: true })
+    // A dose logged online afterwards, close enough in time to conflict if it were
+    // considered — but it didn't exist yet when the offline dose synced.
+    const later = dose({ id: 'later', at: '2026-09-14T12:00:00Z', createdAt: '2026-09-14T12:00:00Z' })
+    expect(unacknowledgedConflicts([ibuprofen], [offline, later])).toEqual([])
   })
 })

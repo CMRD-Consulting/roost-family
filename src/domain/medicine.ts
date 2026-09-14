@@ -96,6 +96,11 @@ export function unacknowledgedConflicts(medicines: Medicine[], doses: DoseEntry[
   return doses.filter((d) => {
     if (!isActive(d) || !d.loggedOffline || d.conflictAcknowledgedAt !== null) return false
     const medicine = byId.get(d.medicineId)
-    return medicine ? checkDose(medicine, doses, new Date(d.at), d.id).length > 0 : false
+    if (!medicine) return false
+    // Only judge against doses that existed (were already synced) as of this dose's
+    // own sync time — a dose synced later can't have caused a conflict back then.
+    const createdAt = Date.parse(d.createdAt)
+    const asOfSync = doses.filter((other) => Date.parse(other.createdAt) <= createdAt)
+    return checkDose(medicine, asOfSync, new Date(d.at), d.id).length > 0
   })
 }
