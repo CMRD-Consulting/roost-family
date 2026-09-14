@@ -579,3 +579,304 @@ grant execute on function
   public.set_my_color(uuid, text, text),
   public.delete_old_entries(uuid, text, text, timestamptz)
 to authenticated;
+
+-- ═══ Members, displays and household deletion (owner or adult full sign-in, spec §6.2–§6.4, §11.3) ═══
+
+-- One-time invites for a new adult to join on the display (hashed token, 10 minutes).
+-- Reachable only through the security-definer RPCs below: RLS on, no policies, no client privileges.
+create table public.member_invites (
+  id uuid primary key default gen_random_uuid(),
+  household_id uuid not null references public.households (id) on delete cascade,
+  role text not null check (role in ('owner', 'adult')),
+  token_hash text not null unique,
+  expires_at timestamptz not null,
+  created_by uuid,
+  used_at timestamptz,
+  created_at timestamptz not null default now(),
+  foreign key (created_by, household_id) references public.memberships (id, household_id) on delete set null (created_by)
+);
+create index on public.member_invites (household_id);
+alter table public.member_invites enable row level security;
+revoke all on public.member_invites from anon, authenticated;
+
+-- The caller's active membership in a live household, or null.
+create function private.my_membership_id(p_household_id uuid) returns uuid
+language sql stable security definer set search_path = '' as $$
+  select m.id from public.memberships m
+  join public.households h on h.id = m.household_id and h.deleted_at is null
+  where m.user_id = auth.uid() and m.household_id = p_household_id and m.left_at is null
+$$;
+
+-- Raises 22023 when the household would be left without an active owner once p_membership_id stops being one.
+-- Callers lock the household row first so concurrent role changes and removals serialize.
+create function private.require_other_owner(p_household_id uuid, p_membership_id uuid) returns void
+language plpgsql stable security definer set search_path = '' as $$
+begin
+  if not exists (
+    select 1 from public.memberships m
+    where m.household_id = p_household_id and m.role = 'owner' and m.left_at is null and m.id <> p_membership_id
+  ) then
+    raise exception 'a household must keep at least one owner' using errcode = '22023';
+  end if;
+end $$;
+
+-- ─── Invites ─────────────────────────────────────────────────────────────
+create function public.create_member_invite(p_household_id uuid, p_role text)
+returns table (out_token text, out_expires_at timestamptz)
+language plpgsql security definer set search_path = '' as $$
+declare
+  v_token text := encode(extensions.gen_random_bytes(24), 'hex');
+  v_invite uuid;
+  v_expires_at timestamptz := now() + interval '10 minutes';
+begin
+  perform private.require_adult();
+  if p_household_id is null or not private.is_household_owner(p_household_id) then
+    raise exception 'only an owner can add an adult' using errcode = '42501';
+  end if;
+  if p_role is null or p_role not in ('owner', 'adult') then
+    raise exception 'role must be owner or adult' using errcode = '22023';
+  end if;
+  delete from public.member_invites where household_id = p_household_id and used_at is null and expires_at <= now();
+  insert into public.member_invites (household_id, role, token_hash, expires_at, created_by)
+  values (p_household_id, p_role, encode(extensions.digest(v_token, 'sha256'), 'hex'), v_expires_at,
+    private.my_membership_id(p_household_id))
+  returning id into v_invite;
+  perform private.audit_setting(p_household_id, private.my_membership_id(p_household_id), 'members', 'invite', v_invite,
+    jsonb_build_object('role', p_role));
+  return query select v_token, v_expires_at;
+end $$;
+
+-- The new adult, signed in with their own account and having recorded consent, joins with a name, color and PIN.
+-- A former member of the household rejoins on their old membership row.
+create function public.accept_member_invite(p_token text, p_display_name text, p_color text, p_pin text) returns uuid
+language plpgsql security definer set search_path = '' as $$
+declare
+  v_user uuid := private.require_adult();
+  v_name text := btrim(p_display_name);
+  v_invite uuid;
+  v_household uuid;
+  v_role text;
+  v_membership uuid;
+  v_left_at timestamptz;
+begin
+  if not exists (select 1 from public.consent_records c where c.user_id = v_user and c.health_data_consent) then
+    raise exception 'consent required' using errcode = '42501';
+  end if;
+  if v_name is null or char_length(v_name) not between 1 and 40 then
+    raise exception 'name must be 1 to 40 characters' using errcode = '22023';
+  end if;
+  perform private.require_color(p_color);
+  if p_pin is null or p_pin !~ '^\d{4}$' then
+    raise exception 'PIN must be 4 digits' using errcode = '22023';
+  end if;
+
+  select i.id, i.household_id, i.role into v_invite, v_household, v_role
+  from public.member_invites i
+  join public.households h on h.id = i.household_id and h.deleted_at is null
+  where i.token_hash = encode(extensions.digest(coalesce(p_token, ''), 'sha256'), 'hex')
+    and i.used_at is null and i.expires_at > now()
+  for update of i;
+  if v_invite is null then
+    raise exception 'invalid or expired invite' using errcode = '22023';
+  end if;
+
+  select m.id, m.left_at into v_membership, v_left_at
+  from public.memberships m where m.user_id = v_user and m.household_id = v_household
+  for update;
+  if v_membership is not null and v_left_at is null then
+    raise exception 'already a member of this household' using errcode = '22023';
+  end if;
+
+  if v_membership is null then
+    insert into public.memberships (user_id, household_id, role, display_name, color)
+    values (v_user, v_household, v_role, v_name, p_color)
+    returning id into v_membership;
+  else
+    update public.memberships
+    set role = v_role, display_name = v_name, color = p_color, left_at = null, joined_at = now()
+    where id = v_membership;
+  end if;
+  perform private.set_pin_for(v_user, v_household, p_pin);
+  update public.member_invites set used_at = now() where id = v_invite;
+
+  perform private.audit_setting(v_household, v_membership, 'members', 'join', v_membership,
+    jsonb_build_object('role', v_role, 'display_name', v_name, 'invite_id', v_invite));
+  return v_membership;
+end $$;
+
+-- ─── Roles and removal ───────────────────────────────────────────────────
+create function public.set_member_role(p_membership_id uuid, p_role text) returns void
+language plpgsql security definer set search_path = '' as $$
+declare
+  v_household uuid;
+  v_role text;
+begin
+  perform private.require_adult();
+  select m.household_id into v_household from public.memberships m where m.id = p_membership_id and m.left_at is null;
+  if v_household is not null then
+    perform 1 from public.households h where h.id = v_household for update;
+    select m.role into v_role from public.memberships m where m.id = p_membership_id and m.left_at is null;
+  end if;
+  if v_role is null or not private.is_household_owner(v_household) then
+    raise exception 'only an owner can change roles' using errcode = '42501';
+  end if;
+  if p_role is null or p_role not in ('owner', 'adult') then
+    raise exception 'role must be owner or adult' using errcode = '22023';
+  end if;
+  if v_role = 'owner' and p_role <> 'owner' then
+    perform private.require_other_owner(v_household, p_membership_id);
+  end if;
+  update public.memberships set role = p_role where id = p_membership_id;
+  perform private.audit_setting(v_household, private.my_membership_id(v_household), 'members', 'role', p_membership_id,
+    jsonb_build_object('role', p_role));
+end $$;
+
+-- Ends a membership (left_at) and deletes its PIN. Past entries keep the member's name.
+create function private.end_membership(p_membership_id uuid) returns void
+language sql security definer set search_path = '' as $$
+  update public.memberships set left_at = now() where id = p_membership_id;
+  delete from public.member_pins where membership_id = p_membership_id;
+$$;
+
+create function public.remove_member(p_membership_id uuid) returns void
+language plpgsql security definer set search_path = '' as $$
+declare
+  v_household uuid;
+  v_role text;
+  v_actor uuid;
+begin
+  perform private.require_adult();
+  select m.household_id into v_household from public.memberships m where m.id = p_membership_id and m.left_at is null;
+  if v_household is not null then
+    perform 1 from public.households h where h.id = v_household for update;
+    select m.role into v_role from public.memberships m where m.id = p_membership_id and m.left_at is null;
+  end if;
+  if v_role is null or not private.is_household_owner(v_household) then
+    raise exception 'only an owner can remove a member' using errcode = '42501';
+  end if;
+  if v_role = 'owner' then
+    perform private.require_other_owner(v_household, p_membership_id);
+  end if;
+  v_actor := private.my_membership_id(v_household);
+  perform private.end_membership(p_membership_id);
+  perform private.audit_setting(v_household, v_actor, 'members', 'remove', p_membership_id, null);
+end $$;
+
+create function public.leave_household(p_household_id uuid) returns void
+language plpgsql security definer set search_path = '' as $$
+declare v_membership uuid;
+begin
+  perform private.require_adult();
+  if private.my_membership_id(p_household_id) is null then
+    raise exception 'not a member of this household' using errcode = '42501';
+  end if;
+  perform 1 from public.households h where h.id = p_household_id for update;
+  v_membership := private.my_membership_id(p_household_id);
+  if v_membership is null then
+    raise exception 'not a member of this household' using errcode = '42501';
+  end if;
+  if (select m.role from public.memberships m where m.id = v_membership) = 'owner' then
+    perform private.require_other_owner(p_household_id, v_membership);
+  end if;
+  perform private.end_membership(v_membership);
+  perform private.audit_setting(p_household_id, v_membership, 'members', 'leave', v_membership, null);
+end $$;
+
+-- ─── Displays ────────────────────────────────────────────────────────────
+create function public.rename_display(p_display_id uuid, p_name text) returns void
+language plpgsql security definer set search_path = '' as $$
+declare
+  v_household uuid;
+  v_name text := btrim(p_name);
+begin
+  perform private.require_adult();
+  select d.household_id into v_household from public.displays d where d.id = p_display_id;
+  if v_household is null or not private.is_household_owner(v_household) then
+    raise exception 'only an owner can rename a display' using errcode = '42501';
+  end if;
+  if v_name is null or char_length(v_name) not between 1 and 40 then
+    raise exception 'display name must be 1 to 40 characters' using errcode = '22023';
+  end if;
+  update public.displays set name = v_name where id = p_display_id;
+  perform private.audit_setting(v_household, private.my_membership_id(v_household), 'displays', 'rename', p_display_id,
+    jsonb_build_object('name', v_name));
+end $$;
+
+-- ─── Household deletion (spec §11.3) ─────────────────────────────────────
+-- Soft delete: every policy and RPC already ignores households with deleted_at set, so members lose access at
+-- once. Displays, pending display claims, member invites and take-list links are revoked immediately.
+-- private.purge_deleted_households() hard-deletes the data after 30 days.
+create function public.delete_household(p_household_id uuid, p_confirm_name text) returns void
+language plpgsql security definer set search_path = '' as $$
+declare
+  v_name text;
+  v_actor uuid;
+begin
+  perform private.require_adult();
+  select h.name into v_name from public.households h where h.id = p_household_id and h.deleted_at is null for update;
+  if v_name is null or not private.is_household_owner(p_household_id) then
+    raise exception 'only an owner can delete the household' using errcode = '42501';
+  end if;
+  if p_confirm_name is null or btrim(p_confirm_name) <> btrim(v_name) then
+    raise exception 'type the household name exactly to confirm' using errcode = '22023';
+  end if;
+  v_actor := private.my_membership_id(p_household_id);
+
+  update public.households set deleted_at = now() where id = p_household_id;
+  update public.displays set revoked_at = now() where household_id = p_household_id and revoked_at is null;
+  delete from public.display_claims c using public.displays d where d.id = c.display_id and d.household_id = p_household_id;
+  delete from public.member_invites where household_id = p_household_id;
+  update public.take_list_links set revoked_at = now() where household_id = p_household_id and revoked_at is null;
+
+  perform private.audit_setting(p_household_id, v_actor, 'household', 'delete', p_household_id,
+    jsonb_build_object('name', v_name));
+end $$;
+
+-- Hard-deletes households deleted more than 30 days ago (cascades to all household data; doses are removed first
+-- by the purge_doses_before_delete trigger). Not callable by clients. Returns the number of households purged.
+-- Storage objects and calendar tokens join this purge when those features land (Phase 4).
+create function private.purge_deleted_households() returns int
+language plpgsql security definer set search_path = '' as $$
+declare v_count int;
+begin
+  delete from public.households where deleted_at is not null and deleted_at < now() - interval '30 days';
+  get diagnostics v_count = row_count;
+  return v_count;
+end $$;
+
+-- Scheduling: daily via pg_cron when the extension is installed. On hosted Supabase, enable pg_cron
+-- (Database → Extensions) and run once:
+--   select cron.schedule('roost-purge-deleted-households', '17 3 * * *', 'select private.purge_deleted_households()');
+do $$
+begin
+  if exists (select 1 from pg_catalog.pg_extension where extname = 'pg_cron') then
+    perform cron.schedule('roost-purge-deleted-households', '17 3 * * *', 'select private.purge_deleted_households()');
+  end if;
+end $$;
+
+-- ─── Grants ──────────────────────────────────────────────────────────────
+revoke execute on all functions in schema private from public;
+revoke execute on function
+  private.my_membership_id(uuid), private.require_other_owner(uuid, uuid), private.end_membership(uuid),
+  private.purge_deleted_households()
+from authenticated;
+
+revoke execute on function
+  public.create_member_invite(uuid, text),
+  public.accept_member_invite(text, text, text, text),
+  public.set_member_role(uuid, text),
+  public.remove_member(uuid),
+  public.leave_household(uuid),
+  public.rename_display(uuid, text),
+  public.delete_household(uuid, text)
+from public, anon;
+
+grant execute on function
+  public.create_member_invite(uuid, text),
+  public.accept_member_invite(text, text, text, text),
+  public.set_member_role(uuid, text),
+  public.remove_member(uuid),
+  public.leave_household(uuid),
+  public.rename_display(uuid, text),
+  public.delete_household(uuid, text)
+to authenticated;

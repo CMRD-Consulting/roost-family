@@ -741,6 +741,54 @@ export type Database = {
           },
         ]
       }
+      member_invites: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          expires_at: string
+          household_id: string
+          id: string
+          role: string
+          token_hash: string
+          used_at: string | null
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          expires_at: string
+          household_id: string
+          id?: string
+          role: string
+          token_hash: string
+          used_at?: string | null
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          expires_at?: string
+          household_id?: string
+          id?: string
+          role?: string
+          token_hash?: string
+          used_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "member_invites_created_by_household_id_fkey"
+            columns: ["created_by", "household_id"]
+            isOneToOne: false
+            referencedRelation: "memberships"
+            referencedColumns: ["id", "household_id"]
+          },
+          {
+            foreignKeyName: "member_invites_household_id_fkey"
+            columns: ["household_id"]
+            isOneToOne: false
+            referencedRelation: "households"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       member_pins: {
         Row: {
           membership_id: string
@@ -1308,6 +1356,15 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      accept_member_invite: {
+        Args: {
+          p_color: string
+          p_display_name: string
+          p_pin: string
+          p_token: string
+        }
+        Returns: string
+      }
       acknowledge_dose_conflict: {
         Args: { p_dose_id: string; p_membership_id: string; p_pin: string }
         Returns: undefined
@@ -1359,6 +1416,17 @@ export type Database = {
         }
         Returns: string
       }
+      create_member_invite: {
+        Args: { p_household_id: string; p_role: string }
+        Returns: {
+          out_expires_at: string
+          out_token: string
+        }[]
+      }
+      delete_household: {
+        Args: { p_confirm_name: string; p_household_id: string }
+        Returns: undefined
+      }
       delete_old_entries: {
         Args: {
           p_before: string
@@ -1377,6 +1445,7 @@ export type Database = {
         Args: { p_membership_id: string; p_pin: string; p_session_id: string }
         Returns: string
       }
+      leave_household: { Args: { p_household_id: string }; Returns: undefined }
       mark_sitter_summary_shown: {
         Args: { p_session_id: string }
         Returns: undefined
@@ -1401,6 +1470,11 @@ export type Database = {
           out_display_id: string
         }[]
       }
+      remove_member: { Args: { p_membership_id: string }; Returns: undefined }
+      rename_display: {
+        Args: { p_display_id: string; p_name: string }
+        Returns: undefined
+      }
       revoke_display: { Args: { p_display_id: string }; Returns: undefined }
       set_dinner_tonight: {
         Args: { p_household_id: string; p_text: string }
@@ -1414,6 +1488,10 @@ export type Database = {
           p_membership_id: string
           p_pin: string
         }
+        Returns: undefined
+      }
+      set_member_role: {
+        Args: { p_membership_id: string; p_role: string }
         Returns: undefined
       }
       set_my_color: {

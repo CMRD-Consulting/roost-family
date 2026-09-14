@@ -954,6 +954,244 @@ select pg_temp.expect('authenticated cannot execute the settings helpers', not e
   where n.nspname = 'private' and p.proname in ('require_settings_pin', 'audit_setting', 'require_color', 'require_child_of')
     and (has_function_privilege('authenticated', p.oid, 'execute') or has_function_privilege('anon', p.oid, 'execute'))));
 
+-- ─── Settings: members, displays and household deletion (full sign-in) ───
+-- G (caregiver in F) signs in; H is a new adult with consent; I is a new adult without consent yet.
+\set G '{"sub":"00000000-0000-0000-0000-000000000010","role":"authenticated","is_anonymous":false}'
+\set H '{"sub":"00000000-0000-0000-0000-000000000011","role":"authenticated","is_anonymous":false}'
+\set I '{"sub":"00000000-0000-0000-0000-000000000012","role":"authenticated","is_anonymous":false}'
+insert into auth.users (id, instance_id, aud, role, email, raw_app_meta_data, raw_user_meta_data, is_anonymous, created_at, updated_at)
+values
+  ('00000000-0000-0000-0000-000000000011', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'h@roost.test', '{}', '{}', false, now(), now()),
+  ('00000000-0000-0000-0000-000000000012', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'i@roost.test', '{}', '{}', false, now(), now());
+set local role authenticated;
+
+\echo '[55] create_member_invite: owners only, hashed token, 10-minute expiry'
+select set_config('request.jwt.claims', :'F', true);
+select out_token as invite_1, out_expires_at as invite_1_expires from public.create_member_invite(:'household_f', 'adult') \gset
+select pg_temp.expect('invite expires in 10 minutes', :'invite_1_expires'::timestamptz = now() + interval '10 minutes');
+select pg_temp.expect('invite audited', pg_temp.audited(pg_temp.v('household_f'), pg_temp.v('membership_f'), 'members', 'invite', null));
+select pg_temp.expect_error('members cannot read invites directly',
+  $q$select * from public.member_invites$q$, '42501');
+select pg_temp.expect_error('invite for the caregiver role',
+  $q$select * from public.create_member_invite(pg_temp.v('household_f'), 'caregiver')$q$, '22023');
+select set_config('request.jwt.claims', :'G', true);
+select pg_temp.expect_error('caregiver creates an invite',
+  $q$select * from public.create_member_invite(pg_temp.v('household_f'), 'adult')$q$, '42501');
+select set_config('request.jwt.claims', :'B', true);
+select pg_temp.expect_error('owner of another household creates an invite for F',
+  $q$select * from public.create_member_invite(pg_temp.v('household_f'), 'adult')$q$, '42501');
+select set_config('request.jwt.claims', :'E', true);
+select pg_temp.expect_error('display creates an invite',
+  $q$select * from public.create_member_invite(pg_temp.v('household_b'), 'adult')$q$, '42501');
+reset role;
+select pg_temp.expect('invite stored as a hash with its role and creator', (
+  select role = 'adult' and created_by = pg_temp.v('membership_f') and used_at is null
+     and token_hash = encode(extensions.digest(:'invite_1', 'sha256'), 'hex') and token_hash <> :'invite_1'
+  from public.member_invites where household_id = pg_temp.v('household_f')));
+set local role authenticated;
+
+\echo '[56] accept_member_invite: consent required, expiry, reuse and existing members rejected'
+select set_config('request.jwt.claims', :'F', true);
+select out_token as invite_expired from public.create_member_invite(:'household_f', 'adult') \gset
+select out_token as invite_2 from public.create_member_invite(:'household_f', 'owner') \gset
+reset role;
+update public.member_invites set expires_at = now() - interval '1 second'
+where token_hash = encode(extensions.digest(:'invite_expired', 'sha256'), 'hex');
+set local role authenticated;
+select set_config('request.jwt.claims', :'I', true);
+select pg_temp.expect_error('accept without consent',
+  format('select public.accept_member_invite(%L, %L, %L, %L)', :'invite_1', 'Indy', '#2F86A6', '9999'), '42501');
+select set_config('request.jwt.claims', :'H', true);
+select public.record_consent('2026-09-14', true);
+select pg_temp.expect_error('accept with a bad PIN',
+  format('select public.accept_member_invite(%L, %L, %L, %L)', :'invite_1', 'Harper', '#2F86A6', '12a4'), '22023');
+select pg_temp.expect_error('accept with a bad color',
+  format('select public.accept_member_invite(%L, %L, %L, %L)', :'invite_1', 'Harper', 'blue', '5555'), '22023');
+select pg_temp.expect_error('accept with a blank name',
+  format('select public.accept_member_invite(%L, %L, %L, %L)', :'invite_1', '  ', '#2F86A6', '5555'), '22023');
+select pg_temp.expect_error('accept an expired invite',
+  format('select public.accept_member_invite(%L, %L, %L, %L)', :'invite_expired', 'Harper', '#2F86A6', '5555'), '22023');
+select pg_temp.expect_error('accept an unknown token',
+  $q$select public.accept_member_invite('nope', 'Harper', '#2F86A6', '5555')$q$, '22023');
+select public.accept_member_invite(:'invite_1', ' Harper ', '#2F86A6', '5555') as membership_h \gset
+select set_config('smoke.membership_h', :'membership_h', true);
+select pg_temp.expect('H joined F as an adult', (
+  select role = 'adult' and display_name = 'Harper' and household_id = pg_temp.v('household_f') and left_at is null
+  from public.memberships where id = pg_temp.v('membership_h')));
+select pg_temp.expect('H sees household F', (select count(*) from public.households where id = pg_temp.v('household_f')) = 1);
+select pg_temp.expect('H PIN works for Settings', (
+  select out_role = 'adult' from public.settings_verify(pg_temp.v('membership_h'), '5555')));
+select pg_temp.expect('join audited', pg_temp.audited(pg_temp.v('household_f'), pg_temp.v('membership_h'), 'members', 'join', pg_temp.v('membership_h')));
+select set_config('request.jwt.claims', :'I', true);
+select public.record_consent('2026-09-14', true);
+select pg_temp.expect_error('reuse a used invite',
+  format('select public.accept_member_invite(%L, %L, %L, %L)', :'invite_1', 'Indy', '#2F86A6', '9999'), '22023');
+select set_config('request.jwt.claims', :'H', true);
+select pg_temp.expect_error('existing member accepts another invite',
+  format('select public.accept_member_invite(%L, %L, %L, %L)', :'invite_2', 'Harper', '#2F86A6', '5555'), '22023');
+select set_config('request.jwt.claims', :'E', true);
+select pg_temp.expect_error('display accepts an invite',
+  format('select public.accept_member_invite(%L, %L, %L, %L)', :'invite_2', 'Kitchen', '#2F86A6', '5555'), '42501');
+reset role;
+select pg_temp.expect('rejected accepts left invite_2 unused', (
+  select used_at is null from public.member_invites where token_hash = encode(extensions.digest(:'invite_2', 'sha256'), 'hex')));
+set local role authenticated;
+
+\echo '[57] set_member_role: owners only, and a household keeps its last owner'
+select set_config('request.jwt.claims', :'H', true);
+select pg_temp.expect_error('adult changes a role',
+  $q$select public.set_member_role(pg_temp.v('membership_h'), 'owner')$q$, '42501');
+select set_config('request.jwt.claims', :'G', true);
+select pg_temp.expect_error('caregiver changes a role',
+  $q$select public.set_member_role(pg_temp.v('membership_g'), 'owner')$q$, '42501');
+select set_config('request.jwt.claims', :'B', true);
+select pg_temp.expect_error('owner of another household changes a role',
+  $q$select public.set_member_role(pg_temp.v('membership_h'), 'owner')$q$, '42501');
+select set_config('request.jwt.claims', :'F', true);
+select pg_temp.expect_error('role caregiver',
+  $q$select public.set_member_role(pg_temp.v('membership_h'), 'caregiver')$q$, '22023');
+select pg_temp.expect_error('last owner demotes self',
+  $q$select public.set_member_role(pg_temp.v('membership_f'), 'adult')$q$, '22023');
+select public.set_member_role(:'membership_h', 'owner');
+select pg_temp.expect('H is an owner', (select role = 'owner' from public.memberships where id = pg_temp.v('membership_h')));
+select pg_temp.expect('role change audited', pg_temp.audited(pg_temp.v('household_f'), pg_temp.v('membership_f'), 'members', 'role', pg_temp.v('membership_h')));
+select public.set_member_role(:'membership_f', 'adult');
+select pg_temp.expect('F demoted itself while H is an owner', (select role = 'adult' from public.memberships where id = pg_temp.v('membership_f')));
+select set_config('request.jwt.claims', :'H', true);
+select pg_temp.expect_error('H, now the last owner, demotes self',
+  $q$select public.set_member_role(pg_temp.v('membership_h'), 'adult')$q$, '22023');
+select public.set_member_role(:'membership_f', 'owner');
+select pg_temp.expect('F is an owner again', (select role = 'owner' from public.memberships where id = pg_temp.v('membership_f')));
+
+\echo '[58] remove_member: owners only, last-owner protection, removal hides the household and ends the PIN'
+select set_config('request.jwt.claims', :'G', true);
+select pg_temp.expect_error('caregiver removes a member',
+  $q$select public.remove_member(pg_temp.v('membership_h'))$q$, '42501');
+select set_config('request.jwt.claims', :'B', true);
+select pg_temp.expect_error('owner of another household removes a member',
+  $q$select public.remove_member(pg_temp.v('membership_g'))$q$, '42501');
+select set_config('request.jwt.claims', :'F', true);
+select public.set_member_role(:'membership_h', 'adult');
+select pg_temp.expect_error('last owner removes self',
+  $q$select public.remove_member(pg_temp.v('membership_f'))$q$, '22023');
+select public.remove_member(:'membership_h');
+select pg_temp.expect('remove audited', pg_temp.audited(pg_temp.v('household_f'), pg_temp.v('membership_f'), 'members', 'remove', pg_temp.v('membership_h')));
+select pg_temp.expect_error('removed member''s PIN no longer opens Settings',
+  $q$select * from public.settings_verify(pg_temp.v('membership_h'), '5555')$q$, '42501');
+select pg_temp.expect_error('remove an already removed member',
+  $q$select public.remove_member(pg_temp.v('membership_h'))$q$, '42501');
+select set_config('request.jwt.claims', :'H', true);
+select pg_temp.expect('removed member sees no household F', (select count(*) from public.households where id = pg_temp.v('household_f')) = 0);
+select pg_temp.expect('removed member sees no F children', (select count(*) from public.children) = 0);
+reset role;
+select pg_temp.expect('removed membership kept with left_at and no PIN', (
+  select left_at is not null and not exists (select 1 from public.member_pins where membership_id = pg_temp.v('membership_h'))
+  from public.memberships where id = pg_temp.v('membership_h')));
+set local role authenticated;
+select pg_temp.expect('a former member rejoins on the same membership',
+  public.accept_member_invite(:'invite_2', 'Harper', '#2F86A6', '6666') = pg_temp.v('membership_h'));
+select pg_temp.expect('rejoined as owner with the new PIN', (
+  select out_role = 'owner' from public.settings_verify(pg_temp.v('membership_h'), '6666')));
+
+\echo '[59] leave_household: members leave, the last owner cannot'
+select set_config('request.jwt.claims', :'E', true);
+select pg_temp.expect_error('display leaves',
+  $q$select public.leave_household(pg_temp.v('household_b'))$q$, '42501');
+select set_config('request.jwt.claims', :'I', true);
+select pg_temp.expect_error('non-member leaves',
+  $q$select public.leave_household(pg_temp.v('household_f'))$q$, '42501');
+select set_config('request.jwt.claims', :'H', true);
+select public.leave_household(:'household_f');
+select pg_temp.expect('H left and sees no household F', (select count(*) from public.households where id = pg_temp.v('household_f')) = 0);
+select set_config('request.jwt.claims', :'F', true);
+select pg_temp.expect('leave audited', pg_temp.audited(pg_temp.v('household_f'), pg_temp.v('membership_h'), 'members', 'leave', pg_temp.v('membership_h')));
+select pg_temp.expect_error('last owner leaves',
+  $q$select public.leave_household(pg_temp.v('household_f'))$q$, '22023');
+
+\echo '[60] rename_display: owners only'
+select public.rename_display(:'display_f', '  Hallway ');
+select pg_temp.expect('display renamed', (select name = 'Hallway' from public.displays where id = pg_temp.v('display_f')));
+select pg_temp.expect('rename audited', pg_temp.audited(pg_temp.v('household_f'), pg_temp.v('membership_f'), 'displays', 'rename', pg_temp.v('display_f')));
+select pg_temp.expect_error('rename to a blank name',
+  $q$select public.rename_display(pg_temp.v('display_f'), '   ')$q$, '22023');
+select set_config('request.jwt.claims', :'G', true);
+select pg_temp.expect_error('caregiver renames a display',
+  $q$select public.rename_display(pg_temp.v('display_f'), 'Mine')$q$, '42501');
+select set_config('request.jwt.claims', :'B', true);
+select pg_temp.expect_error('owner of another household renames a display',
+  $q$select public.rename_display(pg_temp.v('display_f'), 'Mine')$q$, '42501');
+select set_config('request.jwt.claims', :'E', true);
+select pg_temp.expect_error('display renames itself',
+  $q$select public.rename_display(pg_temp.v('display_b'), 'Mine')$q$, '42501');
+
+\echo '[61] delete_household: owner and exact name required; revokes displays and hides the household at once'
+select set_config('request.jwt.claims', :'B', true);
+select out_token as invite_b from public.create_member_invite(:'household_b', 'adult') \gset
+select pg_temp.expect_error('delete with the wrong name',
+  $q$select public.delete_household(pg_temp.v('household_b'), 'B famly')$q$, '22023');
+select set_config('request.jwt.claims', :'F', true);
+select pg_temp.expect_error('owner of another household deletes B',
+  $q$select public.delete_household(pg_temp.v('household_b'), 'B family')$q$, '42501');
+select set_config('request.jwt.claims', :'E', true);
+select pg_temp.expect_error('display deletes its household',
+  $q$select public.delete_household(pg_temp.v('household_b'), 'B family')$q$, '42501');
+select set_config('request.jwt.claims', :'B', true);
+select public.delete_household(:'household_b', '  B family ');
+select pg_temp.expect('B sees no households', (select count(*) from public.households) = 0);
+select pg_temp.expect('B sees no children', (select count(*) from public.children) = 0);
+select pg_temp.expect_error('delete again',
+  $q$select public.delete_household(pg_temp.v('household_b'), 'B family')$q$, '42501');
+select set_config('request.jwt.claims', :'E', true);
+select pg_temp.expect('B display heartbeat false', not public.display_heartbeat());
+select pg_temp.expect('B display reports revoked', (select out_revoked from public.my_display()));
+select pg_temp.expect('B display sees no children', (select count(*) from public.children) = 0);
+select pg_temp.expect_error('Settings PIN no longer works in a deleted household',
+  $q$select * from public.settings_verify(pg_temp.v('membership_b'), '1111')$q$, '42501');
+select set_config('request.jwt.claims', :'I', true);
+select pg_temp.expect_error('invite to a deleted household cannot be accepted',
+  format('select public.accept_member_invite(%L, %L, %L, %L)', :'invite_b', 'Indy', '#2F86A6', '9999'), '22023');
+reset role;
+select pg_temp.expect('B household soft-deleted, displays revoked, invites gone', (
+  select deleted_at is not null from public.households where id = pg_temp.v('household_b'))
+  and not exists (select 1 from public.displays where household_id = pg_temp.v('household_b') and revoked_at is null)
+  and not exists (select 1 from public.member_invites where household_id = pg_temp.v('household_b')));
+select pg_temp.expect('B data kept until purge', exists (select 1 from public.children where id = pg_temp.v('kid_b')));
+
+\echo '[62] purge_deleted_households removes only households deleted more than 30 days ago'
+update public.households set deleted_at = now() - interval '31 days' where id = :'household_b';
+update public.households set deleted_at = now() - interval '29 days' where id = :'household_f';
+select pg_temp.expect('one household purged', private.purge_deleted_households() = 1);
+select pg_temp.expect('B household and its data gone', not exists (select 1 from public.households where id = pg_temp.v('household_b'))
+  and not exists (select 1 from public.children where id = pg_temp.v('kid_b'))
+  and not exists (select 1 from public.memberships where household_id = pg_temp.v('household_b'))
+  and not exists (select 1 from public.displays where household_id = pg_temp.v('household_b')));
+select pg_temp.expect('F (deleted 29 days ago) kept', exists (select 1 from public.households where id = pg_temp.v('household_f')));
+update public.households set deleted_at = null where id = :'household_f';
+
+\echo '[63] Membership, display and deletion privileges'
+select pg_temp.expect('anon cannot execute the full-sign-in settings RPCs', not exists (
+  select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public' and p.proname in (
+    'create_member_invite', 'accept_member_invite', 'set_member_role', 'remove_member', 'leave_household',
+    'rename_display', 'delete_household')
+    and has_function_privilege('anon', p.oid, 'execute')));
+select pg_temp.expect('authenticated can execute all 7 full-sign-in settings RPCs', (
+  select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public' and p.proname in (
+    'create_member_invite', 'accept_member_invite', 'set_member_role', 'remove_member', 'leave_household',
+    'rename_display', 'delete_household')
+    and has_function_privilege('authenticated', p.oid, 'execute')) = 7);
+select pg_temp.expect('no client role can execute purge or the membership helpers', not exists (
+  select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'private' and p.proname in ('purge_deleted_households', 'my_membership_id', 'require_other_owner', 'end_membership')
+    and (has_function_privilege('authenticated', p.oid, 'execute') or has_function_privilege('anon', p.oid, 'execute'))));
+select pg_temp.expect('member_invites: RLS on, no policies, no client privileges, not in realtime', (
+  select relrowsecurity from pg_class where oid = 'public.member_invites'::regclass)
+  and not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'member_invites')
+  and not has_table_privilege('authenticated', 'public.member_invites', 'select, insert, update, delete, truncate, references, trigger')
+  and not has_table_privilege('anon', 'public.member_invites', 'select, insert, update, delete, truncate, references, trigger')
+  and not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and tablename = 'member_invites'));
+
 \o
 \echo 'ALL RLS SMOKE CHECKS PASSED'
 rollback;
