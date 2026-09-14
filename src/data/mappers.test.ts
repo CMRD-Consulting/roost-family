@@ -321,8 +321,8 @@ describe('toDose', () => {
           created_at: '2026-09-14T17:30:00Z',
           note: '2.5 ml',
           warnings_confirmed: ['early'],
-        }),
           sitter_session_id: 'sess-1',
+        }),
       ),
     ).toEqual({
       id: 'd1',
@@ -336,8 +336,8 @@ describe('toDose', () => {
       createdAt: '2026-09-14T17:30:00Z',
       note: '2.5 ml',
       warningsConfirmed: ['early'],
-    })
       sitterSessionId: 'sess-1',
+    })
   })
 })
 
@@ -408,8 +408,8 @@ describe('toSleep', () => {
       startAt: '2026-09-14T04:00:00Z',
       endAt: '2026-09-14T09:00:00Z',
       type: 'night',
-    })
       sitterSessionId: 'sess-1',
+    })
   })
 
   it('maps an open (null end_at) entry', () => {
@@ -426,8 +426,8 @@ describe('toFeeding', () => {
       type: 'milk',
       amount: '6 oz',
       note: null,
-    })
       sitterSessionId: null,
+    })
   })
 })
 
@@ -438,8 +438,8 @@ describe('toDiaper', () => {
       childId: 'c1',
       at: '2026-09-14T17:00:00Z',
       kind: 'both',
-    })
       sitterSessionId: null,
+    })
   })
 })
 
@@ -450,8 +450,8 @@ describe('toSticker', () => {
       childId: 'c1',
       categoryId: 'cat1',
       at: '2026-09-14T18:00:00Z',
-    })
       sitterSessionId: null,
+    })
   })
 })
 

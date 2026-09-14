@@ -118,8 +118,8 @@ export function toDose(row: Tables<'dose_entries'>): DoseEntry {
     createdAt: row.created_at,
     note: row.note,
     warningsConfirmed: row.warnings_confirmed,
-  }
     sitterSessionId: row.sitter_session_id,
+  }
 }
 
 export function toRoutine(row: Tables<'routines'>): Routine {
@@ -140,8 +140,8 @@ export function toSleep(row: Tables<'sleep_entries'>): SleepEntry {
     startAt: row.start_at,
     endAt: row.end_at,
     type: assertOneOf(row.type, SLEEP_TYPES, 'sleep type'),
-  }
     sitterSessionId: row.sitter_session_id,
+  }
 }
 
 export function toFeeding(row: Tables<'feeding_entries'>): FeedingEntry {
@@ -152,8 +152,8 @@ export function toFeeding(row: Tables<'feeding_entries'>): FeedingEntry {
     type: assertOneOf(row.type, FEEDING_TYPES, 'feeding type'),
     amount: row.amount,
     note: row.note,
-  }
     sitterSessionId: row.sitter_session_id,
+  }
 }
 
 export function toDiaper(row: Tables<'diaper_entries'>): DiaperEntry {
@@ -162,8 +162,8 @@ export function toDiaper(row: Tables<'diaper_entries'>): DiaperEntry {
     childId: row.child_id,
     at: row.at,
     kind: assertOneOf(row.kind, DIAPER_KINDS, 'diaper kind'),
-  }
     sitterSessionId: row.sitter_session_id,
+  }
 }
 
 export function toSticker(row: Tables<'sticker_entries'>): StickerEntry {
@@ -172,8 +172,8 @@ export function toSticker(row: Tables<'sticker_entries'>): StickerEntry {
     childId: row.child_id,
     categoryId: row.category_id,
     at: row.at,
-  }
     sitterSessionId: row.sitter_session_id,
+  }
 }
 
 export function toStickerCategory(row: Tables<'sticker_categories'>): StickerCategory {
