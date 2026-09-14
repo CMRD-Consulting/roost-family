@@ -5,7 +5,7 @@ import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import { defineComponent, h } from 'vue'
 import { createMemoryHistory, createRouter, RouterView, type Router } from 'vue-router'
 import { buildDemoSnapshot } from '@/data/demo/demoFixture'
-import { resetDemoForTests } from '@/data/demo/demoHousehold'
+import { mutateDemo, resetDemoForTests } from '@/data/demo/demoHousehold'
 import { SettingsError, type SettingsApi } from '@/data/settingsApi'
 import { resolveSettingsRoute } from '@/router'
 import { useHouseholdStore } from '@/stores/householdStore'
@@ -73,6 +73,13 @@ function fakeApi(): FakeSettingsApi {
     deleteRoutine: vi.fn().mockResolvedValue(undefined),
     setRoutineDayOverride: vi.fn().mockResolvedValue(undefined),
   } as never
+}
+
+/** The demo settings API with every method spied on, so a test can check calls while the demo household changes. */
+async function demoApi(): Promise<FakeSettingsApi & Record<string, ReturnType<typeof vi.fn>>> {
+  const demo = (await import('@/data/demo/demoSettingsApi')).createDemoSettingsApi() as unknown as Record<string, (...args: unknown[]) => unknown>
+  for (const key of Object.keys(demo)) vi.spyOn(demo, key)
+  return demo as never
 }
 
 const Stub = (text: string) => defineComponent({ render: () => h('p', text) })
@@ -740,6 +747,264 @@ describe('SettingsShell', () => {
       await settle()
 
       expect(settingsApi.archiveStickerCategory).toHaveBeenCalledWith(SAM_AUTH, expect.any(String))
+      w.unmount()
+    })
+  })
+
+  describe('Logs', () => {
+    const THEO = 'cccccccc-0000-0000-0000-000000000002'
+    const IBUPROFEN_DOSE = 'ffffffff-0000-0000-0000-000000000001'
+
+    function radio(w: VueWrapper, group: string, label: string) {
+      const found = w.find(`[role="radiogroup"][aria-label="${group}"]`).findAll('[role="radio"]').find((r) => r.text() === label)
+      if (!found) throw new Error(`No "${label}" in ${group}`)
+      return found
+    }
+
+    function rows(w: VueWrapper) {
+      return w.findAll('[data-testid="log-row"]')
+    }
+
+    it("shows today's sleeps first, and yesterday's on the Yesterday chip", async () => {
+      const w = await openShell(await demoApi(), 'logs')
+
+      expect(w.find('h2').text()).toBe('Logs')
+      expect(rows(w)).toHaveLength(1)
+      expect(rows(w)[0]!.text()).toContain('11:00 AM')
+      expect(rows(w)[0]!.text()).toContain('Nap')
+      expect(rows(w)[0]!.text()).toContain('11:00 AM–12:20 PM · 1h 20m')
+      expect(rows(w)[0]!.text()).toContain('Theo')
+
+      await radio(w, 'Day', 'Yesterday').trigger('click')
+      await settle()
+      expect(rows(w)).toHaveLength(1)
+      expect(rows(w)[0]!.text()).toContain('Night sleep')
+      w.unmount()
+    })
+
+    it('filters by child and type and shows who logged it', async () => {
+      const w = await openShell(await demoApi(), 'logs')
+
+      await radio(w, 'Type', 'Sticker').trigger('click')
+      await settle()
+      expect(rows(w)[0]!.text()).toContain('Potty sticker')
+      await radio(w, 'Child', 'Theo').trigger('click')
+      await settle()
+      expect(rows(w)).toHaveLength(0)
+      expect(w.text()).toContain('No sticker entries for Theo today.')
+
+      await radio(w, 'Type', 'Medicine').trigger('click')
+      await settle()
+      expect(rows(w)[0]!.text()).toContain('Infant ibuprofen')
+      expect(rows(w)[0]!.text()).toContain('Logged by Sam')
+      w.unmount()
+    })
+
+    it('edits a sleep time', async () => {
+      const settingsApi = await demoApi()
+      const w = await openShell(settingsApi, 'logs')
+
+      await rows(w)[0]!.findAll('button').find((b) => b.text() === 'Edit')!.trigger('click')
+      await settle()
+      expect((inputByLabel(w, 'Start time').element as HTMLInputElement).value).toBe('11:00')
+      await inputByLabel(w, 'Start time').setValue('10:30')
+      await buttonByText(w, 'Save').trigger('click')
+      await settle()
+
+      expect(settingsApi.updateEntry).toHaveBeenCalledWith('sleep_entries', 'sleep-theo-nap', {
+        startAt: '2026-09-14T14:30:00.000Z', endAt: '2026-09-14T16:20:00.000Z',
+      })
+      expect(rows(w)[0]!.text()).toContain('10:30 AM–12:20 PM · 1h 50m')
+      w.unmount()
+    })
+
+    it('rejects an edit into the future', async () => {
+      const settingsApi = await demoApi()
+      const w = await openShell(settingsApi, 'logs')
+
+      await radio(w, 'Type', 'Feeding').trigger('click')
+      await settle()
+      await rows(w)[0]!.findAll('button').find((b) => b.text() === 'Edit')!.trigger('click')
+      await settle()
+      await inputByLabel(w, 'Time').setValue('18:00')
+      await buttonByText(w, 'Save').trigger('click')
+      await settle()
+
+      expect(w.text()).toContain('That time hasn’t happened yet.')
+      expect(settingsApi.updateEntry).not.toHaveBeenCalled()
+      w.unmount()
+    })
+
+    it('deletes a feeding after confirming', async () => {
+      const settingsApi = await demoApi()
+      const w = await openShell(settingsApi, 'logs')
+
+      await radio(w, 'Type', 'Feeding').trigger('click')
+      await settle()
+      await rows(w)[0]!.findAll('button').find((b) => b.text() === 'Delete')!.trigger('click')
+      await settle()
+      expect(w.text()).toContain('Delete this entry?')
+      expect(settingsApi.deleteEntry).not.toHaveBeenCalled()
+      await buttonByText(w, 'Delete entry').trigger('click')
+      await settle()
+
+      expect(settingsApi.deleteEntry).toHaveBeenCalledWith('feeding_entries', 'feed-theo-milk')
+      expect(rows(w)).toHaveLength(0)
+      w.unmount()
+    })
+
+    it('voids a dose with a required reason; it stays listed, struck through', async () => {
+      const settingsApi = await demoApi()
+      const w = await openShell(settingsApi, 'logs')
+
+      await radio(w, 'Type', 'Medicine').trigger('click')
+      await settle()
+      expect(rows(w)[0]!.findAll('button').map((b) => b.text())).toEqual(['Void'])
+      await rows(w)[0]!.findAll('button').find((b) => b.text() === 'Void')!.trigger('click')
+      await settle()
+      await buttonByText(w, 'Void dose').trigger('click')
+      await settle()
+      expect(w.text()).toContain('Say why this dose is being voided.')
+      expect(settingsApi.voidDose).not.toHaveBeenCalled()
+
+      await inputByLabel(w, 'Reason').setValue('Logged twice')
+      await buttonByText(w, 'Void dose').trigger('click')
+      await settle()
+
+      expect(settingsApi.voidDose).toHaveBeenCalledWith(SAM_AUTH, IBUPROFEN_DOSE, 'Logged twice')
+      expect(rows(w)).toHaveLength(1)
+      expect(rows(w)[0]!.find('.line-through').text()).toContain('Infant ibuprofen')
+      expect(rows(w)[0]!.text()).toContain('Voided: Logged twice')
+      expect(rows(w)[0]!.findAll('button')).toHaveLength(0)
+      w.unmount()
+    })
+
+    it('loads older entries a page at a time and offers their dates', async () => {
+      const settingsApi = fakeApi() as FakeSettingsApi & Record<'listEntries', ReturnType<typeof vi.fn>>
+      const page = (start: number, count: number) => Array.from({ length: count }, (_, i) => {
+        const at = new Date(Date.parse('2026-09-14T18:00:00Z') - (start + i) * 3 * 3_600_000).toISOString()
+        const id = `feed-${start + i}`
+        return { id, childId: THEO, at, loggedByName: null, row: { id, child_id: THEO, at, type: 'snack', amount: null, note: null, sitter_session_id: null } }
+      })
+      settingsApi.listEntries = vi.fn(async (query: { table: string; before?: string }) => {
+        if (query.table !== 'feeding_entries') return []
+        return query.before ? page(50, 3) : page(0, 50)
+      })
+      const w = await openShell(settingsApi, 'logs')
+
+      await radio(w, 'Type', 'Feeding').trigger('click')
+      await settle()
+      expect(settingsApi.listEntries).toHaveBeenLastCalledWith({ table: 'feeding_entries', childId: undefined, limit: 50 })
+      await buttonByText(w, 'Load more').trigger('click')
+      await settle()
+
+      expect(settingsApi.listEntries).toHaveBeenLastCalledWith({
+        table: 'feeding_entries', childId: undefined, limit: 50, before: page(49, 1)[0]!.at,
+      })
+      expect(w.findAll('button').some((b) => b.text() === 'Load more')).toBe(false)
+      const dates = inputByLabel(w, 'Pick a date').findAll('option').map((o) => o.text())
+      expect(dates).toContain('Wed, Sep 9')
+      await inputByLabel(w, 'Pick a date').setValue('2026-09-09')
+      await settle()
+      expect(rows(w).length).toBeGreaterThan(0)
+      w.unmount()
+    })
+
+    it('bulk-deletes logs older than 2 years after confirming, but never doses', async () => {
+      const settingsApi = await demoApi()
+      const w = await openShell(settingsApi, 'logs')
+
+      await radio(w, 'Type', 'Medicine').trigger('click')
+      await settle()
+      expect(w.text()).toContain('Doses are never deleted')
+      expect(w.findAll('button').some((b) => b.text().startsWith('Delete medicine logs'))).toBe(false)
+
+      await radio(w, 'Type', 'Feeding').trigger('click')
+      await settle()
+      await buttonByText(w, 'Delete feeding logs older than 2 years').trigger('click')
+      await settle()
+      expect(settingsApi.deleteOldEntries).not.toHaveBeenCalled()
+      await buttonByText(w, 'Delete old logs').trigger('click')
+      await settle()
+
+      expect(settingsApi.deleteOldEntries).toHaveBeenCalledWith(SAM_AUTH, 'feeding_entries', '2024-09-14T04:00:00.000Z')
+      expect(w.text()).toContain('Deleted 0 entries.')
+      w.unmount()
+    })
+  })
+
+  describe('Inbox', () => {
+    beforeEach(() => {
+      mutateDemo((s) => ({
+        ...s,
+        jots: [
+          ...s.jots,
+          { id: 'jot-new', text: 'Buy birthday card', createdAt: '2026-09-14T18:00:00.000Z', doneAt: null },
+          { id: 'jot-done', text: 'Book dentist', createdAt: '2026-09-10T18:00:00.000Z', doneAt: '2026-09-12T18:00:00.000Z' },
+          { id: 'jot-old', text: 'Old thing', createdAt: '2026-08-01T18:00:00.000Z', doneAt: '2026-08-02T18:00:00.000Z' },
+        ],
+      }))
+    })
+
+    it('lists open jots newest first, with recently done ones collapsed', async () => {
+      const w = await openShell(await demoApi(), 'inbox')
+
+      expect(w.findAll('[data-testid="open-jot"]').map((j) => j.text())).toEqual([
+        expect.stringContaining('Buy birthday card'),
+        expect.stringContaining("Call pediatrician about Theo's rash"),
+      ])
+      const toggle = buttonByText(w, 'Done in the last 7 days (1)')
+      expect(toggle.attributes('aria-expanded')).toBe('false')
+      expect(w.text()).not.toContain('Book dentist')
+      await toggle.trigger('click')
+      expect(w.text()).toContain('Book dentist')
+      expect(w.text()).not.toContain('Old thing')
+      w.unmount()
+    })
+
+    it('checks off a jot', async () => {
+      const settingsApi = await demoApi()
+      const w = await openShell(settingsApi, 'inbox')
+
+      await w.find('button[aria-label="Mark done: Buy birthday card"]').trigger('click')
+      await settle()
+
+      expect(settingsApi.updateEntry).toHaveBeenCalledWith('jots', 'jot-new', { doneAt: expect.stringMatching(/^2026-09-14T19:0/) })
+      expect(w.findAll('[data-testid="open-jot"]')).toHaveLength(1)
+      expect(buttonByText(w, 'Done in the last 7 days (2)').exists()).toBe(true)
+      w.unmount()
+    })
+
+    it('deletes a jot after confirming', async () => {
+      const settingsApi = await demoApi()
+      const w = await openShell(settingsApi, 'inbox')
+
+      await w.find('button[aria-label="Delete: Buy birthday card"]').trigger('click')
+      await settle()
+      expect(settingsApi.deleteEntry).not.toHaveBeenCalled()
+      await buttonByText(w, 'Delete jot').trigger('click')
+      await settle()
+
+      expect(settingsApi.deleteEntry).toHaveBeenCalledWith('jots', 'jot-new')
+      expect(w.text()).not.toContain('Buy birthday card')
+      w.unmount()
+    })
+  })
+
+  describe('My account', () => {
+    it('saves my color and explains full sign-in actions are not in the demo', async () => {
+      const settingsApi = await demoApi()
+      const w = await openShell(settingsApi, 'my-account')
+
+      await w.find('[role="radiogroup"][aria-label="My color"]').findAll('[role="radio"]')[5]!.trigger('click')
+      await buttonByText(w, 'Save').trigger('click')
+      await settle()
+      expect(settingsApi.setMyColor).toHaveBeenCalledWith(SAM_AUTH, expect.any(String))
+
+      await buttonByText(w, 'Change my PIN').trigger('click')
+      await settle()
+      expect(w.find('[role="alert"]').text()).toBe('Not available in demo.')
+      expect(w.find('[data-testid="adult-sign-in"]').exists()).toBe(false)
       w.unmount()
     })
   })

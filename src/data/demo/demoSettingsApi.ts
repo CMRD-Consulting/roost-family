@@ -4,6 +4,7 @@ import {
   SettingsError,
   type AddChildInput,
   type AdultClient,
+  type EntryPatch,
   type HouseholdSettingsInput,
   type ListEntriesQuery,
   type LogEntryRow,
@@ -70,6 +71,20 @@ function entriesFor(snapshot: HouseholdSnapshot, table: LogTable): Array<Record<
   })()
   return list as unknown as Array<Record<string, unknown>>
 }
+
+/** The demo snapshot's camelCase entry as the table row `listEntries` promises (snake_case columns). */
+function toSnakeRow(entry: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(entry).map(([key, value]) => [key.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`), value]))
+}
+
+/** The snapshot key holding each table's entries. */
+const SNAPSHOT_KEY = {
+  sleep_entries: 'sleeps',
+  feeding_entries: 'feedings',
+  sticker_entries: 'stickers',
+  diaper_entries: 'diapers',
+  jots: 'jots',
+} as const satisfies Record<EntryTable, keyof HouseholdSnapshot>
 
 /** Renaming "this display" isn't part of the demo household (there is exactly one, fixed, display); a
  *  module-local name stands in so the My devices/Displays screens have something to show and change. */
@@ -277,7 +292,39 @@ export function createDemoSettingsApi(): SettingsApi {
       childId: row.childId as string,
       at: row[timeKey] as string,
       loggedByName: (row.loggedByName as string | null | undefined) ?? null,
-      row,
+      row: toSnakeRow(row),
+    }))
+  }
+
+  async function updateEntry(table: EntryTable, entryId: string, patch: EntryPatch): Promise<void> {
+    const changes = Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined))
+    mutateDemo((s) => {
+      const key = SNAPSHOT_KEY[table]
+      const list = s[key] as unknown as Array<{ id: string }>
+      if (!list.some((e) => e.id === entryId)) throw new SettingsError('That entry no longer exists.', 'invalid')
+      return { ...s, [key]: list.map((e) => (e.id === entryId ? { ...e, ...changes } : e)) }
+    })
+  }
+
+  async function deleteEntry(table: EntryTable, entryId: string): Promise<void> {
+    mutateDemo((s) => {
+      const key = SNAPSHOT_KEY[table]
+      return { ...s, [key]: (s[key] as unknown as Array<{ id: string }>).filter((e) => e.id !== entryId) }
+    })
+  }
+
+  async function voidDose(auth: SettingsAuth, doseId: string, reason: string): Promise<void> {
+    requirePin(auth)
+    const trimmed = reason.trim()
+    if ([...trimmed].length < 1 || [...trimmed].length > 200) {
+      throw new SettingsError('a void reason of 1 to 200 characters is required', 'invalid')
+    }
+    mutateDemo((s) => ({
+      ...s,
+      doses: updateById(s.doses, doseId, (d) => {
+        if (d.voidedAt !== null) throw new SettingsError('dose is already voided', 'invalid')
+        return { ...d, voidedAt: new Date().toISOString(), voidReason: trimmed }
+      }),
     }))
   }
 
@@ -311,11 +358,16 @@ export function createDemoSettingsApi(): SettingsApi {
     setMyColor,
     deleteOldEntries,
     listEntries,
+    updateEntry,
+    deleteEntry,
+    voidDose,
     createMemberInvite: notAvailable,
     acceptMemberInvite: notAvailable,
     setMemberRole,
     removeMember: notAvailable,
     leaveHousehold: notAvailable,
+    setMyPin: notAvailable,
+    adultMembership: notAvailable,
     renameDisplay,
     deleteHousehold: notAvailable,
   }

@@ -50,6 +50,18 @@ function createFakeClient(opts: { rpc?: Record<string, Resp>; from?: Resp; throw
         call.chain.push(['lt', column, value])
         return builder
       },
+      is(column: string, value: unknown) {
+        call.chain.push(['is', column, value])
+        return builder
+      },
+      update(values: unknown) {
+        call.chain.push(['update', values])
+        return builder
+      },
+      delete() {
+        call.chain.push(['delete'])
+        return builder
+      },
       then(onFulfilled: (r: Resp) => unknown, onRejected?: (e: unknown) => unknown) {
         return Promise.resolve(opts.from ?? { error: null, data: [] }).then(onFulfilled, onRejected)
       },
@@ -269,6 +281,72 @@ describe('createSupabaseSettingsApi', () => {
       const { client } = createFakeClient({ from: { error: null, data: rows } })
       const result = await createSupabaseSettingsApi(client).listEntries({ table: 'dose_entries', limit: 5 })
       expect(result[0]?.loggedByName).toBeNull()
+    })
+  })
+
+  describe('log entries (Settings > Logs and Inbox)', () => {
+    it('updateEntry writes the changed columns of one entry', async () => {
+      const { client, calls } = createFakeClient({ from: { error: null, data: [{ id: 's1' }] } })
+      await createSupabaseSettingsApi(client).updateEntry('sleep_entries', 's1', { startAt: '2026-09-14T13:00:00Z', endAt: null })
+      expect(calls).toEqual([{
+        op: 'from', table: 'sleep_entries',
+        chain: [['update', { start_at: '2026-09-14T13:00:00Z', end_at: null }], ['eq', 'id', 's1'], ['select', 'id']],
+      }])
+    })
+
+    it('updateEntry maps every editable field to its column', async () => {
+      const { client, calls } = createFakeClient({ from: { error: null, data: [{ id: 'x' }] } })
+      const api = createSupabaseSettingsApi(client)
+      await api.updateEntry('feeding_entries', 'f1', { at: '2026-09-14T12:00:00Z', type: 'meal', amount: null })
+      await api.updateEntry('diaper_entries', 'd1', { kind: 'wet' })
+      await api.updateEntry('jots', 'j1', { doneAt: '2026-09-14T19:00:00Z' })
+      expect((calls[0] as FromCall).chain[0]).toEqual(['update', { at: '2026-09-14T12:00:00Z', type: 'meal', amount: null }])
+      expect((calls[1] as FromCall).chain[0]).toEqual(['update', { kind: 'wet' }])
+      expect((calls[2] as FromCall).chain[0]).toEqual(['update', { done_at: '2026-09-14T19:00:00Z' }])
+    })
+
+    it('updateEntry on an entry that no longer exists is an invalid SettingsError', async () => {
+      const { client } = createFakeClient({ from: { error: null, data: [] } })
+      const err = await createSupabaseSettingsApi(client).updateEntry('jots', 'gone', { doneAt: null }).catch((e: unknown) => e)
+      expect(err).toMatchObject({ code: 'invalid', message: 'That entry no longer exists.' })
+    })
+
+    it('deleteEntry deletes one entry by id', async () => {
+      const { client, calls } = createFakeClient()
+      await createSupabaseSettingsApi(client).deleteEntry('feeding_entries', 'f1')
+      expect(calls).toEqual([{ op: 'from', table: 'feeding_entries', chain: [['delete'], ['eq', 'id', 'f1']] }])
+    })
+
+    it('voidDose -> void_dose with the settings PIN and the reason', async () => {
+      const { client, calls } = createFakeClient()
+      await createSupabaseSettingsApi(client).voidDose(auth, 'dose-1', 'Logged twice')
+      expect(calls).toEqual([{
+        op: 'rpc', name: 'void_dose',
+        args: { p_dose_id: 'dose-1', p_membership_id: membershipId, p_pin: '1234', p_reason: 'Logged twice' },
+      }])
+    })
+  })
+
+  describe('My account (full sign-in)', () => {
+    it('setMyPin -> set_my_pin on the adult client', async () => {
+      const { client, calls } = createFakeClient()
+      await createSupabaseSettingsApi(client).setMyPin(client, 'household-1', '4321')
+      expect(calls).toEqual([{ op: 'rpc', name: 'set_my_pin', args: { p_household_id: 'household-1', p_pin: '4321' } }])
+    })
+
+    it("adultMembership reads the signed-in adult's current membership in the household", async () => {
+      const { client, calls } = createFakeClient({ from: { error: null, data: [{ id: 'm1', role: 'owner' }] } })
+      const result = await createSupabaseSettingsApi(client).adultMembership(client, 'household-1', 'user-1')
+      expect(result).toEqual({ membershipId: 'm1', role: 'owner' })
+      expect(calls).toEqual([{
+        op: 'from', table: 'memberships',
+        chain: [['select', 'id, role'], ['eq', 'household_id', 'household-1'], ['eq', 'user_id', 'user-1'], ['is', 'left_at', null], ['limit', 1]],
+      }])
+    })
+
+    it('adultMembership is null when the adult is not a member', async () => {
+      const { client } = createFakeClient({ from: { error: null, data: [] } })
+      await expect(createSupabaseSettingsApi(client).adultMembership(client, 'household-1', 'user-1')).resolves.toBeNull()
     })
   })
 

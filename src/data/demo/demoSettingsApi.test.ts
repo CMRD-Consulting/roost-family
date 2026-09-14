@@ -188,6 +188,13 @@ describe('createDemoSettingsApi', () => {
   })
 
   describe('listEntries', () => {
+    it('returns each row with snake_case columns, like the real tables', async () => {
+      const api = createDemoSettingsApi()
+      const [row] = await api.listEntries({ table: 'dose_entries', childId: THEO_ID, limit: 1 })
+      expect(row!.row).toMatchObject({ child_id: THEO_ID, medicine_id: IBUPROFEN_THEO, logged_by_name: 'Sam', voided_at: null })
+      expect(row!.row).not.toHaveProperty('childId')
+    })
+
     it('reads feedings newest first', async () => {
       const api = createDemoSettingsApi()
       const rows = await api.listEntries({ table: 'feeding_entries', limit: 10 })
@@ -207,7 +214,42 @@ describe('createDemoSettingsApi', () => {
     })
   })
 
+  describe('log entries', () => {
+    it('updateEntry changes the given fields of one entry', async () => {
+      const api = createDemoSettingsApi()
+      await api.updateEntry('feeding_entries', 'feed-theo-milk', { at: '2026-09-14T12:00:00.000Z', type: 'meal', amount: null })
+      expect(getDemoSnapshot(new Date()).feedings.find((f) => f.id === 'feed-theo-milk')).toMatchObject({
+        at: '2026-09-14T12:00:00.000Z', type: 'meal', amount: null, note: null,
+      })
+      await api.updateEntry('jots', 'jot-1', { doneAt: '2026-09-14T19:00:00.000Z' })
+      expect(getDemoSnapshot(new Date()).jots[0]!.doneAt).toBe('2026-09-14T19:00:00.000Z')
+      await expect(api.updateEntry('jots', 'nope', { doneAt: null })).rejects.toMatchObject({ code: 'invalid' })
+    })
+
+    it('deleteEntry removes one entry', async () => {
+      const api = createDemoSettingsApi()
+      await api.deleteEntry('sleep_entries', 'sleep-theo-nap')
+      expect(getDemoSnapshot(new Date()).sleeps.map((s) => s.id)).toEqual(['sleep-theo-night'])
+    })
+
+    it('voidDose needs the PIN and a reason, and voids once', async () => {
+      const api = createDemoSettingsApi()
+      const doseId = 'ffffffff-0000-0000-0000-000000000001'
+      await expect(api.voidDose({ membershipId: SAM_ID, pin: '0000' }, doseId, 'Oops')).rejects.toMatchObject({ code: 'auth' })
+      await expect(api.voidDose(auth, doseId, '   ')).rejects.toMatchObject({ code: 'invalid' })
+      await api.voidDose(auth, doseId, '  Logged twice ')
+      expect(getDemoSnapshot(new Date()).doses[0]).toMatchObject({ voidReason: 'Logged twice', voidedAt: expect.any(String) })
+      await expect(api.voidDose(auth, doseId, 'Again')).rejects.toMatchObject({ code: 'invalid' })
+    })
+  })
+
   describe('full sign-in only methods', () => {
+    it('setMyPin and adultMembership are not available', async () => {
+      const api = createDemoSettingsApi()
+      await expect(api.setMyPin({} as never, 'household-1', '1111')).rejects.toMatchObject({ message: 'Not available in demo' })
+      await expect(api.adultMembership({} as never, 'household-1', 'user-1')).rejects.toMatchObject({ message: 'Not available in demo' })
+    })
+
     it('createMemberInvite, acceptMemberInvite, removeMember, leaveHousehold and deleteHousehold are not available', async () => {
       const api = createDemoSettingsApi()
       const fakeAdultClient = {} as never

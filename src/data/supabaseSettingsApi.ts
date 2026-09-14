@@ -4,6 +4,7 @@ import {
   SettingsError,
   type AddChildInput,
   type AdultClient,
+  type EntryPatch,
   type HouseholdSettingsInput,
   type ListEntriesQuery,
   type LogEntryRow,
@@ -28,6 +29,17 @@ const TIME_COLUMN: Record<string, string> = {
   diaper_entries: 'at',
   dose_entries: 'at',
   jots: 'created_at',
+}
+
+/** Settings > Logs edit fields -> table columns. */
+const PATCH_COLUMNS: Record<keyof EntryPatch, string> = {
+  at: 'at',
+  startAt: 'start_at',
+  endAt: 'end_at',
+  type: 'type',
+  amount: 'amount',
+  kind: 'kind',
+  doneAt: 'done_at',
 }
 
 /**
@@ -221,6 +233,28 @@ export function createSupabaseSettingsApi(client: RoostClient): SettingsApi {
     }))
   }
 
+  async function updateEntry(table: EntryTable, entryId: string, patch: EntryPatch): Promise<void> {
+    const values: Record<string, unknown> = {}
+    for (const [key, value] of Object.entries(patch)) {
+      if (value !== undefined) values[PATCH_COLUMNS[key as keyof EntryPatch]] = value
+    }
+    // The table varies per call; see listEntries.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const builder: any = client.from(table)
+    const rows = await run<unknown[] | null>(() => builder.update(values).eq('id', entryId).select('id'))
+    if (!rows || rows.length === 0) throw new SettingsError('That entry no longer exists.', 'invalid')
+  }
+
+  async function deleteEntry(table: EntryTable, entryId: string): Promise<void> {
+    await run(() => client.from(table).delete().eq('id', entryId))
+  }
+
+  async function voidDose(auth: SettingsAuth, doseId: string, reason: string): Promise<void> {
+    await run(() =>
+      client.rpc('void_dose', { p_dose_id: doseId, p_membership_id: auth.membershipId, p_pin: auth.pin, p_reason: reason }),
+    )
+  }
+
   // ─── Full sign-in only ────────────────────────────────────────────────────
   async function createMemberInvite(adult: AdultClient, householdId: string, role: 'owner' | 'adult') {
     const rows = await run<{ out_token: string; out_expires_at: string }[]>(() =>
@@ -254,6 +288,18 @@ export function createSupabaseSettingsApi(client: RoostClient): SettingsApi {
     await run(() => adult.rpc('leave_household', { p_household_id: householdId }))
   }
 
+  async function setMyPin(adult: AdultClient, householdId: string, pin: string): Promise<void> {
+    await run(() => adult.rpc('set_my_pin', { p_household_id: householdId, p_pin: pin }))
+  }
+
+  async function adultMembership(adult: AdultClient, householdId: string, userId: string) {
+    const rows = await run<{ id: string; role: string }[] | null>(() =>
+      adult.from('memberships').select('id, role').eq('household_id', householdId).eq('user_id', userId).is('left_at', null).limit(1),
+    )
+    const row = rows?.[0]
+    return row ? { membershipId: row.id, role: row.role } : null
+  }
+
   async function renameDisplay(adult: AdultClient, displayId: string, name: string): Promise<void> {
     await run(() => adult.rpc('rename_display', { p_display_id: displayId, p_name: name }))
   }
@@ -279,11 +325,16 @@ export function createSupabaseSettingsApi(client: RoostClient): SettingsApi {
     setMyColor,
     deleteOldEntries,
     listEntries,
+    updateEntry,
+    deleteEntry,
+    voidDose,
     createMemberInvite,
     acceptMemberInvite,
     setMemberRole,
     removeMember,
     leaveHousehold,
+    setMyPin,
+    adultMembership,
     renameDisplay,
     deleteHousehold,
   }

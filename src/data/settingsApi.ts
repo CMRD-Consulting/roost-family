@@ -111,6 +111,23 @@ export interface LogEntryRow {
   row: Record<string, unknown>
 }
 
+/** Fields an adult can change on a non-dose log entry or jot from Settings > Logs and Inbox (spec §7.9). Only
+ *  the keys present are written. Doses are never edited this way (spec §11.4): they are voided with `voidDose`. */
+export interface EntryPatch {
+  /** feeding, sticker and diaper entries */
+  at?: string
+  /** sleep entries */
+  startAt?: string
+  endAt?: string | null
+  /** feeding entries */
+  type?: 'milk' | 'meal' | 'snack'
+  amount?: string | null
+  /** diaper entries */
+  kind?: 'wet' | 'dirty' | 'both'
+  /** jots: checked off (a timestamp) or reopened (null) */
+  doneAt?: string | null
+}
+
 /**
  * Every configuration change goes through this interface (spec §7.9). Most methods are PIN-checked
  * (`SettingsAuth`, re-verified by the server on every call); the members/displays/deletion methods instead
@@ -146,6 +163,12 @@ export interface SettingsApi {
   /** Reads a page of one log table directly (not PIN-checked: it's a read, and the display can always read its
    *  own household's logs). Newest first; pass the last row's `at` as `before` to load more. */
   listEntries(query: ListEntriesQuery): Promise<LogEntryRow[]>
+  /** Edits one non-dose entry or jot directly in its member-writable table (the UI requires the settings session). */
+  updateEntry(table: EntryTable, entryId: string, patch: EntryPatch): Promise<void>
+  /** Deletes one non-dose entry or jot directly (the UI requires the settings session and a confirmation). */
+  deleteEntry(table: EntryTable, entryId: string): Promise<void>
+  /** Voids a dose with a reason (1–200 characters), checked against the settings session's PIN (spec §11.4). */
+  voidDose(auth: SettingsAuth, doseId: string, reason: string): Promise<void>
 
   // ─── Full sign-in only (spec §6.3): members, displays, household deletion ─────────────────────────────
   createMemberInvite(client: AdultClient, householdId: string, role: 'owner' | 'adult'): Promise<{ token: string; expiresAt: string }>
@@ -153,6 +176,10 @@ export interface SettingsApi {
   setMemberRole(client: AdultClient, membershipId: string, role: 'owner' | 'adult'): Promise<void>
   removeMember(client: AdultClient, membershipId: string): Promise<void>
   leaveHousehold(client: AdultClient, householdId: string): Promise<void>
+  /** Sets the signed-in adult's own PIN in the household (My account > Change my PIN). */
+  setMyPin(client: AdultClient, householdId: string, pin: string): Promise<void>
+  /** The signed-in adult's current membership in the household, or null when they aren't a member. */
+  adultMembership(client: AdultClient, householdId: string, userId: string): Promise<{ membershipId: string; role: string } | null>
   renameDisplay(client: AdultClient, displayId: string, name: string): Promise<void>
   deleteHousehold(client: AdultClient, householdId: string, confirmName: string): Promise<void>
 }
