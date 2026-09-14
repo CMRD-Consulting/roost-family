@@ -87,6 +87,19 @@ function groceryRow(item: GroceryItem, householdId: string, displayId: string | 
   }
 }
 
+function routineProgressRow(cmd: Extract<LogCommand, { kind: 'routine.complete' }>) {
+  return {
+    household_id: cmd.householdId,
+    child_id: cmd.childId,
+    routine_id: cmd.routineId,
+    day: cmd.day,
+    completed_step_indexes: cmd.completed,
+  }
+}
+
+/** No `ignoreDuplicates`: a conflict on (child_id, routine_id, day) must update the row, not skip it. */
+const ROUTINE_PROGRESS_UPSERT_OPTS = { onConflict: 'child_id,routine_id,day' } as const
+
 type OpResult = { error: { message: string; code?: string } | null; data?: unknown; status?: number }
 
 /**
@@ -186,6 +199,8 @@ export function createSupabaseLogWriter(client: RoostClient): LogWriter {
         return runWrite(client, () => client.rpc('acknowledge_dose_conflict', { p_dose_id: cmd.doseId, p_membership_id: cmd.membershipId, p_pin: cmd.pin }))
       case 'dinner.set':
         return runWrite(client, () => client.rpc('set_dinner_tonight', { p_household_id: cmd.householdId, p_text: cmd.text ?? '' }))
+      case 'routine.complete':
+        return runWrite(client, () => client.from('routine_progress').upsert(routineProgressRow(cmd), ROUTINE_PROGRESS_UPSERT_OPTS))
     }
   }
 

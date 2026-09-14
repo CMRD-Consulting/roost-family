@@ -273,6 +273,30 @@ describe('createSupabaseLogWriter', () => {
         },
       ])
     })
+
+    it('routine.complete -> routine_progress.upsert with onConflict child_id,routine_id,day (no ignoreDuplicates, so it updates)', async () => {
+      const { client, calls } = createFakeClient()
+      const writer = createSupabaseLogWriter(client)
+      await writer.execute({
+        kind: 'routine.complete', householdId, childId, routineId: 'routine-1', day: '2026-09-14',
+        completed: [0, 1, 2], previous: [0, 1],
+      })
+
+      expect(calls).toEqual([
+        {
+          table: 'routine_progress',
+          op: 'upsert',
+          payload: {
+            household_id: householdId,
+            child_id: childId,
+            routine_id: 'routine-1',
+            day: '2026-09-14',
+            completed_step_indexes: [0, 1, 2],
+          },
+          options: { onConflict: 'child_id,routine_id,day' },
+        },
+      ])
+    })
   })
 
   describe('restores keep the original timestamps', () => {

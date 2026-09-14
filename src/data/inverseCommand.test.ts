@@ -78,6 +78,17 @@ describe('inverseCommand', () => {
     expect(inverseCommand(cmd)).toEqual({ kind: 'dinner.set', householdId, text: null, previous: 'Tacos' })
   })
 
+  it('routine.complete -> routine.complete with completed/previous swapped', () => {
+    const cmd: LogCommand = {
+      kind: 'routine.complete', householdId, childId: ivy.id, routineId: 'routine-1', day: '2026-09-14',
+      completed: [0, 1, 2], previous: [0, 1],
+    }
+    expect(inverseCommand(cmd)).toEqual({
+      kind: 'routine.complete', householdId, childId: ivy.id, routineId: 'routine-1', day: '2026-09-14',
+      completed: [0, 1], previous: [0, 1, 2],
+    })
+  })
+
   it.each([
     ['dose.add', { kind: 'dose.add', householdId, entry: base.doses[0]!, attribution }],
     ['entry.delete', { kind: 'entry.delete', householdId, table: 'jots', entryId: 'jot-1' }],

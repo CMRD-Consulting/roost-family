@@ -31,6 +31,12 @@ export function inverseCommand(cmd: LogCommand): LogCommand | null {
     case 'dinner.set':
       return { kind: 'dinner.set', householdId: cmd.householdId, text: cmd.previous, previous: cmd.text }
 
+    case 'routine.complete':
+      return {
+        kind: 'routine.complete', householdId: cmd.householdId, childId: cmd.childId, routineId: cmd.routineId,
+        day: cmd.day, completed: cmd.previous, previous: cmd.completed,
+      }
+
     case 'dose.add':
     case 'entry.delete':
     case 'dose.void':

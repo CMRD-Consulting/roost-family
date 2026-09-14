@@ -77,6 +77,19 @@ export function applyCommand(snapshot: HouseholdSnapshot, cmd: LogCommand, now: 
 
     case 'dinner.set':
       return { ...snapshot, household: { ...snapshot.household, dinnerTonight: cmd.text } }
+
+    case 'routine.complete': {
+      const index = snapshot.routineProgress.findIndex(
+        (p) => p.childId === cmd.childId && p.routineId === cmd.routineId && p.day === cmd.day,
+      )
+      if (index === -1) {
+        const row = { childId: cmd.childId, routineId: cmd.routineId, day: cmd.day, completed: cmd.completed }
+        return { ...snapshot, routineProgress: [...snapshot.routineProgress, row] }
+      }
+      const copy = snapshot.routineProgress.slice()
+      copy[index] = { ...copy[index]!, completed: cmd.completed }
+      return { ...snapshot, routineProgress: copy }
+    }
   }
   return snapshot
 }

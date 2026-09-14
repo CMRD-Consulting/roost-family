@@ -1,4 +1,4 @@
-import type { DiaperEntry, DoseEntry, FeedingEntry, IsoTimestamp, SleepEntry, StickerEntry } from '@/domain/types'
+import type { DiaperEntry, DoseEntry, FeedingEntry, HouseholdDate, IsoTimestamp, SleepEntry, StickerEntry } from '@/domain/types'
 import type { GroceryItem, Jot } from './snapshot'
 
 export interface Attribution {
@@ -28,6 +28,16 @@ export type LogCommand =
   | { kind: 'dose.void'; householdId: string; doseId: string; membershipId: string; pin: string; reason: string }
   | { kind: 'dose.acknowledge'; householdId: string; doseId: string; membershipId: string; pin: string }
   | { kind: 'dinner.set'; householdId: string; text: string | null; previous: string | null }
+  | {
+      kind: 'routine.complete'
+      householdId: string
+      childId: string
+      routineId: string
+      day: HouseholdDate
+      /** Full new array of completed step indexes, sorted and unique. */
+      completed: number[]
+      previous: number[]
+    }
 
 /** Commands that need a live connection (PIN checks happen on the server). */
 export function requiresOnline(cmd: LogCommand): boolean {
