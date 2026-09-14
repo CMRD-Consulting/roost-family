@@ -15,8 +15,10 @@
   --color-faint: #b3a092; /* decoration only, never text */
 
   /* Accents: bright = icon/fill, deep = text */
+  /* Deep variants below are read as text on --color-surface/--color-app: values
+     MUST stay in sync with src/ui/tokens.ts, checked by src/ui/contrast.test.ts. */
   --color-orange: #e2703a;
-  --color-orange-deep: #b8542a;
+  --color-orange-deep: #a84b24; /* >= 4.6:1 on both #FBF6EE and #F5EEE3 */
   --color-orange-tint: #f6ddd0;
   --color-warn-ink: #7a3418;
   --color-amber: #d9a441;
