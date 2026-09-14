@@ -56,6 +56,36 @@ describe('checkDose', () => {
     })
   })
 
+  it('counts a 24h window on either side of a backdated dose', () => {
+    // Doses at 00:00, 06:00, 18:00, 23:00; checking a backdated dose at 12:00.
+    // The window [00:00, 24:00) holds all four existing doses plus the checked one = 5.
+    const doses = ['T00:00', 'T06:00', 'T18:00', 'T23:00'].map((t) => dose({ at: `2026-09-14${t}:00Z` }))
+    expect(checkDose(ibuprofen, doses, new Date('2026-09-14T12:00:00Z'))).toContainEqual({
+      kind: 'overMax',
+      doseNumber: 5,
+      max: 4,
+    })
+  })
+
+  it('counts doses given after the checked dose toward its window', () => {
+    // Checking 10:00 with later doses at 12, 14, 16, 18 — the window starting at
+    // the checked dose covers all five doses.
+    const doses = ['T12:00', 'T14:00', 'T16:00', 'T18:00'].map((t) => dose({ at: `2026-09-14${t}:00Z` }))
+    expect(checkDose(ibuprofen, doses, new Date('2026-09-14T10:00:00Z'))).toContainEqual({
+      kind: 'overMax',
+      doseNumber: 5,
+      max: 4,
+    })
+  })
+
+  it('does not count two doses exactly 24h apart in the same window', () => {
+    const strict: Medicine = { ...ibuprofen, maxDosesPer24h: 2 }
+    const doses = [dose({ at: '2026-09-13T12:00:00Z' }), dose({ at: '2026-09-14T00:00:00Z' })]
+    // If the 13th's noon dose combined with the 14th's midnight dose and the checked
+    // dose in one window, that would be 3 (over max 2). It should only ever be 2.
+    expect(checkDose(strict, doses, new Date('2026-09-14T12:00:00Z'))).toEqual([])
+  })
+
   it('ignores voided doses, other medicines, and the dose being checked', () => {
     const own = dose({ id: 'self', at: '2026-09-14T12:00:00Z' })
     const doses = [

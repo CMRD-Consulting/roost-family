@@ -44,11 +44,22 @@ export function checkDose(medicine: Medicine, doses: DoseEntry[], at: Date, excl
   }
 
   if (medicine.maxDosesPer24h !== null) {
-    const inWindow = others.filter((d) => {
-      const dt = Date.parse(d.at)
-      return dt > t - DAY_MS && dt <= t
-    }).length
-    const doseNumber = inWindow + 1
+    // Any 24h window [s, s + 24h) containing the checked dose might be the one that
+    // pushes it over the limit. Candidate starts are the checked dose's own time and
+    // the times of other active doses in the 24h before it — those are the only
+    // times a window could start and still contain the checked dose.
+    const otherTimes = others.map((d) => Date.parse(d.at))
+    const candidateStarts = new Set<number>([t])
+    for (const dt of otherTimes) {
+      if (dt > t - DAY_MS && dt <= t) candidateStarts.add(dt)
+    }
+
+    let doseNumber = 0
+    for (const s of candidateStarts) {
+      const count = 1 + otherTimes.filter((dt) => dt >= s && dt < s + DAY_MS).length
+      if (count > doseNumber) doseNumber = count
+    }
+
     if (doseNumber > medicine.maxDosesPer24h) {
       warnings.push({ kind: 'overMax', doseNumber, max: medicine.maxDosesPer24h })
     }
