@@ -6,6 +6,7 @@ import SignInStep from './steps/SignInStep.vue'
 import RButton from '@/ui/RButton.vue'
 import RInput from '@/ui/RInput.vue'
 import { createWizardState } from './wizardState'
+import { LIMITS, validateDisplayLabel } from './validation'
 import { displayClient } from '@/data/supabase'
 import { claimDisplay } from '@/session/displaySession'
 import { useDisplayStore } from '@/session/displayStore'
@@ -74,10 +75,8 @@ async function cancel() {
 async function register() {
   const adult = state.adult
   if (!adult || !chosen.value) return
-  if (!state.displayLabel.trim()) {
-    state.error = 'Name this display.'
-    return
-  }
+  state.error = validateDisplayLabel(state.displayLabel)
+  if (state.error) return
   state.busy = true
   state.error = null
   try {
@@ -124,7 +123,7 @@ async function register() {
     <RButton variant="ghost" @click="cancel">Cancel</RButton>
   </WizardFrame>
   <WizardFrame v-else title="Name this display" :error="state.error" can-go-back @back="phase = 'pick'">
-    <RInput v-model="state.displayLabel" label="Display name" placeholder="Playroom" />
+    <RInput v-model="state.displayLabel" label="Display name" placeholder="Playroom" :maxlength="LIMITS.displayName" />
     <RButton :disabled="state.busy" @click="register">Add this display</RButton>
   </WizardFrame>
 </template>

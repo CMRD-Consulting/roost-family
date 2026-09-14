@@ -2,6 +2,7 @@ import { reactive } from 'vue'
 import type { AdultSession } from '@/session/adultSession'
 import { PERSON_COLORS } from '@/ui/personPalette'
 import type { PendingDisplayClaim } from './completeSetup'
+import { detectedTimeZone, initialTimeZone } from './timeZones'
 
 export const POLICY_VERSION = '2026-09-14'
 
@@ -22,7 +23,7 @@ export function createWizardState() {
     adult: null as AdultSession | null,
     householdName: '',
     zip: '',
-    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    timeZone: initialTimeZone(detectedTimeZone()).id,
     lat: null as number | null,
     lon: null as number | null,
     kids: [] as KidDraft[],

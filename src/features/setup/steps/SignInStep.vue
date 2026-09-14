@@ -62,12 +62,12 @@ onBeforeUnmount(() => {
         <RButton variant="secondary" disabled>Continue with Google</RButton>
         <p class="text-[16px] text-ink-3">Apple and Google sign-in turn on before launch.</p>
       </div>
-      <RInput v-model="state.email" label="Email" type="email" inputmode="email" autocomplete="email" />
+      <RInput v-model="state.email" label="Email" type="email" inputmode="email" autocomplete="off" :maxlength="254" />
       <RButton :disabled="state.busy" @click="sendCode">Email me a 6-digit code</RButton>
     </template>
     <template v-else>
       <p class="text-[20px] text-ink-2">We sent a code to <strong>{{ state.email }}</strong>.</p>
-      <RInput v-model="code" label="6-digit code" inputmode="numeric" autocomplete="one-time-code" />
+      <RInput v-model="code" label="6-digit code" inputmode="numeric" autocomplete="one-time-code" :maxlength="6" />
       <p v-if="isDev" class="text-[16px] text-ink-3">Local dev: read the code at http://127.0.0.1:55324</p>
       <div class="flex gap-3">
         <RButton :disabled="state.busy" @click="verify">Sign in</RButton>

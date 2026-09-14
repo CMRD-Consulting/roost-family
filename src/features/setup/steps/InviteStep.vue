@@ -1,21 +1,32 @@
 <script setup lang="ts">
-import { ref, type ComponentPublicInstance } from 'vue'
+import { computed, ref } from 'vue'
 import WizardFrame from '../WizardFrame.vue'
 import RButton from '@/ui/RButton.vue'
-import { validateInviteCode } from '../validation'
+import { LIMITS, normalizeInviteCode, validateInviteCode } from '../validation'
 import type { WizardState } from '../wizardState'
 
 const props = defineProps<{ state: WizardState }>()
 const emit = defineEmits<{ next: []; back: [] }>()
 const error = ref<string | null>(null)
-const boxes = ref<HTMLInputElement[]>([])
+const focused = ref(false)
+const activeBox = computed(() => Math.min(props.state.inviteCode.length, LIMITS.inviteCode - 1))
 
-function onInput(i: number, e: Event) {
-  const value = (e.target as HTMLInputElement).value.toUpperCase().replace(/[^A-Z0-9]/g, '')
-  const chars = props.state.inviteCode.padEnd(6, ' ').split('')
-  chars[i] = value.slice(-1) || ' '
-  props.state.inviteCode = chars.join('').trimEnd()
-  if (value && i < 5) boxes.value[i + 1]?.focus()
+function setCode(input: HTMLInputElement, raw: string) {
+  const code = normalizeInviteCode(raw)
+  props.state.inviteCode = code
+  if (input.value !== code) input.value = code
+}
+
+function onInput(e: Event) {
+  const input = e.target as HTMLInputElement
+  setCode(input, input.value)
+}
+
+function onPaste(e: ClipboardEvent) {
+  const text = e.clipboardData?.getData('text')
+  if (text == null) return
+  e.preventDefault()
+  setCode(e.target as HTMLInputElement, text)
 }
 
 function submit() {
@@ -26,19 +37,43 @@ function submit() {
 
 <template>
   <WizardFrame title="Enter your invite code" subtitle="Roost Family is invite-only for now." :error="error" can-go-back @back="emit('back')">
-    <div class="flex gap-3">
+    <div class="relative w-fit">
+      <!-- Six boxes mirror the value; one transparent input on top takes typing, paste and autofill. -->
+      <div class="flex gap-3" aria-hidden="true">
+        <span
+          v-for="i in LIMITS.inviteCode"
+          :key="i"
+          class="flex h-[88px] w-[72px] items-center justify-center rounded-[var(--radius-control)] border-2 bg-surface text-[40px] font-semibold text-ink tabular-nums"
+          :class="focused && activeBox === i - 1 ? 'border-orange-deep outline-3 outline-offset-2 outline-orange-deep' : 'border-ink-3'"
+        >
+          {{ state.inviteCode[i - 1] ?? '' }}
+        </span>
+      </div>
       <input
-        v-for="i in 6"
-        :key="i"
-        :ref="(el: Element | ComponentPublicInstance | null) => { if (el) boxes[i - 1] = el as HTMLInputElement }"
-        :value="state.inviteCode[i - 1] ?? ''"
-        maxlength="1"
+        :value="state.inviteCode"
+        :maxlength="LIMITS.inviteCode"
+        type="text"
+        inputmode="text"
         autocapitalize="characters"
-        :aria-label="`Invite code character ${i}`"
-        class="h-[88px] w-[72px] rounded-[var(--radius-control)] border border-line bg-surface text-center text-[40px] font-semibold uppercase outline-none focus:border-orange"
-        @input="onInput(i - 1, $event)"
+        autocorrect="off"
+        spellcheck="false"
+        autocomplete="off"
+        aria-label="Invite code, 6 letters or numbers"
+        class="invite-input absolute inset-0 h-full w-full cursor-text bg-transparent text-transparent caret-transparent outline-none"
+        @input="onInput"
+        @paste="onPaste"
+        @focus="focused = true"
+        @blur="focused = false"
+        @keydown.enter="submit"
       />
     </div>
     <RButton @click="submit">Continue</RButton>
   </WizardFrame>
 </template>
+
+<style scoped>
+/* Keep selection highlights from painting over the mirrored boxes. */
+.invite-input::selection {
+  background: transparent;
+}
+</style>

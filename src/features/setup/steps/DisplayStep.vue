@@ -8,6 +8,7 @@ import { displayClient } from '@/data/supabase'
 import { claimDisplay } from '@/session/displaySession'
 import { useDisplayStore } from '@/session/displayStore'
 import { adultOwnsHousehold, completeSetup, isInvalidInviteError } from '../completeSetup'
+import { LIMITS, validateDisplayLabel } from '../validation'
 import type { WizardState } from '../wizardState'
 
 const props = defineProps<{ state: WizardState }>()
@@ -19,10 +20,8 @@ const alreadyOwner = ref(false)
 async function finish() {
   const adult = props.state.adult
   if (!adult) return
-  if (!props.state.displayLabel.trim()) {
-    props.state.error = 'Name this display.'
-    return
-  }
+  props.state.error = validateDisplayLabel(props.state.displayLabel)
+  if (props.state.error) return
   props.state.busy = true
   props.state.error = null
   alreadyOwner.value = false
@@ -56,7 +55,7 @@ async function goToJoin() {
       <p>You already set up a household. Use Join a household to add this tablet.</p>
       <RButton @click="goToJoin">Join a household</RButton>
     </div>
-    <RInput v-model="state.displayLabel" label="Display name" placeholder="Kitchen" />
+    <RInput v-model="state.displayLabel" label="Display name" placeholder="Kitchen" :maxlength="LIMITS.displayName" />
     <div class="rounded-[var(--radius-card)] bg-surface p-6 text-[18px] text-ink-2">
       <p class="font-semibold text-ink">Keep the screen on</p>
       <p><strong>iPad:</strong> Settings → Display &amp; Brightness → Auto-Lock → Never, then turn on Guided Access (Settings → Accessibility).</p>

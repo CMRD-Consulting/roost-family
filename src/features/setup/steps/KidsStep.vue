@@ -6,7 +6,7 @@ import RInput from '@/ui/RInput.vue'
 import RAvatar from '@/ui/RAvatar.vue'
 import { PERSON_COLORS } from '@/ui/personPalette'
 import { householdDate } from '@/domain/time'
-import { validateKids } from '../validation'
+import { LIMITS, validateKids } from '../validation'
 import type { WizardState } from '../wizardState'
 
 const props = defineProps<{ state: WizardState }>()
@@ -32,7 +32,7 @@ function submit() {
     <div v-for="(kid, i) in state.kids" :key="i" class="flex flex-col gap-4 rounded-[var(--radius-card)] bg-surface p-6">
       <div class="flex items-center gap-4">
         <RAvatar :name="kid.name || '?'" :color="kid.color" :size="56" />
-        <div class="flex-1"><RInput v-model="kid.name" label="Name" /></div>
+        <div class="flex-1"><RInput v-model="kid.name" label="Name" autocomplete="off" :maxlength="LIMITS.personName" /></div>
         <RButton v-if="state.kids.length > 1" variant="ghost" :aria-label="`Remove ${kid.name || 'child'}`" @click="state.kids.splice(i, 1)">✕</RButton>
       </div>
       <RInput v-model="kid.birthday" label="Birthday" type="date" />

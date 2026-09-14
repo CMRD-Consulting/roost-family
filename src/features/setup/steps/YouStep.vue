@@ -5,7 +5,7 @@ import RButton from '@/ui/RButton.vue'
 import RInput from '@/ui/RInput.vue'
 import RAvatar from '@/ui/RAvatar.vue'
 import { PERSON_COLORS } from '@/ui/personPalette'
-import { validatePin } from '../validation'
+import { LIMITS, validateMemberName, validatePin } from '../validation'
 import type { WizardState } from '../wizardState'
 
 const props = defineProps<{ state: WizardState }>()
@@ -14,11 +14,7 @@ const confirm = ref('')
 const error = ref<string | null>(null)
 
 function submit() {
-  if (!props.state.displayName.trim()) {
-    error.value = 'Tell us what to call you.'
-    return
-  }
-  error.value = validatePin(props.state.pin, confirm.value)
+  error.value = validateMemberName(props.state.displayName) ?? validatePin(props.state.pin, confirm.value)
   if (!error.value) emit('next')
 }
 </script>
@@ -27,7 +23,7 @@ function submit() {
   <WizardFrame title="About you" subtitle="Your PIN unlocks Settings and confirms medicine doses on the tablet." :error="error" can-go-back @back="emit('back')">
     <div class="flex items-center gap-4">
       <RAvatar :name="state.displayName || '?'" :color="state.color" :size="56" />
-      <div class="flex-1"><RInput v-model="state.displayName" label="Your name" autocomplete="given-name" /></div>
+      <div class="flex-1"><RInput v-model="state.displayName" label="Your name" autocomplete="given-name" :maxlength="LIMITS.personName" /></div>
     </div>
     <div class="flex flex-wrap gap-2" role="radiogroup" aria-label="Your color">
       <button
@@ -43,8 +39,8 @@ function submit() {
         @click="state.color = c"
       />
     </div>
-    <RInput v-model="state.pin" label="4-digit PIN" type="password" inputmode="numeric" autocomplete="new-password" />
-    <RInput v-model="confirm" label="Enter it again" type="password" inputmode="numeric" autocomplete="new-password" />
+    <RInput v-model="state.pin" label="4-digit PIN" inputmode="numeric" autocomplete="off" :maxlength="LIMITS.pin" masked />
+    <RInput v-model="confirm" label="Enter it again" inputmode="numeric" autocomplete="off" :maxlength="LIMITS.pin" masked />
     <RButton @click="submit">Continue</RButton>
   </WizardFrame>
 </template>
