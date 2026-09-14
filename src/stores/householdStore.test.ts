@@ -163,6 +163,56 @@ describe('useHouseholdStore', () => {
     expect(store.snapshot).toEqual(fresh)
   })
 
+  it('starts the network load at once, without waiting for the device cache', async () => {
+    deviceCache.loadSnapshot.mockReturnValue(new Promise(() => {})) // a hung cache read
+    const { source, load } = fakeSource()
+    const store = newStore()
+
+    const starting = store.start('h1', source)
+    expect(load).toHaveBeenCalledTimes(1)
+    await starting
+
+    expect(store.status).toBe('ready')
+    expect(store.fromCache).toBe(false)
+    expect(store.snapshot).not.toBeNull()
+  })
+
+  it('ignores a cached snapshot that arrives after the live one', async () => {
+    const now = new Date('2026-09-14T15:00:00Z')
+    const cached = buildDemoSnapshot(new Date(now.getTime() - 3_600_000))
+    const fresh = buildDemoSnapshot(now)
+    let answerCache!: (s: HouseholdSnapshot) => void
+    deviceCache.loadSnapshot.mockReturnValue(new Promise((resolve) => (answerCache = resolve)))
+    const { source } = fakeSource(async () => fresh)
+    const store = newStore()
+
+    await store.start('h1', source)
+    answerCache(cached)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(store.fromCache).toBe(false)
+    expect(store.snapshot?.loadedAt).toBe(fresh.loadedAt)
+  })
+
+  it('shows the cached snapshot when the live load fails first', async () => {
+    const cached = buildDemoSnapshot(new Date(Date.now() - 3_600_000))
+    let answerCache!: (s: HouseholdSnapshot) => void
+    deviceCache.loadSnapshot.mockReturnValue(new Promise((resolve) => (answerCache = resolve)))
+    const { source } = fakeSource(async () => {
+      throw new Error('offline')
+    })
+    const store = newStore()
+
+    await store.start('h1', source)
+    expect(store.status).toBe('error')
+    answerCache(cached)
+    await vi.waitFor(() => expect(store.fromCache).toBe(true))
+
+    expect(store.status).toBe('ready')
+    expect(store.snapshot?.loadedAt).toBe(cached.loadedAt)
+  })
+
   it('saves every successful load to the device cache', async () => {
     const { source } = fakeSource()
     const store = newStore()
@@ -369,9 +419,7 @@ describe('useHouseholdStore', () => {
       const store = newStore()
 
       const startPromise = store.start('h1', source)
-      // Let start()'s own device-cache read (awaited before its first reload) settle, so its
-      // internal reload() issues the first source.load() call, before the second one below.
-      await Promise.resolve()
+      // start() issues the first source.load() call synchronously, before the second one below.
       // A reload fired in between (e.g. a subscribe callback) starts a second, newer load.
       const secondReload = store.reload()
 

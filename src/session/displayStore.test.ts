@@ -76,9 +76,56 @@ describe('displayStore', () => {
     loadDisplayState.mockRejectedValue(new Error('Failed to fetch'))
     const store = useDisplayStore()
 
-    expect(await store.ensure()).toEqual({ kind: 'offline' })
+    expect(await store.ensure()).toEqual(REGISTERED)
     expect(store.lastKnown).toEqual(REGISTERED)
     expect(store.identity).toEqual(REGISTERED.identity)
+    await vi.waitFor(() => expect(store.state).toEqual({ kind: 'offline' }))
+    expect(store.lastKnown).toEqual(REGISTERED)
+    expect(store.identity).toEqual(REGISTERED.identity)
+  })
+
+  it('with a cached registered identity, ensure resolves at once without waiting for the network', async () => {
+    deviceCache.loadIdentity.mockResolvedValue(REGISTERED.identity)
+    loadDisplayState.mockReturnValue(new Promise(() => {})) // the network never answers
+    const store = useDisplayStore()
+
+    expect(await store.ensure()).toEqual(REGISTERED)
+    expect(store.identity).toEqual(REGISTERED.identity)
+    // The refresh is still running in the background; a second navigation doesn't start another.
+    await vi.dynamicImportSettled()
+    expect(loadDisplayState).toHaveBeenCalledTimes(1)
+    expect(await store.ensure()).toEqual(REGISTERED)
+    await vi.dynamicImportSettled()
+    expect(loadDisplayState).toHaveBeenCalledTimes(1)
+  })
+
+  it('a background refresh that finds the display revoked updates the state', async () => {
+    deviceCache.loadIdentity.mockResolvedValue(REGISTERED.identity)
+    let answer!: (s: unknown) => void
+    loadDisplayState.mockReturnValue(new Promise((resolve) => (answer = resolve)))
+    const store = useDisplayStore()
+
+    expect(await store.ensure()).toEqual(REGISTERED)
+    await vi.dynamicImportSettled()
+    answer({ kind: 'revoked' })
+    await vi.waitFor(() => expect(store.state).toEqual({ kind: 'revoked' }))
+    expect(store.identity).toBeNull()
+    expect(deviceCache.clear).toHaveBeenCalled()
+  })
+
+  it('never lets a hung device cache read block the network for more than 1 s', async () => {
+    vi.useFakeTimers()
+    deviceCache.loadIdentity.mockReturnValue(new Promise(() => {}))
+    loadDisplayState.mockResolvedValue(REGISTERED)
+    const store = useDisplayStore()
+
+    let result: unknown = null
+    void store.ensure().then((s) => (result = s))
+    await vi.advanceTimersByTimeAsync(999)
+    expect(result).toBeNull()
+    await vi.advanceTimersByTimeAsync(1)
+    await vi.dynamicImportSettled()
+    await vi.waitFor(() => expect(result).toEqual(REGISTERED))
   })
 
   it('reads the device cache at most once', async () => {

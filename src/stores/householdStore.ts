@@ -134,16 +134,24 @@ export const useHouseholdStore = defineStore('household', () => {
     if (overlayHouseholdId !== householdId) overlay.value = []
     overlayHouseholdId = householdId
     status.value = 'loading'
+    // The live load starts at once; the device cache is read alongside it and never holds it up.
+    const loading = reload()
     if (!isDemo) {
-      const cached = await deviceCache.loadSnapshot(householdId)
-      // A stop() or a switch to another household during that read must not resurrect a stale one.
-      if (currentHouseholdId === householdId && cached !== null) {
-        snapshot.value = cached
-        status.value = 'ready'
-        fromCache.value = true
-      }
+      deviceCache
+        .loadSnapshot(householdId)
+        .then((cached) => {
+          // Only fills the gap before the first live snapshot, and never after a stop() or a switch to
+          // another household (which must not resurrect a stale one).
+          if (cached === null || currentHouseholdId !== householdId || snapshot.value !== null) return
+          snapshot.value = cached
+          status.value = 'ready'
+          fromCache.value = true
+        })
+        .catch(() => {
+          // The cache is best-effort; the live load stands alone.
+        })
     }
-    await reload()
+    await loading
     // A stop() or a switch to another household during that first load must not subscribe.
     if (currentHouseholdId !== householdId) return
     unsubscribe = source.subscribe(
