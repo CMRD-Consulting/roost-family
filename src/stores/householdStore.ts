@@ -2,11 +2,15 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { msUntilNextHouseholdMidnight } from '@/composables/householdMidnight'
 import { applyCommand } from '@/data/applyCommand'
-import type { HouseholdSource, RealtimeStatus } from '@/data/householdSource'
+import { createDeviceCache } from '@/data/deviceCache'
+import { isDemo, type HouseholdSource, type RealtimeStatus } from '@/data/householdSource'
 import type { LogCommand } from '@/data/logCommands'
 import type { HouseholdSnapshot } from '@/data/snapshot'
 
 export type HouseholdStatus = 'idle' | 'loading' | 'ready' | 'error'
+
+// Demo mode never writes household data (the child's health data) to disk.
+const deviceCache = createDeviceCache()
 
 export interface OverlayItem {
   command: LogCommand
@@ -29,6 +33,8 @@ export const useHouseholdStore = defineStore('household', () => {
   const realtime = ref<RealtimeStatus | 'unknown'>('unknown')
   /** ISO timestamp of the last successful load; used by `staleMinutes` while disconnected. */
   const freshAt = ref<string | null>(null)
+  /** True while `snapshot` is the device cache's last-known copy, not yet confirmed by a real load. */
+  const fromCache = ref(false)
   /** Locally-applied log commands not yet reflected in `snapshot`, newest last. */
   const overlay = ref<OverlayItem[]>([])
   /** `snapshot` with every overlay command applied on top, for the UI to render. */
@@ -100,6 +106,8 @@ export const useHouseholdStore = defineStore('household', () => {
       status.value = 'ready'
       error.value = null
       freshAt.value = next.loadedAt
+      fromCache.value = false
+      if (!isDemo) void deviceCache.saveSnapshot(next)
       // Overlay items saved before this reload started are already reflected in `next`; drop them.
       overlay.value = overlay.value.filter((o) => o.savedAt === null || o.savedAt >= loadStartedAt)
       scheduleMidnightReload()
@@ -119,9 +127,19 @@ export const useHouseholdStore = defineStore('household', () => {
     error.value = null
     realtime.value = 'unknown'
     freshAt.value = null
+    fromCache.value = false
     if (overlayHouseholdId !== householdId) overlay.value = []
     overlayHouseholdId = householdId
     status.value = 'loading'
+    if (!isDemo) {
+      const cached = await deviceCache.loadSnapshot(householdId)
+      // A stop() or a switch to another household during that read must not resurrect a stale one.
+      if (currentHouseholdId === householdId && cached !== null) {
+        snapshot.value = cached
+        status.value = 'ready'
+        fromCache.value = true
+      }
+    }
     await reload()
     // A stop() or a switch to another household during that first load must not subscribe.
     if (currentHouseholdId !== householdId) return
@@ -161,6 +179,6 @@ export const useHouseholdStore = defineStore('household', () => {
 
   return {
     snapshot, status, error, online, realtime, start, reload, stop, staleMinutes,
-    overlay, view, addOverlay, markSaved, removeOverlay,
+    overlay, view, addOverlay, markSaved, removeOverlay, fromCache,
   }
 })

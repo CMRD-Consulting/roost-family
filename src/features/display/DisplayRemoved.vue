@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
 import RButton from '@/ui/RButton.vue'
+import { createDeviceCache } from '@/data/deviceCache'
+import { createOfflineQueue } from '@/data/offlineQueue'
 import { displayClient } from '@/data/supabase'
 import { resetDisplay } from '@/session/displaySession'
 import { useDisplayStore } from '@/session/displayStore'
@@ -10,6 +12,9 @@ const displayStore = useDisplayStore()
 
 async function startOver() {
   await resetDisplay(displayClient)
+  // This tablet no longer owns whatever household data (including children's health data) was
+  // cached for offline boot, nor any log commands still queued for that household.
+  await Promise.all([createDeviceCache().clear(), createOfflineQueue().clear()])
   await displayStore.refresh()
   await router.replace('/setup')
 }

@@ -5,6 +5,7 @@ import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { mutateDemo, resetDemoForTests } from '@/data/demo/demoHousehold'
 import type { LogCommand } from '@/data/logCommands'
+import { useHouseholdStore } from '@/stores/householdStore'
 import { useLogStore } from '@/stores/logStore'
 import MainScreen from './MainScreen.vue'
 
@@ -108,6 +109,17 @@ describe('MainScreen (demo source)', () => {
     expect(wrapper.findAll('[data-log-kind]')).toHaveLength(6)
     expect(wrapper.find('[data-testid="conflict"]').exists()).toBe(false)
     expect(text).not.toContain('Offline')
+    wrapper.unmount()
+  })
+
+  it('shows a "Showing saved info" badge while the view is the device cache\'s last-known snapshot', async () => {
+    const wrapper = await mountMain()
+    expect(wrapper.text()).not.toContain('Showing saved info')
+
+    useHouseholdStore().fromCache = true
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Showing saved info from 3:00 PM')
     wrapper.unmount()
   })
 

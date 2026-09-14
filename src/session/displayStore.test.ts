@@ -3,15 +3,24 @@ import { createPinia, setActivePinia } from 'pinia'
 import { useDisplayStore } from './displayStore'
 
 const { loadDisplayState } = vi.hoisted(() => ({ loadDisplayState: vi.fn() }))
+const deviceCache = vi.hoisted(() => ({
+  loadIdentity: vi.fn(),
+  saveIdentity: vi.fn(),
+  clear: vi.fn(),
+}))
 
 vi.mock('@/data/supabase', () => ({ displayClient: {} }))
 vi.mock('./displaySession', () => ({ loadDisplayState }))
+vi.mock('@/data/deviceCache', () => ({ createDeviceCache: () => deviceCache }))
 
 const REGISTERED = { kind: 'registered', identity: { displayId: 'd1', householdId: 'h1', name: 'Kitchen' } } as const
 
 beforeEach(() => {
   setActivePinia(createPinia())
   loadDisplayState.mockReset()
+  deviceCache.loadIdentity.mockReset().mockResolvedValue(null)
+  deviceCache.saveIdentity.mockReset().mockResolvedValue(undefined)
+  deviceCache.clear.mockReset().mockResolvedValue(undefined)
 })
 afterEach(() => vi.useRealTimers())
 
@@ -62,6 +71,53 @@ describe('displayStore', () => {
     expect(loadDisplayState).toHaveBeenCalledTimes(2)
   })
 
+  it('seeds lastKnown from the device cache before the first network attempt', async () => {
+    deviceCache.loadIdentity.mockResolvedValue(REGISTERED.identity)
+    loadDisplayState.mockRejectedValue(new Error('Failed to fetch'))
+    const store = useDisplayStore()
+
+    expect(await store.ensure()).toEqual({ kind: 'offline' })
+    expect(store.lastKnown).toEqual(REGISTERED)
+    expect(store.identity).toEqual(REGISTERED.identity)
+  })
+
+  it('reads the device cache at most once', async () => {
+    deviceCache.loadIdentity.mockResolvedValue(REGISTERED.identity)
+    loadDisplayState.mockResolvedValue(REGISTERED)
+    const store = useDisplayStore()
+
+    await store.ensure()
+    await store.refresh()
+    await store.ensure()
+    expect(deviceCache.loadIdentity).toHaveBeenCalledTimes(1)
+  })
+
+  it('saves the identity to the device cache once registered', async () => {
+    loadDisplayState.mockResolvedValue(REGISTERED)
+    const store = useDisplayStore()
+
+    await store.refresh()
+    expect(deviceCache.saveIdentity).toHaveBeenCalledWith(REGISTERED.identity)
+    expect(deviceCache.clear).not.toHaveBeenCalled()
+  })
+
+  it('clears the device cache when the display is revoked', async () => {
+    loadDisplayState.mockResolvedValue({ kind: 'revoked' })
+    const store = useDisplayStore()
+
+    await store.refresh()
+    expect(deviceCache.clear).toHaveBeenCalledTimes(1)
+    expect(deviceCache.saveIdentity).not.toHaveBeenCalled()
+  })
+
+  it('clears the device cache when the display is unregistered', async () => {
+    loadDisplayState.mockResolvedValue({ kind: 'unregistered' })
+    const store = useDisplayStore()
+
+    await store.refresh()
+    expect(deviceCache.clear).toHaveBeenCalledTimes(1)
+  })
+
   it('in demo mode reports the demo display as registered without reading Supabase', async () => {
     vi.resetModules()
     vi.doMock('@/data/householdSource', () => ({
@@ -77,6 +133,9 @@ describe('displayStore', () => {
       expect(await store.ensure()).toEqual(expected)
       expect(store.identity).toEqual(expected.identity)
       expect(loadDisplayState).not.toHaveBeenCalled()
+      expect(deviceCache.loadIdentity).not.toHaveBeenCalled()
+      expect(deviceCache.saveIdentity).not.toHaveBeenCalled()
+      expect(deviceCache.clear).not.toHaveBeenCalled()
     } finally {
       vi.doUnmock('@/data/householdSource')
       vi.resetModules()

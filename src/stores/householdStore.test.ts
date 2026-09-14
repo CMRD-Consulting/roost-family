@@ -6,6 +6,15 @@ import type { HouseholdSource } from '@/data/householdSource'
 import type { LogCommand } from '@/data/logCommands'
 import { useHouseholdStore } from './householdStore'
 
+const deviceCache = vi.hoisted(() => ({
+  loadSnapshot: vi.fn(),
+  saveSnapshot: vi.fn(),
+  loadIdentity: vi.fn(),
+  saveIdentity: vi.fn(),
+  clear: vi.fn(),
+}))
+vi.mock('@/data/deviceCache', () => ({ createDeviceCache: () => deviceCache }))
+
 function fakeSource(loadImpl?: (id: string, now: Date) => Promise<HouseholdSnapshot>) {
   let onChangeCb: (() => void) | null = null
   let onStatusCb: ((status: 'connected' | 'disconnected') => void) | null = null
@@ -58,6 +67,11 @@ describe('useHouseholdStore', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     stores = []
+    deviceCache.loadSnapshot.mockReset().mockResolvedValue(null)
+    deviceCache.saveSnapshot.mockReset().mockResolvedValue(undefined)
+    deviceCache.loadIdentity.mockReset().mockResolvedValue(null)
+    deviceCache.saveIdentity.mockReset().mockResolvedValue(undefined)
+    deviceCache.clear.mockReset().mockResolvedValue(undefined)
   })
 
   afterEach(() => {
@@ -126,6 +140,57 @@ describe('useHouseholdStore', () => {
     expect(store.snapshot).toBeNull()
     expect(store.status).toBe('error')
     expect(store.error).toBe('down')
+  })
+
+  it('shows a cached snapshot immediately, marked fromCache, while the network load is pending', async () => {
+    const now = new Date('2026-09-14T15:00:00Z')
+    const cached = buildDemoSnapshot(new Date(now.getTime() - 3_600_000))
+    const fresh = buildDemoSnapshot(now)
+    deviceCache.loadSnapshot.mockResolvedValue(cached)
+    const { source, resolve } = deferredSource()
+    const store = newStore()
+
+    const starting = store.start('h1', source)
+    await vi.waitFor(() => expect(store.fromCache).toBe(true))
+    expect(store.snapshot).toEqual(cached)
+    expect(store.status).toBe('ready')
+    expect(deviceCache.loadSnapshot).toHaveBeenCalledWith('h1')
+
+    resolve(0, fresh)
+    await starting
+
+    expect(store.fromCache).toBe(false)
+    expect(store.snapshot).toEqual(fresh)
+  })
+
+  it('saves every successful load to the device cache', async () => {
+    const { source } = fakeSource()
+    const store = newStore()
+    await store.start('h1', source)
+
+    expect(deviceCache.saveSnapshot).toHaveBeenCalledWith(store.snapshot)
+  })
+
+  it('does not touch the device cache in demo mode', async () => {
+    vi.resetModules()
+    // householdStore only reads `isDemo` from this module at runtime; the rest is types, erased at build.
+    vi.doMock('@/data/householdSource', () => ({ isDemo: true }))
+    try {
+      const pinia = await import('pinia')
+      pinia.setActivePinia(pinia.createPinia())
+      const { useHouseholdStore: useDemoHouseholdStore } = await import('./householdStore')
+      const { source } = fakeSource()
+      const store = useDemoHouseholdStore()
+
+      await store.start('h1', source)
+      store.stop()
+
+      expect(deviceCache.loadSnapshot).not.toHaveBeenCalled()
+      expect(deviceCache.saveSnapshot).not.toHaveBeenCalled()
+    } finally {
+      vi.doUnmock('@/data/householdSource')
+      vi.resetModules()
+    }
   })
 
   it('unsubscribes and removes listeners on stop', async () => {
@@ -262,6 +327,9 @@ describe('useHouseholdStore', () => {
       const store = newStore()
 
       const startPromise = store.start('h1', source)
+      // Let start()'s own device-cache read (awaited before its first reload) settle, so its
+      // internal reload() issues the first source.load() call, before the second one below.
+      await Promise.resolve()
       // A reload fired in between (e.g. a subscribe callback) starts a second, newer load.
       const secondReload = store.reload()
 

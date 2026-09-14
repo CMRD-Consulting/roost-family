@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useNow } from '@/composables/useNow'
 import { DEMO_DISPLAY, isDemo, selectSource, selectWriter, type HouseholdSource } from '@/data/householdSource'
 import { createOfflineQueue } from '@/data/offlineQueue'
+import { formatClock } from '@/domain/time'
 import DiaperSheet from '@/features/logs/DiaperSheet.vue'
 import DinnerSheet from '@/features/logs/DinnerSheet.vue'
 import DosePinDialog from '@/features/logs/DosePinDialog.vue'
@@ -60,6 +61,13 @@ const date = computed(() => {
 
 const offline = computed(() => !store.online || displayStore.state?.kind === 'offline')
 const staleMinutes = computed(() => store.staleMinutes(now.value))
+
+/** "Showing saved info from 9:42 AM" while the view is still the device cache's last-known snapshot. */
+const cacheBadge = computed(() => {
+  if (!store.fromCache || !store.snapshot) return null
+  const at = formatClock(new Date(store.snapshot.loadedAt), store.snapshot.household.timeZone)
+  return `Showing saved info from ${at}`
+})
 
 const bootFailed = ref(false)
 const unreachable = computed(() => bootFailed.value || (store.status === 'error' && !store.snapshot))
@@ -207,6 +215,13 @@ const MODE_BUTTONS = [
             class="mr-2 rounded-lg bg-orange-tint px-3 py-1.5 text-[16px] font-semibold uppercase tracking-[0.08em] text-warn-ink"
           >
             Offline
+          </span>
+          <span
+            v-if="cacheBadge"
+            role="status"
+            class="mr-2 rounded-lg bg-surface-2 px-3 py-1.5 text-[16px] font-medium text-ink-2"
+          >
+            {{ cacheBadge }}
           </span>
           <span
             v-if="logStore.pendingCount > 0"
