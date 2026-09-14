@@ -213,7 +213,7 @@ describe('createSupabaseSource load', () => {
     expect(snapshot.children).toEqual([
       {
         id: 'c1', name: 'Ivy', birthday: '2023-04-10', color: '#C2477A',
-        nightSleep: { start: '19:00', end: '06:00' }, sortOrder: 0, overrides: { wakeWindow: true },
+        nightSleep: { start: '19:00', end: '06:00' }, sortOrder: 0, overrides: { wakeWindow: true }, allergies: '', foodRules: '',
       },
     ])
     expect(snapshot.activeSitterSession).toBeNull()
@@ -312,7 +312,7 @@ describe('createSupabaseSource load', () => {
       const snapshot = await source.load('h1', now)
 
       expect(snapshot.children).toEqual([
-        { id: 'c1', name: 'Ivy', birthday: '2023-04-10', color: '#C2477A', nightSleep: null, sortOrder: 0, overrides: { feeding: false } },
+        { id: 'c1', name: 'Ivy', birthday: '2023-04-10', color: '#C2477A', nightSleep: null, sortOrder: 0, overrides: { feeding: false }, allergies: '', foodRules: '' },
       ])
       expect(calls.find((c) => c.table === 'children')?.ops).toEqual([
         'select:*, child_households!inner(household_id)', 'eq:child_households.household_id=h1', 'order:sort_order:asc',

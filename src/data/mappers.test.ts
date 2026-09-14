@@ -290,6 +290,11 @@ describe('toChild', () => {
   it('carries sort_order through as sortOrder', () => {
     expect(toChild(childRow({ sort_order: 3 }), []).sortOrder).toBe(3)
   })
+
+  it('carries allergies and food rules for the Care Info panel', () => {
+    const child = toChild(childRow({ allergies: 'Peanuts', food_rules: 'No whole grapes' }), [])
+    expect(child).toMatchObject({ allergies: 'Peanuts', foodRules: 'No whole grapes' })
+  })
 })
 
 describe('toMedicine', () => {

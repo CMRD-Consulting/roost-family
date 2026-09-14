@@ -91,7 +91,7 @@ export function toChild(
       overrides[o.feature as Feature] = o.enabled
     }
   }
-  return { ...child, sortOrder: row.sort_order, overrides }
+  return { ...child, sortOrder: row.sort_order, overrides, allergies: row.allergies, foodRules: row.food_rules }
 }
 
 export function toMedicine(row: Tables<'medicines'>): Medicine {

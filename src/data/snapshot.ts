@@ -36,6 +36,10 @@ export interface Member {
 export interface SnapshotChild extends Child {
   sortOrder: number
   overrides: Partial<Record<Feature, boolean>>
+  /** Free text from the child profile, shown on the sitter's Care Info panel. Optional: a device-cached
+   *  snapshot from before these were loaded won't have them. */
+  allergies?: string
+  foodRules?: string
 }
 
 export interface StickerCategory {
