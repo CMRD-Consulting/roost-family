@@ -158,7 +158,7 @@ async function createInvite(): Promise<void> {
         >
           <div class="flex flex-wrap items-center gap-4">
             <RAvatar :name="row.displayName" :color="row.color" :size="48" decorative />
-            <div class="flex min-w-0 flex-1 flex-col">
+            <div class="flex min-w-0 flex-1 basis-40 flex-col">
               <span class="text-[22px] font-semibold text-ink">
                 {{ row.displayName }}<span v-if="row.membershipId === gate.owner.value?.membershipId" class="text-ink-3"> (you)</span>
               </span>

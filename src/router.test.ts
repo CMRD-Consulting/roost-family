@@ -68,6 +68,15 @@ describe('public routes', () => {
     expect(route.meta.requires).toBeUndefined()
   })
 
+  it('serves Manage household at /manage, lazily, in any browser without display guards', () => {
+    const route = router.resolve('/manage?calendar=connected')
+    expect(route.matched).toHaveLength(1)
+    expect(isPublicRoute(route)).toBe(true)
+    expect(route.meta.requires).toBeUndefined()
+    expect(route.meta.settingsSession).toBeUndefined()
+    expect(typeof route.matched[0]!.components!.default).toBe('function')
+  })
+
   it('treats the household screens as guarded', () => {
     expect(isPublicRoute(router.resolve('/home'))).toBe(false)
     expect(isPublicRoute(router.resolve('/setup'))).toBe(false)

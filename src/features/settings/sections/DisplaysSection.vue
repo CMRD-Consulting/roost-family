@@ -23,6 +23,8 @@ const householdName = computed(() => host.household.value?.name ?? 'this househo
 
 const rows = ref<DisplayRow[]>([])
 const loading = ref(false)
+/** The list has loaded at least once for this sign-in (so an empty list means no displays). */
+const loaded = ref(false)
 const error = ref<string | null>(null)
 const notice = ref<string | null>(null)
 const renamingId = ref<string | null>(null)
@@ -36,6 +38,7 @@ async function load(): Promise<void> {
   try {
     const api = await host.loadApi()
     rows.value = await gate.run((o) => api.listDisplays(o.client, householdId))
+    loaded.value = true
   } catch (e) {
     error.value = ownerActionMessage(e)
   } finally {
@@ -47,6 +50,7 @@ watch(
   gate.owner,
   (owner) => {
     rows.value = []
+    loaded.value = false
     renamingId.value = null
     confirmRemoveId.value = null
     if (owner) void load()
@@ -119,6 +123,7 @@ async function remove(row: DisplayRow): Promise<void> {
       <p v-if="error" role="alert" class="text-[18px] text-warn-ink">{{ error }}</p>
 
       <p v-if="loading && rows.length === 0" role="status" class="text-[20px] text-ink-2">Loading displays…</p>
+      <p v-else-if="loaded && rows.length === 0" class="text-[18px] text-ink-2">No displays are set up in {{ householdName }}.</p>
       <ul class="flex flex-col gap-3" aria-label="Displays">
         <li
           v-for="row in rows"
@@ -127,7 +132,7 @@ async function remove(row: DisplayRow): Promise<void> {
           :data-testid="`display-${row.displayId}`"
         >
           <div class="flex flex-wrap items-center gap-4">
-            <div class="flex min-w-0 flex-1 flex-col">
+            <div class="flex min-w-0 flex-1 basis-40 flex-col">
               <span class="flex flex-wrap items-center gap-3 text-[22px] font-semibold text-ink">
                 {{ row.name }}
                 <span

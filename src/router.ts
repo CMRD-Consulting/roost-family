@@ -15,7 +15,8 @@ declare module 'vue-router' {
     keepsSettingsSession?: boolean
     /** Only reachable with a member invite just made in Settings > Members (the add-adult hand-off). */
     pendingInvite?: boolean
-    /** Reachable on any device with no display registration and no display checks (the Take list phone page). */
+    /** Reachable on any device with no display registration and no display checks (the Take list phone page,
+     *  Manage household). */
     public?: boolean
   }
 }
@@ -69,6 +70,9 @@ export const router = createRouter({
       props: true,
       meta: { public: true },
     },
+    // Manage household (spec §7.10): any browser, phone or laptop, that is not a display. It signs an adult in on a
+    // temporary client of its own and never reads or starts the display session.
+    { path: '/manage', component: () => import('@/features/manage/ManageHousehold.vue'), meta: { public: true } },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
 })
