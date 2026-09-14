@@ -40,7 +40,24 @@ Branch `phase-1-foundation` (60 commits on top of the specs and design). Nothing
   - dose-conflict banner and medicine status
   - tonight's dinner
   - log-button row with a 0.6 s hold ring
-- Holding a log button shows "Logging arrives in Phase 2b". The mode buttons (Nap, Kids' Corner, Sitter, Settings) are placeholders.
+- The mode buttons (Nap, Kids' Corner, Sitter, Settings) are placeholders until Phase 3.
+
+**Phase 2b: Logging** (plan: `plans/2026-09-14-roost-phase-2b-logging.md`)
+- Hold a log button to open its sheet:
+  - **Sleep:** start or end, with nap/night set automatically.
+  - **Feeding:** milk, meal or snack, with amount chips.
+  - **Medicine:** early and daily-max warnings; "Who?" is required.
+  - **Sticker:** with a celebration and a chime.
+  - **Diaper, Jot, Grocery:** add, check off, delete.
+- Also: "Still sleeping?" (end or discard a forgotten sleep) and long-press to edit tonight's dinner.
+- **Every log** shows up immediately. The "Who?" row records which adult logged it; if nobody is picked, it's credited to the display.
+- **Undo** for 10 seconds. Undoing a dose needs an adult PIN and voids it; a dose that never synced is simply removed.
+- **Offline:**
+  - Logs queue on the device (IndexedDB) and sync in order when the connection returns.
+  - A dose logged without a live connection asks "Can't check whether another adult gave a dose. Log anyway?" and is saved with `logged_offline`.
+  - Requests time out after 12 s, so stalled Wi-Fi counts as offline.
+- **Dose alerts** are acknowledged with an adult PIN.
+- **Accessibility:** focus stays inside open sheets, and every field and control has a proper label for screen readers.
 
 ## See it now
 
@@ -77,9 +94,21 @@ Open http://localhost:5173/home. Try `?conflict`, `?manyKids`, or both. On the i
    initdb -D /tmp/roost-pg -U postgres --auth=trust && pg_ctl -D /tmp/roost-pg -o "-p 55432 -k /tmp" -l /tmp/roost-pg.log start
    ```
    Use Postgres.app's `bin` directory for `initdb` and `pg_ctl`. Then run `bash supabase/manual-checks/validate-local.sh`.
-5. **Small follow-ups found during the end-to-end run** (for Phase 2b):
-   - wizard inputs and consent checkboxes need explicit accessible names (the accessibility tree shows them unnamed or as "on")
-   - the "Log wake-up" prompt shows for a child with no sleep data at all; consider hiding it until the first sleep log
+5. **Open follow-ups:**
+   - **Offline boot:** a tablet that restarts while the network is down shows "Can't reach Roost Family" instead of its last data, because nothing is cached on the device yet (spec §13 says it should keep working from local data). Planned for Phase 3.
+   - **Undo window:** 10 seconds (spec §7.3) is easy to miss. Decide whether to lengthen it.
+   - **"Log wake-up" with no data:** the prompt shows for a child with no sleep data at all; consider hiding it until the first sleep log.
+
+**Phase 2b end-to-end on local Supabase** (as `sam@roost.test`):
+- **Feeding:** saved; the card updated and the row is credited to "Kitchen".
+- **Undo:** a jot was inserted and then deleted.
+- **Medicine inside the interval:** showed "Last dose was 2h 2m ago by Sam. Minimum is 6h." and "Confirm and save"; stored `warnings_confirmed={early}`.
+- **Dose undo:** asked for a PIN, then voided the dose, credited to Alex with reason "Undone within 10 seconds".
+- **Sleep:** start → reopen offers End → end → reopen offers Start; the row has an end time.
+- **Stalled API gateway** (container paused):
+  - A grocery item showed "Saved offline — will sync" and "Syncing 1…", then synced about 5 s after the gateway resumed.
+  - A dose asked "Can't check…", then Log anyway; it synced with `logged_offline=true`.
+- **Layout at 1024×768:** both medicine lines sit above the kid cards with no overflow.
 
 ## Decisions I made that you should check
 
@@ -95,15 +124,28 @@ Open http://localhost:5173/home. Try `?conflict`, `?manyKids`, or both. On the i
 | Adding an adult will require the Owner's full sign-in (spec §6.3), not PIN (§6.4 step 1) | The spec contradicts itself; I took the stricter reading | Phase 3 |
 | Log labels are dark ink on the orange/green/amber buttons | The design's light text failed contrast | `LogRow.vue` |
 | Tonight's dinner moved to the right column; clock shrinks on 768-px-tall screens | Keeps the dose alert and medicine visible without scrolling on a 9.7" iPad | `MainScreen.vue` |
+| Dose alert and medicine lines always render above the kid cards | Safety information never scrolls out of view | `MainScreen.vue` |
+| No child is preselected when more than one is eligible | Prevents logging to the wrong child | `logSheetModel.ts` |
+| A dose logged while realtime is disconnected also asks "Log anyway?" | The display can't be sure it has the latest doses | `logStore.ts` |
+| Warnings that change between showing and saving require another tap | A dose that arrives from another display at the last moment can't be silently confirmed | `MedicineSheet.vue` |
+| Undoing a dose that never synced removes it without a PIN when offline | It never reached the server, so there's nothing to void | `DosePinDialog.vue` |
 
 ## Verification
 
-- `pnpm test`: 292 tests, 31 files, all passing
+- `pnpm test`: 587 tests, all passing
 - `pnpm typecheck`, `pnpm build`: clean
-- `validate-local.sh` + `rls_smoke.sql`: `ALL RLS SMOKE CHECKS PASSED`
-- Visual check of the demo main screen at 1024×768, 1112×834, 1366×1024 with and without `?conflict` and `?manyKids`
-- Independent reviews after each phase (domain rules, SQL security, frontend sessions, data layer). All findings fixed.
+- `rls_smoke.sql` on local Supabase: `ALL RLS SMOKE CHECKS PASSED`
+- End-to-end runs on local Supabase for Phase 1, 2a and 2b (above)
+- Independent reviews after each phase:
+  - domain rules
+  - SQL security
+  - frontend sessions
+  - data layer
+  - log store and writer (checked against the real API)
+  - sheets and wiring
+
+  All findings fixed.
 
 ## Next up
 
-**Phase 2b: logging.** Log sheets (Sleep, Feeding, Medicine with warnings, Sticker, Jot, Grocery, Diaper), the "Who?" row, adult PIN pad, Undo toast, offline queue, dose void/acknowledge, dinner edit, and "Still sleeping?" actions.
+**Phase 3:** Kids' Corner (picture schedule, visual timer, sticker chart), Sitter Mode with the "While You Were Out" summary, Night and Nap Mode, Settings through PIN-checked RPCs (children, routines, medicines, members, displays), and caching the snapshot on the device for offline boot.
