@@ -319,8 +319,12 @@ export const useLogStore = defineStore('log', () => {
       syncPendingCount()
       return
     }
-    // Queued-but-unsent commands must still show optimistically, even before their first replay.
-    for (const item of queued) householdStore.addOverlay(item.command, new Date(item.enqueuedAt))
+    // Queued-but-unsent commands must still show optimistically, even before their first replay. After a
+    // re-init in the same session (e.g. the main screen remounting) their overlays are already there.
+    const overlaid = new Set(householdStore.overlay.map((o) => JSON.stringify(o.command)))
+    for (const item of queued) {
+      if (!overlaid.has(JSON.stringify(item.command))) householdStore.addOverlay(item.command, new Date(item.enqueuedAt))
+    }
     syncPendingCount()
 
     await replay()

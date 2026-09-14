@@ -446,6 +446,21 @@ describe('useLogStore', () => {
       logStore.stop()
     })
 
+    it('re-init in the same session does not add a second overlay for a command still queued', async () => {
+      const { householdStore, logStore, writer, queue } = await setup()
+      await logStore.init(writer, queue)
+      setOnline(false)
+      await logStore.submit(feedingCmd('feed-1'))
+      expect(householdStore.overlay).toHaveLength(1)
+      logStore.stop()
+
+      await logStore.init(writer, queue)
+
+      expect(householdStore.overlay).toHaveLength(1)
+      expect(logStore.pendingCount).toBe(1)
+      logStore.stop()
+    })
+
     it('stop removes the online listener and the retry timer', async () => {
       const { logStore, writer, queue } = await setup()
       await logStore.init(writer, queue)

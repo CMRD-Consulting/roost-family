@@ -2,11 +2,23 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useNow } from '@/composables/useNow'
-import { DEMO_DISPLAY, isDemo, selectSource, type HouseholdSource } from '@/data/householdSource'
+import { DEMO_DISPLAY, isDemo, selectSource, selectWriter, type HouseholdSource } from '@/data/householdSource'
+import { createOfflineQueue } from '@/data/offlineQueue'
+import DiaperSheet from '@/features/logs/DiaperSheet.vue'
+import DinnerSheet from '@/features/logs/DinnerSheet.vue'
 import DosePinDialog from '@/features/logs/DosePinDialog.vue'
+import FeedingSheet from '@/features/logs/FeedingSheet.vue'
+import GrocerySheet from '@/features/logs/GrocerySheet.vue'
+import JotSheet from '@/features/logs/JotSheet.vue'
+import MedicineSheet from '@/features/logs/MedicineSheet.vue'
+import SleepSheet from '@/features/logs/SleepSheet.vue'
+import StaleSleepSheet from '@/features/logs/StaleSleepSheet.vue'
+import StickerSheet from '@/features/logs/StickerSheet.vue'
+import UndoToast from '@/features/logs/UndoToast.vue'
 import { checkStillRegistered } from '@/session/displaySession'
 import { useDisplayStore } from '@/session/displayStore'
 import { useHouseholdStore } from '@/stores/householdStore'
+import { STUCK_COMMAND_MESSAGE, useLogStore } from '@/stores/logStore'
 import RLogo from '@/ui/RLogo.vue'
 import ConflictBanner from './ConflictBanner.vue'
 import DinnerLine from './DinnerLine.vue'
@@ -14,19 +26,25 @@ import KidCard from './KidCard.vue'
 import KidCardCompact from './KidCardCompact.vue'
 import LogRow from './LogRow.vue'
 import MedicineZone from './MedicineZone.vue'
-import { buildMainScreenModel } from './mainScreenModel'
+import { buildMainScreenModel, type LogKind } from './mainScreenModel'
 
 const RETRY_MS = 30_000
 const HEARTBEAT_MS = 5 * 60_000
-const TOAST_MS = 2_000
 const STALE_AFTER_MIN = 5
 
 const router = useRouter()
 const store = useHouseholdStore()
 const displayStore = useDisplayStore()
+const logStore = useLogStore()
 const now = useNow(15_000)
 
-const model = computed(() => (store.snapshot ? buildMainScreenModel(store.snapshot, now.value) : null))
+// The view has locally-applied (not yet confirmed) logs on top of the loaded snapshot. The model is rebuilt
+// on every tick and whenever the view changes; reading the time then (not the last tick's) keeps an entry
+// logged "now" from being treated as in the future until the next tick.
+const model = computed(() => {
+  const tick = now.value.getTime()
+  return store.view ? buildMainScreenModel(store.view, new Date(Math.max(tick, Date.now()))) : null
+})
 
 /** "3:00 PM" → big "3:00" + small "PM". */
 const clock = computed(() => {
@@ -46,19 +64,41 @@ const staleMinutes = computed(() => store.staleMinutes(now.value))
 const bootFailed = ref(false)
 const unreachable = computed(() => bootFailed.value || (store.status === 'error' && !store.snapshot))
 
-const toast = ref<string | null>(null)
-let toastTimer: ReturnType<typeof setTimeout> | undefined
-function onOpenLog(): void {
-  toast.value = 'Logging arrives in Phase 2b'
-  clearTimeout(toastTimer)
-  toastTimer = setTimeout(() => (toast.value = null), TOAST_MS)
-}
-
+/** The log sheet opened from the log row. */
+const openLog = ref<LogKind | null>(null)
+/** The child whose forgotten open sleep is being fixed ("Still sleeping?"). */
+const fixingSleepChildId = ref<string | null>(null)
+const editingDinner = ref(false)
 /** The dose whose conflict alert an adult is acknowledging with their PIN (spec §7.3). */
 const acknowledgingDoseId = ref<string | null>(null)
+/** The just-logged dose an adult is undoing with their PIN. */
+const undoingDoseId = ref<string | null>(null)
+
+/** Replay failures, worded for the banner. */
+const failureMessages = computed(() =>
+  logStore.failures.map((m) => (m === STUCK_COMMAND_MESSAGE ? m : `A log couldn't be saved: ${m}`)),
+)
+function dismissFailure(index: number): void {
+  logStore.failures = logStore.failures.filter((_, i) => i !== index)
+}
 
 let source: HouseholdSource | null = null
 let disposed = false
+/** Set once logging has been started for this mount (the log store runs while the main screen is shown). */
+let loggingStarted = false
+
+async function startLogging(): Promise<void> {
+  if (loggingStarted) return
+  loggingStarted = true
+  try {
+    const writer = await selectWriter()
+    if (disposed) return
+    await logStore.init(writer, createOfflineQueue())
+  } catch (e) {
+    console.warn('Could not start logging; retrying', e)
+    loggingStarted = false
+  }
+}
 
 async function boot(): Promise<void> {
   const identity = isDemo ? DEMO_DISPLAY : displayStore.identity
@@ -74,12 +114,16 @@ async function boot(): Promise<void> {
   }
   if (disposed) return
   bootFailed.value = false
-  await store.start(identity.householdId, source)
+  const starting = store.start(identity.householdId, source)
+  // After start() has claimed the household, so the overlay of restored queued commands isn't cleared.
+  void startLogging()
+  await starting
 }
 
 function retry(): void {
   if (bootFailed.value) void boot()
   else if (store.status === 'error' && !store.snapshot) void store.reload()
+  if (source !== null && !bootFailed.value) void startLogging()
 }
 
 async function heartbeat(): Promise<void> {
@@ -121,8 +165,8 @@ onBeforeUnmount(() => {
   disposed = true
   clearInterval(retryTimer)
   clearInterval(heartbeatTimer)
-  clearTimeout(toastTimer)
   stopDisplayWatch?.()
+  logStore.stop()
   store.stop()
 })
 
@@ -142,7 +186,9 @@ const MODE_BUTTONS = [
 
 <template>
   <main class="relative h-dvh overflow-hidden bg-app text-ink">
-    <div v-if="model" class="grid h-full grid-rows-[auto_minmax(0,1fr)_auto] gap-5 px-10 pb-8 pt-9">
+    <!-- Rows: header, zones, the undo toast's own fixed-height row (so it never covers the medicine zone
+         or a dose alert), and the log row. -->
+    <div v-if="model" class="main-grid grid h-full grid-rows-[auto_minmax(0,1fr)_60px_auto] gap-4 px-10 pb-8 pt-9">
       <header class="flex min-w-0 items-start justify-between gap-6">
         <div class="flex min-w-0 items-baseline gap-6">
           <p class="whitespace-nowrap font-semibold leading-none tracking-[-0.03em] tabular-nums">
@@ -160,6 +206,14 @@ const MODE_BUTTONS = [
             class="mr-2 rounded-lg bg-orange-tint px-3 py-1.5 text-[16px] font-semibold uppercase tracking-[0.08em] text-warn-ink"
           >
             Offline
+          </span>
+          <span
+            v-if="logStore.pendingCount > 0"
+            role="status"
+            data-testid="syncing"
+            class="mr-2 rounded-lg bg-surface-2 px-3 py-1.5 text-[16px] font-semibold uppercase tracking-[0.08em] text-ink-2"
+          >
+            Syncing {{ logStore.pendingCount }}…
           </span>
           <button
             v-for="b in MODE_BUTTONS"
@@ -195,16 +249,16 @@ const MODE_BUTTONS = [
             <ConflictBanner :conflicts="model.conflicts" @acknowledge="acknowledgingDoseId = $event" />
             <MedicineZone :lines="model.medicine" />
             <div class="grid shrink-0 grid-cols-2 gap-2.5 min-[1300px]:grid-cols-3">
-              <KidCardCompact v-for="card in model.kidCards" :key="card.childId" :card="card" />
+              <KidCardCompact v-for="card in model.kidCards" :key="card.childId" :card="card" @fix-sleep="fixingSleepChildId = $event" />
             </div>
           </template>
           <template v-else>
             <!-- 3 columns only when wide enough for a 24 px status line without truncation. -->
             <div v-if="model.layout === 'compact'" class="grid shrink-0 grid-cols-2 gap-2.5 min-[1300px]:grid-cols-3">
-              <KidCardCompact v-for="card in model.kidCards" :key="card.childId" :card="card" />
+              <KidCardCompact v-for="card in model.kidCards" :key="card.childId" :card="card" @fix-sleep="fixingSleepChildId = $event" />
             </div>
             <div v-else class="grid shrink-0 grid-cols-2 gap-3">
-              <KidCard v-for="card in model.kidCards" :key="card.childId" :card="card" />
+              <KidCard v-for="card in model.kidCards" :key="card.childId" :card="card" @fix-sleep="fixingSleepChildId = $event" />
             </div>
             <ConflictBanner :conflicts="model.conflicts" @acknowledge="acknowledgingDoseId = $event" />
             <MedicineZone :lines="model.medicine" />
@@ -212,7 +266,24 @@ const MODE_BUTTONS = [
         </div>
 
         <div class="flex min-h-0 flex-col gap-3">
-          <DinnerLine :dinner="model.dinner" />
+          <DinnerLine :dinner="model.dinner" @edit="editingDinner = true" />
+          <section
+            v-for="(message, i) in failureMessages"
+            :key="i"
+            role="alert"
+            data-testid="log-failure"
+            class="flex shrink-0 items-center gap-3 rounded-[18px] bg-orange-tint py-2 pl-5 pr-2 text-warn-ink"
+          >
+            <p class="min-w-0 flex-1 text-[18px] leading-snug">{{ message }}</p>
+            <button
+              type="button"
+              aria-label="Dismiss"
+              class="flex h-[60px] w-[60px] shrink-0 items-center justify-center rounded-[var(--radius-control)] text-[24px] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-warn-ink"
+              @click="dismissFailure(i)"
+            >
+              ✕
+            </button>
+          </section>
           <section class="flex min-h-0 flex-1 flex-col gap-3 rounded-[var(--radius-card)] bg-surface px-[26px] py-[22px]">
             <h2 class="text-[16px] font-semibold uppercase tracking-[0.1em] text-ink-3">Today</h2>
             <p class="text-[18px] text-ink-3">Calendar arrives in Phase 4</p>
@@ -222,7 +293,9 @@ const MODE_BUTTONS = [
         </div>
       </div>
 
-      <LogRow :buttons="model.logButtons" @open="onOpenLog" />
+      <UndoToast @needs-pin="undoingDoseId = $event" />
+
+      <LogRow :buttons="model.logButtons" @open="openLog = $event" />
     </div>
 
     <div v-else-if="unreachable" class="flex h-full flex-col items-center justify-center gap-6 px-10 text-center">
@@ -234,20 +307,33 @@ const MODE_BUTTONS = [
       <RLogo :size="64" />
     </div>
 
+    <SleepSheet :open="openLog === 'sleep'" @close="openLog = null" />
+    <FeedingSheet :open="openLog === 'feeding'" @close="openLog = null" />
+    <MedicineSheet :open="openLog === 'medicine'" @close="openLog = null" />
+    <StickerSheet :open="openLog === 'sticker'" @close="openLog = null" />
+    <JotSheet :open="openLog === 'jot'" @close="openLog = null" />
+    <GrocerySheet :open="openLog === 'grocery'" @close="openLog = null" />
+    <DiaperSheet :open="openLog === 'diaper'" @close="openLog = null" />
+    <StaleSleepSheet
+      v-if="fixingSleepChildId !== null"
+      open
+      :child-id="fixingSleepChildId"
+      @close="fixingSleepChildId = null"
+    />
+    <DinnerSheet :open="editingDinner" @close="editingDinner = false" />
+
     <DosePinDialog
       action="acknowledge"
       :open="acknowledgingDoseId !== null"
       :dose-id="acknowledgingDoseId"
       @close="acknowledgingDoseId = null"
     />
-
-    <p
-      v-if="toast"
-      role="status"
-      class="absolute bottom-[148px] left-1/2 -translate-x-1/2 rounded-full bg-ink px-5 py-2.5 text-[18px] font-medium text-surface"
-    >
-      {{ toast }}
-    </p>
+    <DosePinDialog
+      action="undo"
+      :open="undoingDoseId !== null"
+      :dose-id="undoingDoseId"
+      @close="undoingDoseId = null"
+    />
   </main>
 </template>
 
@@ -256,6 +342,16 @@ const MODE_BUTTONS = [
    room for the medicine zone below, per docs/superpowers/specs/2026-09-14-roost-design.md §7.2.
    Sizes stay within spec minimums: date line stays >= 18px (secondary text floor). */
 @media (max-height: 800px) {
+  /* Tighter frame so the undo toast's reserved row doesn't push the medicine zone out of view. */
+  .main-grid {
+    row-gap: 12px;
+    padding-top: 20px;
+    padding-bottom: 16px;
+  }
+  /* Spec §4 floor for primary log buttons. */
+  .main-grid :deep([data-log-kind]) {
+    height: 88px;
+  }
   .clock-time {
     font-size: 104px;
   }
