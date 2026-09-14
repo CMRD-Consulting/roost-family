@@ -41,11 +41,30 @@ export function isMuted(): boolean {
   return muted
 }
 
-/** A soft two-tone chime (E5 then A5) for the sticker celebration. No-op when muted or unsupported. */
+/**
+ * A soft two-tone chime (E5 then A5) for the sticker celebration. No-op when muted or unsupported. A context
+ * the browser suspended (e.g. while the tablet slept) is resumed first, and the tones are scheduled once it
+ * runs: scheduled against a suspended context's frozen clock they would never be heard.
+ */
 export function playChime(): void {
   if (muted) return
   const ctx = ensureContext()
   if (ctx === null) return
+  if (ctx.state !== 'suspended') {
+    scheduleChime(ctx)
+    return
+  }
+  ctx
+    .resume()
+    .then(() => {
+      if (!muted) scheduleChime(ctx)
+    })
+    .catch(() => {
+      // Not allowed to resume without a user gesture: stay silent rather than throw.
+    })
+}
+
+function scheduleChime(ctx: AudioContext): void {
   const start = ctx.currentTime
   const notes: [frequency: number, offset: number][] = [
     [659.25, 0],

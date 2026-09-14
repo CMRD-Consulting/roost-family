@@ -80,7 +80,20 @@ export function useVisualTimer(): VisualTimer {
     remainingMs.value = 0
   }
 
-  onScopeDispose(clearAll)
+  // Background tabs throttle or freeze timeouts, so the end timeout may not have fired while the tablet slept or
+  // showed another app. Coming back after the end time: finish (and chime) now rather than whenever it fires.
+  function onVisibilityChange(): void {
+    if (document.visibilityState !== 'visible' || phase.value !== 'running') return
+    const left = endsAt - Date.now()
+    if (left <= 0) finish()
+    else remainingMs.value = left
+  }
+  document.addEventListener('visibilitychange', onVisibilityChange)
+
+  onScopeDispose(() => {
+    clearAll()
+    document.removeEventListener('visibilitychange', onVisibilityChange)
+  })
 
   const fraction = computed(() => (phase.value === 'running' && totalMs.value > 0 ? remainingMs.value / totalMs.value : 0))
   const label = computed(() => {

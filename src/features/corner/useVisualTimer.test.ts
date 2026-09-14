@@ -72,6 +72,62 @@ describe('useVisualTimer', () => {
     expect(sound.playChime).not.toHaveBeenCalled()
   })
 
+  describe('after the tablet was in the background', () => {
+    function setVisibility(state: DocumentVisibilityState): void {
+      Object.defineProperty(document, 'visibilityState', { value: state, configurable: true })
+      document.dispatchEvent(new Event('visibilitychange'))
+    }
+
+    afterEach(() => setVisibility('visible'))
+
+    it('finishes (and chimes) as soon as it is visible again if the end time passed while hidden', () => {
+      const timer = create()
+      timer.start(1)
+      setVisibility('hidden')
+      // Timers are throttled or frozen in the background: the clock moves on without them firing.
+      vi.setSystemTime(Date.now() + 90_000)
+      expect(timer.phase.value).toBe('running')
+
+      setVisibility('visible')
+      expect(timer.phase.value).toBe('finished')
+      expect(timer.remainingMs.value).toBe(0)
+      expect(sound.playChime).toHaveBeenCalledTimes(1)
+
+      // The stale end timeout never chimes a second time.
+      vi.advanceTimersByTime(120_000)
+      expect(sound.playChime).toHaveBeenCalledTimes(1)
+      expect(timer.phase.value).toBe('idle')
+    })
+
+    it('keeps running, with the remaining time caught up, if the end time has not passed', () => {
+      const timer = create()
+      timer.start(5)
+      setVisibility('hidden')
+      vi.setSystemTime(Date.now() + 60_000)
+      setVisibility('visible')
+      expect(timer.phase.value).toBe('running')
+      expect(timer.remainingMs.value).toBe(4 * 60_000)
+      expect(sound.playChime).not.toHaveBeenCalled()
+    })
+
+    it('does nothing when idle or already finished', () => {
+      const timer = create()
+      setVisibility('visible')
+      expect(timer.phase.value).toBe('idle')
+      timer.start(1)
+      vi.advanceTimersByTime(60_000)
+      setVisibility('visible')
+      expect(sound.playChime).toHaveBeenCalledTimes(1)
+    })
+
+    it('removes its visibility listener when its scope is disposed', () => {
+      const remove = vi.spyOn(document, 'removeEventListener')
+      create()
+      scope.stop()
+      expect(remove).toHaveBeenCalledWith('visibilitychange', expect.any(Function))
+    })
+  })
+
   it('stops everything when its scope is disposed', () => {
     const timer = create()
     timer.start(10)
