@@ -328,10 +328,42 @@ describe('toRoutine', () => {
     ])
   })
 
-  it('throws on a malformed step missing a label', () => {
-    expect(() => toRoutine(routineRow({ steps: [{ iconKey: 'breakfast', time: '07:00' }] }))).toThrow(
-      'Invalid routine step',
+  it('skips a malformed step missing a label instead of throwing', () => {
+    const routine = toRoutine(
+      routineRow({
+        steps: [
+          { iconKey: 'breakfast', time: '07:00' }, // no label: dropped
+          { iconKey: null, photoId: null, label: 'Brush teeth', time: null }, // kept
+        ],
+      }),
     )
+    expect(routine.steps).toEqual([{ iconKey: null, photoId: null, label: 'Brush teeth', time: null }])
+  })
+
+  it('skips a non-object step', () => {
+    const routine = toRoutine(routineRow({ steps: ['not an object', 42, null] }))
+    expect(routine.steps).toEqual([])
+  })
+
+  it('treats an invalid time as null instead of dropping the step', () => {
+    const routine = toRoutine(
+      routineRow({ steps: [{ iconKey: null, photoId: null, label: 'Nap', time: 'not-a-time' }] }),
+    )
+    expect(routine.steps).toEqual([{ iconKey: null, photoId: null, label: 'Nap', time: null }])
+  })
+
+  it('accepts a valid time and truncates it to HH:mm', () => {
+    const routine = toRoutine(
+      routineRow({ steps: [{ iconKey: null, photoId: null, label: 'Bed', time: '23:59:59' }] }),
+    )
+    expect(routine.steps[0]?.time).toBe('23:59')
+  })
+
+  it('rejects an out-of-range time (hour 24) as null', () => {
+    const routine = toRoutine(
+      routineRow({ steps: [{ iconKey: null, photoId: null, label: 'Bed', time: '24:00' }] }),
+    )
+    expect(routine.steps[0]?.time).toBeNull()
   })
 })
 

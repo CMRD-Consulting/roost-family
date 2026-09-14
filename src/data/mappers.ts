@@ -23,11 +23,16 @@ const MEMBER_ROLES = ['owner', 'adult', 'caregiver'] as const
 
 export const FEATURES: readonly Feature[] = ['wakeWindow', 'feeding', 'kidsCorner', 'diaper']
 
-export function toRoutineStep(raw: unknown): RoutineStep {
-  if (typeof raw !== 'object' || raw === null) throw new Error('Invalid routine step')
+const HOUR_MINUTE_RE = /^([01]\d|2[0-3]):[0-5]\d/
+
+/** Returns `null` for a malformed step (not an object, or missing a `label`) so the
+ *  routine can still render its other steps instead of the whole routine failing to load. */
+export function toRoutineStep(raw: unknown): RoutineStep | null {
+  if (typeof raw !== 'object' || raw === null) return null
   const s = raw as Record<string, unknown>
-  if (typeof s.label !== 'string') throw new Error('Invalid routine step')
-  const time = typeof s.time === 'string' ? s.time.slice(0, 5) : null
+  if (typeof s.label !== 'string') return null
+  const rawTime = typeof s.time === 'string' ? s.time.slice(0, 5) : null
+  const time = rawTime !== null && HOUR_MINUTE_RE.test(rawTime) ? rawTime : null
   return {
     iconKey: typeof s.iconKey === 'string' ? s.iconKey : null,
     photoId: typeof s.photoId === 'string' ? s.photoId : null,
@@ -105,7 +110,7 @@ export function toRoutine(row: Tables<'routines'>): Routine {
     childId: row.child_id,
     name: row.name,
     weekdays: row.weekdays,
-    steps: rawSteps.map(toRoutineStep),
+    steps: rawSteps.map(toRoutineStep).filter((s): s is RoutineStep => s !== null),
   }
 }
 
