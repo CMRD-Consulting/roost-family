@@ -1,5 +1,13 @@
 import { describe, it, expect, vi } from 'vitest'
-import { completeSetup, adultOwnsHousehold, isInvalidInviteError, CLAIM_TOKEN_TTL_MS, type SetupInput, type SetupProgress } from './completeSetup'
+import {
+  completeSetup,
+  adultOwnsHousehold,
+  isInvalidInviteError,
+  registerDisplayErrorMessage,
+  CLAIM_TOKEN_TTL_MS,
+  type SetupInput,
+  type SetupProgress,
+} from './completeSetup'
 
 const IDENTITY = { displayId: 'd1', householdId: 'h1', name: 'Kitchen' }
 
@@ -125,6 +133,18 @@ describe('completeSetup', () => {
     expect(isInvalidInviteError(error)).toBe(true)
     expect(state.householdId).toBeNull()
     expect(end).not.toHaveBeenCalled()
+  })
+})
+
+describe('registerDisplayErrorMessage', () => {
+  it('explains the display limit and where to remove one', () => {
+    expect(registerDisplayErrorMessage('a household can have at most 3 displays', 'Rivera')).toBe(
+      'Rivera already has 3 displays. Remove one in Settings → Displays or at roost.cmrd.dev/manage, then try again.',
+    )
+  })
+
+  it('passes other messages through', () => {
+    expect(registerDisplayErrorMessage('Failed to fetch', 'Rivera')).toBe('Failed to fetch')
   })
 })
 

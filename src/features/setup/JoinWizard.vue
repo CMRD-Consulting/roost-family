@@ -7,6 +7,7 @@ import RButton from '@/ui/RButton.vue'
 import RInput from '@/ui/RInput.vue'
 import { createWizardState } from './wizardState'
 import { LIMITS, validateDisplayLabel } from './validation'
+import { registerDisplayErrorMessage } from './completeSetup'
 import { displayClient } from '@/data/supabase'
 import { claimDisplay } from '@/session/displaySession'
 import { useDisplayStore } from '@/session/displayStore'
@@ -84,7 +85,10 @@ async function register() {
       p_household_id: chosen.value,
       p_name: state.displayLabel.trim(),
     })
-    if (error) throw new Error(error.message)
+    if (error) {
+      const name = households.value.find((h) => h.id === chosen.value)?.name ?? 'This household'
+      throw new Error(registerDisplayErrorMessage(error.message, name))
+    }
     const token = data?.[0]?.out_claim_token
     if (!token) throw new Error('Display registration returned no token')
     await claimDisplay(displayClient, token)

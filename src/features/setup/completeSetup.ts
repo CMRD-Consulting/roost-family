@@ -86,6 +86,14 @@ export async function completeSetup(
   return identity
 }
 
+/** Wording for a failed `register_display`; the server's limit message is written for logs, not people. */
+export function registerDisplayErrorMessage(serverMessage: string, householdName: string): string {
+  if (/at most \d+ displays/i.test(serverMessage)) {
+    return `${householdName} already has 3 displays. Remove one in Settings → Displays or at roost.cmrd.dev/manage, then try again.`
+  }
+  return serverMessage
+}
+
 export function isInvalidInviteError(error: unknown): boolean {
   return error instanceof Error && /invalid invite code/i.test(error.message)
 }
