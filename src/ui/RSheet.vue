@@ -1,8 +1,8 @@
 <script setup lang="ts">
 /**
- * Modal sheet frame for log sheets (spec §7.4). Bottom-anchored, focus-trapped
- * via a container `tabindex="-1"` that receives focus on open; focus returns to
- * the opener on close. Escape and a tap on the scrim both close it.
+ * Modal sheet frame for log sheets (spec §7.4). Bottom-anchored. The panel takes focus on open and
+ * traps Tab/Shift+Tab inside itself; focus returns to the opener on close or unmount. Escape (handled on
+ * the panel, so only the topmost of stacked sheets reacts) and a tap on the scrim both close it.
  */
 import { nextTick, useId, useTemplateRef, watch, onBeforeUnmount } from 'vue'
 
@@ -12,10 +12,53 @@ const emit = defineEmits<{ close: [] }>()
 const titleId = useId()
 const panel = useTemplateRef<HTMLDivElement>('panel')
 
+const FOCUSABLE = [
+  'a[href]',
+  'button:not([disabled])',
+  'input:not([disabled]):not([type="hidden"])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',')
+
 let opener: HTMLElement | null = null
 
+function restoreFocus(): void {
+  opener?.focus?.()
+  opener = null
+}
+
+function trapTab(e: KeyboardEvent): void {
+  const root = panel.value
+  if (!root) return
+  const focusables = Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE))
+  if (focusables.length === 0) {
+    e.preventDefault()
+    root.focus()
+    return
+  }
+  const first = focusables[0]!
+  const last = focusables[focusables.length - 1]!
+  const active = document.activeElement
+  const outside = !(active instanceof Node) || !root.contains(active) || active === root
+  if (e.shiftKey && (active === first || outside)) {
+    e.preventDefault()
+    last.focus()
+  } else if (!e.shiftKey && (active === last || outside)) {
+    e.preventDefault()
+    first.focus()
+  }
+}
+
 function onKeydown(e: KeyboardEvent): void {
-  if (e.key === 'Escape') emit('close')
+  if (e.key === 'Escape') {
+    // Stacked sheets: the innermost panel handles it; outer ones never see it.
+    e.stopPropagation()
+    emit('close')
+  } else if (e.key === 'Tab') {
+    e.stopPropagation()
+    trapTab(e)
+  }
 }
 
 watch(
@@ -23,19 +66,18 @@ watch(
   async (open) => {
     if (open) {
       opener = document.activeElement as HTMLElement | null
-      document.addEventListener('keydown', onKeydown)
       await nextTick()
       panel.value?.focus()
     } else {
-      document.removeEventListener('keydown', onKeydown)
-      opener?.focus?.()
-      opener = null
+      restoreFocus()
     }
   },
   { immediate: true },
 )
 
-onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
+onBeforeUnmount(() => {
+  if (props.open) restoreFocus()
+})
 </script>
 
 <template>
@@ -53,6 +95,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
       tabindex="-1"
       class="flex max-h-[90vh] w-full flex-col gap-6 rounded-t-[28px] bg-surface px-6 pt-8 pb-6 outline-none"
       style="max-width: 960px"
+      @keydown="onKeydown"
     >
       <div class="flex items-center justify-between gap-4">
         <h2 :id="titleId" class="text-[32px] font-semibold text-ink">{{ title }}</h2>

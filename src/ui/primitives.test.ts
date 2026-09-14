@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
+import { defineComponent } from 'vue'
 import RChips from './RChips.vue'
 import RTimeStepper from './RTimeStepper.vue'
 import RPinPad from './RPinPad.vue'
@@ -152,15 +153,75 @@ describe('RPinPad', () => {
 
 describe('RSheet', () => {
   it('renders a dialog with aria-modal and closes on Escape', async () => {
-    const w = mount(RSheet, { props: { title: 'Log feeding', open: true } })
+    const w = mount(RSheet, { props: { title: 'Log feeding', open: true }, attachTo: document.body })
     const dialog = w.get('[role="dialog"]')
     expect(dialog.attributes('aria-modal')).toBe('true')
     expect(dialog.attributes('aria-labelledby')).toBeTruthy()
 
-    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
-    await w.vm.$nextTick()
+    await dialog.trigger('keydown', { key: 'Escape' })
     expect(w.emitted('close')).toHaveLength(1)
     w.unmount()
+  })
+
+  it('Escape closes only the topmost of two stacked sheets', async () => {
+    const Stacked = defineComponent({
+      components: { RSheet },
+      emits: ['outerClose', 'innerClose'],
+      template: `
+        <RSheet title="Outer" :open="true" @close="$emit('outerClose')">
+          <button type="button">Outer action</button>
+          <RSheet title="Inner" :open="true" @close="$emit('innerClose')">
+            <button type="button" id="inner-action">Inner action</button>
+          </RSheet>
+        </RSheet>`,
+    })
+    const w = mount(Stacked, { attachTo: document.body })
+    await flushPromises()
+
+    await w.get('#inner-action').trigger('keydown', { key: 'Escape' })
+
+    expect(w.emitted('innerClose')).toHaveLength(1)
+    expect(w.emitted('outerClose')).toBeUndefined()
+    w.unmount()
+  })
+
+  it('traps focus: Tab from the last control wraps to the first, Shift+Tab from the first wraps to the last', async () => {
+    const w = mount(RSheet, {
+      props: { title: 'Log feeding', open: true },
+      slots: { default: '<button type="button" id="a">A</button><button type="button" id="b">B</button>' },
+      attachTo: document.body,
+    })
+    await flushPromises()
+    const close = w.get('button[aria-label="Close"]').element as HTMLButtonElement
+    const last = w.get('#b').element as HTMLButtonElement
+
+    last.focus()
+    await w.get('#b').trigger('keydown', { key: 'Tab' })
+    expect(document.activeElement).toBe(close)
+
+    close.focus()
+    await w.get('button[aria-label="Close"]').trigger('keydown', { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(last)
+
+    // From the panel itself (focused on open), Shift+Tab also stays inside.
+    ;(w.get('[role="dialog"]').element as HTMLElement).focus()
+    await w.get('[role="dialog"]').trigger('keydown', { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(last)
+    w.unmount()
+  })
+
+  it('returns focus to the opener when unmounted while open', async () => {
+    const opener = document.createElement('button')
+    document.body.appendChild(opener)
+    opener.focus()
+
+    const w = mount(RSheet, { props: { title: 'Log feeding', open: true }, attachTo: document.body })
+    await flushPromises()
+    expect(document.activeElement).not.toBe(opener)
+
+    w.unmount()
+    expect(document.activeElement).toBe(opener)
+    opener.remove()
   })
 
   it('closes when the close button is tapped', async () => {
