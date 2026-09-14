@@ -9,14 +9,16 @@
  * - `onRequestExport` (prop, or `@request-export`): runs when an owner asks for an export, with the owner's client and
  *   household. Until it's given, Export shows a disabled placeholder.
  * - `#calendars` (slot): the calendar settings, shown in My account for adults and above the owner sections for
- *   owners, with the signed-in adult's client, household and membership.
- * - `?calendar=connected` / `?calendar=error&reason=…` (from the calendar connection callback) shows a dismissible
- *   banner once signed in.
+ *   owners, with the signed-in adult's client, household and membership. Defaults to CalendarsSection.
+ * - `?calendar=pending&attempt=…` (a Google / Microsoft connection coming back) is finished for the signed-in adult
+ *   (useCalendarAttempt); `?calendar=connected` / `?calendar=error&reason=…` show a dismissible banner once signed in.
  */
 import { computed, nextTick, onMounted, ref, useTemplateRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { createCalendarSettingsApi, type CalendarSettingsApi } from '@/data/calendarApi'
 import type { AdultClient, MemberRow, SettingsApi } from '@/data/settingsApi'
 import AdultSignIn from '@/features/settings/AdultSignIn.vue'
+import CalendarsSection from '@/features/settings/sections/CalendarsSection.vue'
 import { roleLabel } from '@/features/settings/ownerForms'
 import DeleteHouseholdSection from '@/features/settings/sections/DeleteHouseholdSection.vue'
 import DisplaysSection from '@/features/settings/sections/DisplaysSection.vue'
@@ -27,6 +29,7 @@ import RAvatar from '@/ui/RAvatar.vue'
 import RButton from '@/ui/RButton.vue'
 import RLogo from '@/ui/RLogo.vue'
 import { calendarStatusFromQuery, withoutCalendarStatus } from './manageModel'
+import { useCalendarAttempt } from './useCalendarAttempt'
 import { useManageHousehold } from './useManageHousehold'
 
 export interface ExportTarget {
@@ -45,6 +48,8 @@ export interface CalendarsSlotProps {
 const props = defineProps<{
   /** The API to use (tests); otherwise loaded for this browser. */
   api?: SettingsApi
+  /** The calendar API to use (tests); otherwise the real one. */
+  calendarApi?: CalendarSettingsApi
   onRequestExport?: (target: ExportTarget) => void | Promise<void>
 }>()
 defineSlots<{ calendars?: (props: CalendarsSlotProps) => unknown }>()
@@ -58,12 +63,18 @@ const { phase, adult, memberships, selected, notice, error, signInKey, offline, 
 // ─── Calendar connection status (from the connection callback) ─────────────
 const calendarStatus = ref(calendarStatusFromQuery(route.query))
 
+function cleanCalendarUrl(): void {
+  const query = withoutCalendarStatus(route.query)
+  if (Object.keys(query).length !== Object.keys(route.query).length) void router.replace({ query })
+}
+
 function clearCalendarStatus(): void {
   calendarStatus.value = null
-  if (calendarStatusFromQuery(route.query)) void router.replace({ query: withoutCalendarStatus(route.query) })
+  cleanCalendarUrl()
 }
 
 async function dismissCalendarStatus(): Promise<void> {
+  calendarAttempt.dismiss()
   clearCalendarStatus()
   await nextTick()
   root.value?.querySelector<HTMLElement>('[data-manage-heading]')?.focus()
@@ -74,6 +85,18 @@ const calendarsSlotProps = computed<CalendarsSlotProps | null>(() => {
   const row = selected.value
   return session && row ? { client: session.client, householdId: row.householdId, membershipId: row.membershipId, role: row.role } : null
 })
+
+const calendarApi = props.calendarApi ?? createCalendarSettingsApi()
+const calendarAttempt = useCalendarAttempt({
+  query: route.query,
+  status: calendarStatus,
+  target: () => (phase.value === 'ready' ? calendarsSlotProps.value : null),
+  offline: () => offline.value,
+  demo: manage.demo,
+  api: calendarApi,
+  cleanUrl: cleanCalendarUrl,
+})
+const { reloadKey: calendarsReloadKey, canRetry: calendarCanRetry, attempt: pendingCalendarAttempt } = calendarAttempt
 
 // ─── Export ──────────────────────────────────────────────────────────────
 const exportError = ref<string | null>(null)
@@ -132,6 +155,9 @@ watch([phase, () => selected.value?.membershipId], async () => {
       <!-- Sign-in -->
       <template v-if="phase === 'signIn'">
         <p v-if="notice" role="status" class="text-[18px] font-medium text-ink-2">{{ notice }}</p>
+        <p v-if="pendingCalendarAttempt" role="status" data-testid="calendar-pending-sign-in" class="text-[18px] font-medium text-ink-2">
+          Sign in to finish connecting your calendar.
+        </p>
         <AdultSignIn
           v-if="!manage.demo"
           :key="signInKey"
@@ -173,12 +199,18 @@ watch([phase, () => selected.value?.membershipId], async () => {
           data-testid="calendar-status"
           :role="calendarStatus.kind === 'error' ? 'alert' : 'status'"
           class="flex flex-wrap items-center gap-3 rounded-[var(--radius-card)] px-5 py-3"
-          :class="calendarStatus.kind === 'error' ? 'bg-amber-tint' : 'bg-green-tint'"
+          :class="calendarStatus.kind === 'error' ? 'bg-amber-tint' : calendarStatus.kind === 'pending' ? 'bg-surface-2' : 'bg-green-tint'"
         >
-          <p class="min-w-0 flex-1 text-[18px] font-medium" :class="calendarStatus.kind === 'error' ? 'text-warn-ink' : 'text-green-deep'">
+          <p
+            class="min-w-0 flex-1 text-[18px] font-medium"
+            :class="calendarStatus.kind === 'error' ? 'text-warn-ink' : calendarStatus.kind === 'pending' ? 'text-ink-2' : 'text-green-deep'"
+          >
             {{ calendarStatus.message }}
           </p>
-          <RButton variant="ghost" @click="dismissCalendarStatus">Dismiss</RButton>
+          <RButton v-if="calendarStatus.kind === 'error' && calendarCanRetry && pendingCalendarAttempt" variant="secondary" @click="calendarAttempt.retry()">
+            Try again
+          </RButton>
+          <RButton v-if="calendarStatus.kind !== 'pending'" variant="ghost" @click="dismissCalendarStatus">Dismiss</RButton>
         </div>
 
         <!-- Several households: pick one -->
@@ -231,7 +263,17 @@ watch([phase, () => selected.value?.membershipId], async () => {
             <p class="-mt-6 text-[18px] text-ink-3">
               Owners can’t leave from here. To leave, make another adult an owner and ask them to make you an adult.
             </p>
-            <slot v-if="calendarsSlotProps" name="calendars" v-bind="calendarsSlotProps" />
+            <slot v-if="calendarsSlotProps" name="calendars" v-bind="calendarsSlotProps">
+              <CalendarsSection
+                :client="calendarsSlotProps.client"
+                :household-id="calendarsSlotProps.householdId"
+                :membership-id="calendarsSlotProps.membershipId"
+                surface="browser"
+                :heading-level="2"
+                :api="calendarApi"
+                :reload-key="calendarsReloadKey"
+              />
+            </slot>
             <DisplaysSection :host="ownerHost" />
             <MembersSection :host="ownerHost" />
 
@@ -260,7 +302,17 @@ watch([phase, () => selected.value?.membershipId], async () => {
 
           <MyAccountSection v-else-if="accountHost" :host="accountHost">
             <template #calendars>
-              <slot v-if="calendarsSlotProps" name="calendars" v-bind="calendarsSlotProps" />
+              <slot v-if="calendarsSlotProps" name="calendars" v-bind="calendarsSlotProps">
+                <CalendarsSection
+                  :client="calendarsSlotProps.client"
+                  :household-id="calendarsSlotProps.householdId"
+                  :membership-id="calendarsSlotProps.membershipId"
+                  surface="browser"
+                  :heading-level="3"
+                  :api="calendarApi"
+                  :reload-key="calendarsReloadKey"
+                />
+              </slot>
             </template>
           </MyAccountSection>
         </div>

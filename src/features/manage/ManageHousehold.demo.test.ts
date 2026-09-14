@@ -51,7 +51,8 @@ describe('Manage household in demo mode', () => {
     await settle()
 
     expect(w.find('header h1').text()).toBe('Rivera')
-    expect(w.findAll('h2').map((x) => x.text())).toEqual(['Displays', 'Members', 'Export', 'Delete household'])
+    expect(w.findAll('h2').map((x) => x.text())).toEqual(['Calendars', 'Displays', 'Members', 'Export', 'Delete household'])
+    expect(w.text()).toContain('Calendars aren’t available in the demo.')
     expect(w.text()).toContain('Kitchen')
     expect(w.text()).toContain('Alex')
     expect(w.text()).toContain('Removing adults is not available in demo.')

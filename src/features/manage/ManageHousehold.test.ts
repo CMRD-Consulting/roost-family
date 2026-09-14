@@ -3,8 +3,10 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import { defineComponent, h } from 'vue'
 import { createMemoryHistory, createRouter, type Router } from 'vue-router'
+import { CalendarError } from '@/data/calendarApi'
 import { SettingsError, type AdultMembershipRow, type SettingsApi } from '@/data/settingsApi'
 import ManageHousehold from './ManageHousehold.vue'
+import { CALENDAR_ATTEMPT_KEY } from './useCalendarAttempt'
 
 const adult = vi.hoisted(() => {
   let n = 0
@@ -68,6 +70,19 @@ function fakeApi(): Fake {
 }
 
 let api: Fake
+
+function fakeCalendarApi() {
+  return {
+    listMyConnections: vi.fn().mockResolvedValue([]),
+    listPeople: vi.fn().mockResolvedValue([]),
+    connectIcs: vi.fn(),
+    startOAuth: vi.fn(),
+    finishOAuth: vi.fn().mockResolvedValue({ connectionId: 'conn-9', calendars: 2, label: 'sam@example.com' }),
+    setSelection: vi.fn(),
+    disconnect: vi.fn(),
+  }
+}
+let calendarApi: ReturnType<typeof fakeCalendarApi>
 let pinia: Pinia
 let router: Router
 const ended: string[] = []
@@ -99,7 +114,7 @@ async function mountPage(path = '/manage', props: Record<string, unknown> = {}, 
   router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/manage', component: Stub }] })
   await router.push(path)
   await router.isReady()
-  const w = mount(ManageHousehold, { props: { api, ...props }, slots: slots as never, global: { plugins: [pinia, router] }, attachTo: document.body })
+  const w = mount(ManageHousehold, { props: { api, calendarApi, ...props }, slots: slots as never, global: { plugins: [pinia, router] }, attachTo: document.body })
   await settle()
   return w
 }
@@ -127,6 +142,8 @@ beforeEach(() => {
   pinia = createPinia()
   setActivePinia(pinia)
   api = fakeApi()
+  calendarApi = fakeCalendarApi()
+  sessionStorage.clear()
   ended.length = 0
   adult.resetClients()
   adult.sendEmailCode.mockReset().mockResolvedValue(undefined)
@@ -265,7 +282,7 @@ describe('owner', () => {
   it('sees Displays, Members, Export and Delete household, loaded with the adult client', async () => {
     const w = await mountPage()
     await signIn(w)
-    expect(sectionTitles(w)).toEqual(['Displays', 'Members', 'Export', 'Delete household'])
+    expect(sectionTitles(w)).toEqual(['Calendars', 'Displays', 'Members', 'Export', 'Delete household'])
     expect(sectionTitles(w)).not.toContain('My account')
     expect(api.listDisplays).toHaveBeenCalledWith(CLIENT, RIVERA)
     expect(api.listMembers).toHaveBeenCalledWith(CLIENT, RIVERA)
@@ -423,6 +440,85 @@ describe('calendar status from the connection callback', () => {
     const banner = w.find('[data-testid="calendar-status"]')
     expect(banner.attributes('role')).toBe('alert')
     expect(banner.text()).toContain('The calendar wasn’t connected: access wasn’t allowed.')
+    w.unmount()
+  })
+})
+
+describe('finishing a Google or Microsoft connection', () => {
+  const ATTEMPT = 'attempt_0123456789-abcdef'
+
+  it('keeps the attempt through sign-in, finishes it, cleans the URL and reloads the calendar list', async () => {
+    const w = await mountPage(`/manage?calendar=pending&attempt=${ATTEMPT}`)
+    expect(w.get('[data-testid="calendar-pending-sign-in"]').text()).toBe('Sign in to finish connecting your calendar.')
+    expect(sessionStorage.getItem(CALENDAR_ATTEMPT_KEY)).toBe(ATTEMPT)
+    expect(calendarApi.finishOAuth).not.toHaveBeenCalled()
+
+    await signIn(w)
+    expect(calendarApi.finishOAuth).toHaveBeenCalledWith(CLIENT, ATTEMPT)
+    expect(w.get('[data-testid="calendar-status"]').text()).toContain(
+      'sam@example.com connected — choose which calendars to show and who they belong to.',
+    )
+    expect(router.currentRoute.value.fullPath).toBe('/manage')
+    expect(sessionStorage.getItem(CALENDAR_ATTEMPT_KEY)).toBeNull()
+    expect(calendarApi.listMyConnections).toHaveBeenCalledTimes(2)
+    w.unmount()
+  })
+
+  it('finishes an attempt kept in sessionStorage after another reload', async () => {
+    sessionStorage.setItem(CALENDAR_ATTEMPT_KEY, ATTEMPT)
+    const w = await mountPage('/manage')
+    await signIn(w)
+    expect(calendarApi.finishOAuth).toHaveBeenCalledWith(CLIENT, ATTEMPT)
+    w.unmount()
+  })
+
+  it('waits for a household to be picked before finishing', async () => {
+    api.myMemberships.mockResolvedValue([RIVERA_OWNER, LAKE_ADULT])
+    const w = await mountPage(`/manage?calendar=pending&attempt=${ATTEMPT}`)
+    await signIn(w)
+    expect(calendarApi.finishOAuth).not.toHaveBeenCalled()
+    await buttonByText(w, 'Lake house Adult').trigger('click')
+    await settle()
+    expect(calendarApi.finishOAuth).toHaveBeenCalledTimes(1)
+    w.unmount()
+  })
+
+  it('forgets an expired attempt', async () => {
+    calendarApi.finishOAuth.mockRejectedValue(new CalendarError('expired'))
+    const w = await mountPage(`/manage?calendar=pending&attempt=${ATTEMPT}`)
+    await signIn(w)
+    const banner = w.get('[data-testid="calendar-status"]')
+    expect(banner.attributes('role')).toBe('alert')
+    expect(banner.text()).toContain('That took too long. Connect again.')
+    expect(hasButton(banner, 'Try again')).toBe(false)
+    expect(sessionStorage.getItem(CALENDAR_ATTEMPT_KEY)).toBeNull()
+    expect(router.currentRoute.value.fullPath).toBe('/manage')
+    w.unmount()
+  })
+
+  it('keeps an attempt refused for another adult, and finishes it when the right adult signs in', async () => {
+    calendarApi.finishOAuth.mockRejectedValueOnce(new CalendarError('forbidden'))
+    const w = await mountPage(`/manage?calendar=pending&attempt=${ATTEMPT}`)
+    await signIn(w, 'alex@example.com')
+    expect(w.get('[data-testid="calendar-status"]').text()).toContain('Sign in as the adult who started connecting.')
+    expect(sessionStorage.getItem(CALENDAR_ATTEMPT_KEY)).toBe(ATTEMPT)
+
+    await buttonByText(w.find('header'), 'Sign out').trigger('click')
+    await settle()
+    await signIn(w)
+    expect(calendarApi.finishOAuth).toHaveBeenCalledTimes(2)
+    expect(w.get('[data-testid="calendar-status"]').text()).toContain('connected')
+    w.unmount()
+  })
+
+  it('offers to try again when Roost Family couldn’t be reached', async () => {
+    calendarApi.finishOAuth.mockRejectedValueOnce(new CalendarError('network'))
+    const w = await mountPage(`/manage?calendar=pending&attempt=${ATTEMPT}`)
+    await signIn(w)
+    await buttonByText(w.get('[data-testid="calendar-status"]'), 'Try again').trigger('click')
+    await settle()
+    expect(calendarApi.finishOAuth).toHaveBeenCalledTimes(2)
+    expect(w.get('[data-testid="calendar-status"]').text()).toContain('connected')
     w.unmount()
   })
 })
