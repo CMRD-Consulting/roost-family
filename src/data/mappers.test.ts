@@ -229,6 +229,7 @@ describe('toHousehold', () => {
     expect(toHousehold(household())).toEqual({
       id: 'h1',
       name: 'Rivera',
+      zip: null,
       timeZone: 'America/New_York',
       defaultNightSleep: { start: '18:00', end: '05:00' },
       nightMode: { start: '20:00', end: '06:00' },

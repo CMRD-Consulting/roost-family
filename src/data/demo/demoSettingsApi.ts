@@ -106,6 +106,7 @@ export function createDemoSettingsApi(): SettingsApi {
       household: {
         ...s.household,
         name: input.name,
+        zip: input.zip,
         timeZone: input.timeZone,
         leaveByBufferMin: input.leaveByBufferMin,
         defaultNightSleep: input.defaultNightSleep,

@@ -6,6 +6,8 @@ interface ImportMetaEnv {
   /** Optional Sentry DSN (spec §5.9); error tracking is disabled entirely when unset. */
   readonly VITE_SENTRY_DSN?: string
 }
+/** App version for Settings > About, injected by Vite `define` (vite.config.ts). */
+declare const __APP_VERSION__: string
 interface ImportMeta {
   readonly env: ImportMetaEnv
 }

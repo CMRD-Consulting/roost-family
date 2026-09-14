@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { resolveDisplayRoute } from './router'
+import { resolveDisplayRoute, resolveSettingsRoute } from './router'
 
 vi.mock('@/data/supabase', () => ({ displayClient: {} }))
 
@@ -27,5 +27,19 @@ describe('resolveDisplayRoute', () => {
 
   it('leaves /offline once back online', () => {
     expect(resolveDisplayRoute(at('offline'), REGISTERED, 'registered')).toBe('/home')
+  })
+})
+
+describe('resolveSettingsRoute', () => {
+  const settings = { meta: { requires: 'registered', settingsSession: true } } as const
+
+  it('lets /settings through only with an open settings session', () => {
+    expect(resolveSettingsRoute(settings, true)).toBe(true)
+    expect(resolveSettingsRoute(settings, false)).toBe('/home')
+  })
+
+  it('ignores routes that do not need a settings session', () => {
+    expect(resolveSettingsRoute(at('registered'), false)).toBe(true)
+    expect(resolveSettingsRoute(at(), false)).toBe(true)
   })
 })

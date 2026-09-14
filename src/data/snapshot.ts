@@ -17,6 +17,8 @@ export interface SitterInfo {
 export interface HouseholdInfo {
   id: string
   name: string
+  /** 5-digit ZIP code, or null when not set. Optional: a device-cached snapshot from before it was loaded won't have it. */
+  zip?: string | null
   timeZone: string
   defaultNightSleep: TimeWindow
   nightMode: TimeWindow
