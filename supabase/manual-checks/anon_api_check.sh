@@ -40,6 +40,25 @@ status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/rest/v1/rpc/svc_ca
   -d '{"p_connection_id":"00000000-0000-0000-0000-000000000000"}')
 check "anon calls svc_calendar_secret" 401 "$status"
 
+status=$(curl -s -o /dev/null -w '%{http_code}' "$API/rest/v1/household_exports?select=id" -H "apikey: $KEY" -H "Authorization: Bearer $KEY")
+check "anon selects household_exports" 401 "$status"
+
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/rest/v1/rpc/request_household_export" \
+  -H "apikey: $KEY" -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d "{\"p_household_id\":\"$HOUSEHOLD\"}")
+check "anon calls request_household_export" 401 "$status"
+
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/rest/v1/rpc/svc_mark_export_ready" \
+  -H "apikey: $KEY" -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d '{"p_export_id":"00000000-0000-0000-0000-000000000000","p_storage_path":"x"}')
+check "anon calls svc_mark_export_ready" 401 "$status"
+
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/storage/v1/object/list/exports" \
+  -H "apikey: $KEY" -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' -d "{\"prefix\":\"$HOUSEHOLD\"}")
+body=$(curl -s -X POST "$API/storage/v1/object/list/exports" \
+  -H "apikey: $KEY" -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' -d "{\"prefix\":\"$HOUSEHOLD\"}")
+check "anon lists exports bucket objects (none visible)" "200 []" "$status $body"
+
 status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/rest/v1/rpc/create_household" \
   -H "apikey: $KEY" -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
   -d '{"p_name":"X","p_time_zone":"America/New_York","p_zip":"28202","p_lat":null,"p_lon":null,"p_invite_code":"ROOST1","p_display_name":"X","p_color":"#2C7F8C"}')
