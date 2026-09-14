@@ -1,9 +1,7 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch, watchEffect } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useNow } from '@/composables/useNow'
-import { DEMO_DISPLAY, isDemo, selectSource, selectWriter, type HouseholdSource } from '@/data/householdSource'
-import { createOfflineQueue } from '@/data/offlineQueue'
 import { formatClock } from '@/domain/time'
 import DiaperSheet from '@/features/logs/DiaperSheet.vue'
 import DinnerSheet from '@/features/logs/DinnerSheet.vue'
@@ -17,12 +15,12 @@ import StaleSleepSheet from '@/features/logs/StaleSleepSheet.vue'
 import StickerSheet from '@/features/logs/StickerSheet.vue'
 import UndoToast from '@/features/logs/UndoToast.vue'
 import NapOverlay from '@/features/modes/NapOverlay.vue'
+import NightPeek from '@/features/modes/NightPeek.vue'
 import NightScreen from '@/features/modes/NightScreen.vue'
-import { checkStillRegistered } from '@/session/displaySession'
 import { useDisplayStore } from '@/session/displayStore'
 import { useHouseholdStore } from '@/stores/householdStore'
 import { STUCK_COMMAND_MESSAGE, useLogStore } from '@/stores/logStore'
-import { isNight, napShouldEnd, useModesStore } from '@/stores/modesStore'
+import { isNight, useModesStore } from '@/stores/modesStore'
 import RLogo from '@/ui/RLogo.vue'
 import ConflictBanner from './ConflictBanner.vue'
 import DinnerLine from './DinnerLine.vue'
@@ -31,9 +29,8 @@ import KidCardCompact from './KidCardCompact.vue'
 import LogRow from './LogRow.vue'
 import MedicineZone from './MedicineZone.vue'
 import { buildMainScreenModel, type LogKind } from './mainScreenModel'
+import { useHouseholdSession } from './useHouseholdSession'
 
-const RETRY_MS = 30_000
-const HEARTBEAT_MS = 5 * 60_000
 const STALE_AFTER_MIN = 5
 
 const router = useRouter()
@@ -42,6 +39,8 @@ const displayStore = useDisplayStore()
 const logStore = useLogStore()
 const modes = useModesStore()
 const now = useNow(15_000)
+// Loads the household, starts logging and watches this display while the main screen (or Kids' Corner) is shown.
+const { unreachable } = useHouseholdSession()
 
 // The view has locally-applied (not yet confirmed) logs on top of the loaded snapshot. The model is rebuilt
 // on every tick and whenever the view changes; reading the time then (not the last tick's) keeps an entry
@@ -73,32 +72,11 @@ const cacheBadge = computed(() => {
   return `Showing saved info from ${at}`
 })
 
-const bootFailed = ref(false)
-const unreachable = computed(() => bootFailed.value || (store.status === 'error' && !store.snapshot))
-
 /** True while it's within the household's night window but a tap has suppressed the Night screen for the
  *  60 s peek (spec §7.7); the main screen shows through a dark, click-through overlay with a countdown. */
 const peekingAtNight = computed(() => {
   const household = store.view?.household
   return household !== undefined && !modes.nightActive && isNight(now.value, household)
-})
-
-/** "0:42" countdown until the peek ends and Night Mode resumes. */
-const peekCountdownLabel = computed(() => {
-  const until = modes.nightPeekUntil
-  if (until === null) return '0:00'
-  const totalSeconds = Math.ceil(Math.max(0, until - now.value.getTime()) / 1000)
-  const minutes = Math.floor(totalSeconds / 60)
-  const seconds = totalSeconds % 60
-  return `${minutes}:${String(seconds).padStart(2, '0')}`
-})
-
-// Nap Mode isn't ended from inside the store on its own — the store only knows the rule (napShouldEnd);
-// the main screen is what watches the live view and clock and calls endNap() when the rule fires.
-watchEffect(() => {
-  const nap = modes.nap
-  const view = store.view
-  if (nap !== null && view !== null && napShouldEnd(nap, view, now.value)) modes.endNap()
 })
 
 /** The log sheet opened from the log row. */
@@ -132,97 +110,8 @@ function dismissFailure(index: number): void {
   logStore.failures = logStore.failures.filter((_, i) => i !== index)
 }
 
-let source: HouseholdSource | null = null
-let disposed = false
-/** Set once logging has been started for this mount (the log store runs while the main screen is shown). */
-let loggingStarted = false
-
-async function startLogging(): Promise<void> {
-  if (loggingStarted) return
-  loggingStarted = true
-  try {
-    // Hand the store the writer while it's still loading, so saves made meanwhile wait for it instead of
-    // failing. (Unmounting calls logStore.stop(), which cancels this init if the writer hasn't arrived.)
-    await logStore.init(selectWriter(), createOfflineQueue())
-  } catch (e) {
-    console.warn('Could not start logging; retrying', e)
-    loggingStarted = false
-  }
-}
-
-async function boot(): Promise<void> {
-  const identity = isDemo ? DEMO_DISPLAY : displayStore.identity
-  if (!identity) {
-    await router.replace('/')
-    return
-  }
-  try {
-    source ??= await selectSource()
-  } catch {
-    bootFailed.value = true
-    return
-  }
-  if (disposed) return
-  bootFailed.value = false
-  const starting = store.start(identity.householdId, source)
-  // After start() has claimed the household, so the overlay of restored queued commands isn't cleared.
-  void startLogging()
-  await starting
-}
-
-function retry(): void {
-  if (bootFailed.value) void boot()
-  else if (store.status === 'error' && !store.snapshot) void store.reload()
-  if (source !== null && !bootFailed.value) void startLogging()
-}
-
-async function heartbeat(): Promise<void> {
-  try {
-    const { displayClient } = await import('@/data/supabase')
-    if ((await checkStillRegistered(displayClient)) !== 'revoked' || disposed) return
-    await displayStore.refresh()
-    await router.replace('/removed')
-  } catch {
-    // Offline or a server error: the next heartbeat tries again.
-  }
-}
-
-// A background display refresh (displayStore.watch) can also discover that this tablet was removed.
-watch(
-  () => displayStore.state?.kind,
-  (kind) => {
-    if (disposed) return
-    if (kind === 'revoked') void router.replace('/removed')
-    else if (kind === 'unregistered') void router.replace('/')
-  },
-)
-
-let retryTimer: ReturnType<typeof setInterval> | undefined
-let heartbeatTimer: ReturnType<typeof setInterval> | undefined
-let stopDisplayWatch: (() => void) | undefined
-
-onMounted(() => {
-  void boot()
-  retryTimer = setInterval(retry, RETRY_MS)
-  if (!isDemo) {
-    stopDisplayWatch = displayStore.watch()
-    void heartbeat()
-    heartbeatTimer = setInterval(() => void heartbeat(), HEARTBEAT_MS)
-  }
-})
-
-onBeforeUnmount(() => {
-  disposed = true
-  clearInterval(retryTimer)
-  clearInterval(heartbeatTimer)
-  stopDisplayWatch?.()
-  logStore.stop()
-  store.stop()
-})
-
-/** The moon (Nap Mode) button is wired up below; these three are still placeholders for later phases. */
+/** The moon (Nap Mode) and Kids' Corner buttons are wired up below; these two are still placeholders for later phases. */
 const MODE_BUTTONS = [
-  { label: "Kids' Corner", paths: ['M12 3l9 8h-3v9h-4v-6H10v6H6v-9H3z'] },
   { label: 'Sitter Mode', paths: ['M16 8a4 4 0 1 1-8 0 4 4 0 0 1 8 0z', 'M4 21c0-4 3.6-7 8-7s8 3 8 7'] },
   {
     label: 'Settings',
@@ -295,6 +184,26 @@ const MODE_BUTTONS = [
               aria-hidden="true"
             >
               <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            aria-label="Kids' Corner"
+            class="flex h-[60px] w-[60px] items-center justify-center rounded-2xl bg-surface-2 text-ink focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-ink"
+            @click="router.push('/corner')"
+          >
+            <svg
+              width="26"
+              height="26"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M12 3l9 8h-3v9h-4v-6H10v6H6v-9H3z" />
             </svg>
           </button>
           <button
@@ -379,18 +288,8 @@ const MODE_BUTTONS = [
       <RLogo :size="64" />
     </div>
 
-    <!-- Dimmed peek (spec §7.7): a tap on the Night screen shows the main screen through a dark,
-         click-through overlay for 60 s, with a live countdown until the Night screen returns. -->
-    <template v-if="model && peekingAtNight">
-      <div class="pointer-events-none absolute inset-0 z-10" style="background: rgba(43, 33, 28, 0.55)" aria-hidden="true" />
-      <span
-        data-testid="night-peek-chip"
-        role="status"
-        class="pointer-events-none absolute left-1/2 top-9 z-20 -translate-x-1/2 rounded-lg bg-surface-2 px-3 py-1.5 text-[16px] font-medium text-ink-2"
-      >
-        Night Mode · back in {{ peekCountdownLabel }}
-      </span>
-    </template>
+    <!-- Dimmed peek (spec §7.7): the main screen shows through a dark, click-through overlay for 60 s. -->
+    <NightPeek v-if="model && peekingAtNight" :until="modes.nightPeekUntil" :now="now" />
 
     <NapOverlay v-if="model && modes.napActive" />
 

@@ -48,7 +48,8 @@ const SLEEP_LINE_LOOKBACK_MS = 18 * 3_600_000
 const FEEDING_LOOKBACK_MS = 24 * 3_600_000
 const dateFormatters = new Map<string, Intl.DateTimeFormat>()
 
-function formatDateLabel(now: Date, timeZone: string): string {
+/** "Monday, September 14" in the household time zone. */
+export function formatDateLabel(now: Date, timeZone: string): string {
   let f = dateFormatters.get(timeZone)
   if (!f) {
     f = new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone })
