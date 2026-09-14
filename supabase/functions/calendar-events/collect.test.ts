@@ -5,10 +5,12 @@ import { createIcsParser } from '../_shared/ics.ts'
 import { IcsFetchError } from '../_shared/icsFetch.ts'
 import {
   collectDayEvents,
+  createEventsMemory,
   EVENTS_CACHE_TTL_MS,
+  FAILURE_CACHE_TTL_MS,
   type CalendarStore,
   type ConnectionRow,
-  type EventsCache,
+  type EventsMemory,
   type HouseholdCalendars,
   type SelectionRow,
 } from './collect.ts'
@@ -85,8 +87,10 @@ function icsSources(fetchIcs: (url: URL, signal: AbortSignal) => Promise<string>
   return { ics: createIcsSource(fetchIcs, parser), google: null, microsoft: null }
 }
 
-const collect = (store: CalendarStore, sources: CalendarSources, cache: EventsCache = new Map(), extra: Record<string, unknown> = {}) =>
-  collectDayEvents(HOUSEHOLD, { store, sources, cache, now: NOW, ...extra })
+const collect = (store: CalendarStore, sources: CalendarSources, memory: EventsMemory = createEventsMemory(), extra: Record<string, unknown> = {}) =>
+  collectDayEvents(HOUSEHOLD, { store, sources, memory, now: NOW, ...extra })
+const collectAt = (at: number, store: CalendarStore, sources: CalendarSources, memory: EventsMemory) =>
+  collectDayEvents(HOUSEHOLD, { store, sources, memory, now: new Date(NOW.getTime() + at) })
 
 describe('collectDayEvents: ICS', () => {
   it('returns today\'s events, including a recurring one, with only the allowed fields', async () => {
@@ -128,31 +132,64 @@ describe('collectDayEvents: ICS', () => {
     for (const leaked of ['goggles', '4321', 'coach@example.com', 'school@example.com', 'secret-link']) expect(serialized).not.toContain(leaked)
   })
 
-  it('serves a connection from the cache within 5 minutes and fetches again after', async () => {
+  it('serves a connection from memory within 5 minutes and fetches again after', async () => {
     const { store } = fakeStore({}, { 'conn-ics': 'https://calendar.example.com/a.ics' })
     const fetchIcs = vi.fn(async () => FIXTURE)
-    const cache: EventsCache = new Map()
-    const first = await collect(store, icsSources(fetchIcs), cache)
-    const second = await collectDayEvents(HOUSEHOLD, { store, sources: icsSources(fetchIcs), cache, now: new Date(NOW.getTime() + 4 * 60_000) })
+    const memory = createEventsMemory()
+    const first = await collect(store, icsSources(fetchIcs), memory)
+    const second = await collectAt(4 * 60_000, store, icsSources(fetchIcs), memory)
     expect(fetchIcs).toHaveBeenCalledTimes(1)
     expect(second!.events).toEqual(first!.events)
     expect(store.secret).toHaveBeenCalledTimes(1)
-    await collectDayEvents(HOUSEHOLD, { store, sources: icsSources(fetchIcs), cache, now: new Date(NOW.getTime() + EVENTS_CACHE_TTL_MS + 1) })
+    await collectAt(EVENTS_CACHE_TTL_MS + 1, store, icsSources(fetchIcs), memory)
     expect(fetchIcs).toHaveBeenCalledTimes(2)
   })
 
-  it('does not cache failures', async () => {
+  it('never writes a status from a memory hit, even when the stored status is stale', async () => {
+    const memory = createEventsMemory()
+    let { store, calls } = fakeStore()
+    await collect(store, icsSources(), memory)
+    ;({ store, calls } = fakeStore({ connections: [connection({ status: 'unreachable' })] }))
+    const result = await collectAt(60_000, store, icsSources(), memory)
+    expect(result!.connections[0]!.status).toBe('ok')
+    expect(calls.setStatus).toEqual([])
+  })
+
+  it('keeps a failure for 60 seconds so a burst of requests fetches a dead feed once', async () => {
     const { store } = fakeStore()
     let fail = true
     const fetchIcs = vi.fn(async () => {
       if (fail) throw new IcsFetchError('unreachable', 'down')
       return FIXTURE
     })
-    const cache: EventsCache = new Map()
-    expect((await collect(store, icsSources(fetchIcs), cache))!.connections[0]!.status).toBe('unreachable')
+    const memory = createEventsMemory()
+    for (const at of [0, 1_000, 30_000, FAILURE_CACHE_TTL_MS - 1]) {
+      expect((await collectAt(at, store, icsSources(fetchIcs), memory))!.connections[0]!.status).toBe('unreachable')
+    }
+    expect(fetchIcs).toHaveBeenCalledTimes(1)
     fail = false
-    expect((await collect(store, icsSources(fetchIcs), cache))!.connections[0]!.status).toBe('ok')
+    expect((await collectAt(FAILURE_CACHE_TTL_MS, store, icsSources(fetchIcs), memory))!.connections[0]!.status).toBe('ok')
     expect(fetchIcs).toHaveBeenCalledTimes(2)
+  })
+
+  it('stores unreachable only after 2 consecutive fresh failures, and a success resets the run', async () => {
+    const { store, calls } = fakeStore()
+    let fail = true
+    const fetchIcs = vi.fn(async () => {
+      if (fail) throw new IcsFetchError('unreachable', 'down')
+      return FIXTURE
+    })
+    const memory = createEventsMemory()
+    await collectAt(0, store, icsSources(fetchIcs), memory)
+    expect(calls.setStatus).toEqual([])
+    fail = false
+    await collectAt(FAILURE_CACHE_TTL_MS, store, icsSources(fetchIcs), memory)
+    fail = true
+    await collectAt(FAILURE_CACHE_TTL_MS + EVENTS_CACHE_TTL_MS, store, icsSources(fetchIcs), memory)
+    expect(calls.setStatus).toEqual([])
+    await collectAt(2 * FAILURE_CACHE_TTL_MS + EVENTS_CACHE_TTL_MS, store, icsSources(fetchIcs), memory)
+    expect(calls.setStatus).toEqual([['conn-ics', 'unreachable']])
+    expect(fetchIcs).toHaveBeenCalledTimes(4)
   })
 
   it('records status transitions only when the status changed', async () => {
@@ -170,9 +207,12 @@ describe('collectDayEvents: ICS', () => {
     expect(result).toMatchObject({ events: [], partial: true, connections: [{ status: 'auth_expired' }] })
 
     ;({ store, calls } = fakeStore({ connections: [connection({ status: 'auth_expired' })] }))
-    result = await collect(store, icsSources(async () => '<html>not a calendar</html>'))
-    expect(calls.setStatus).toEqual([['conn-ics', 'unreachable']])
+    const memory = createEventsMemory()
+    result = await collect(store, icsSources(async () => '<html>not a calendar</html>'), memory)
+    expect(calls.setStatus).toEqual([])
     expect(result!.connections[0]!.status).toBe('unreachable')
+    await collectAt(FAILURE_CACHE_TTL_MS, store, icsSources(async () => '<html>not a calendar</html>'), memory)
+    expect(calls.setStatus).toEqual([['conn-ics', 'unreachable']])
   })
 
   it('skips selections without a known person and connections without shown calendars', async () => {
@@ -288,7 +328,7 @@ describe('collectDayEvents: concurrency and deadline', () => {
       selections: [selection({ id: 'sel-slow', connectionId: 'conn-slow', externalCalendarId: 'x' }), selection()],
     })
     const started = Date.now()
-    const result = await collect(store, { ics: createIcsSource(async () => FIXTURE, parser), google: slow, microsoft: null }, new Map(), { deadlineMs: 50 })
+    const result = await collect(store, { ics: createIcsSource(async () => FIXTURE, parser), google: slow, microsoft: null }, createEventsMemory(), { deadlineMs: 50 })
     expect(Date.now() - started).toBeLessThan(2000)
     expect(result!.connections).toEqual([
       { id: 'conn-slow', ownerName: 'Alex', status: 'unreachable' },
@@ -298,6 +338,31 @@ describe('collectDayEvents: concurrency and deadline', () => {
     expect(result!.partial).toBe(true)
     await new Promise((r) => setTimeout(r, 10))
     expect(calls.setStatus).toEqual([])
+  })
+
+  it('saves a rotated refresh token even when the deadline has already passed', async () => {
+    let releaseRefresh!: () => void
+    const refreshed = new Promise<void>((resolve) => (releaseRefresh = resolve))
+    const late: OAuthSource = {
+      refresh: async () => {
+        await refreshed
+        return { accessToken: 'a', expiresAt: new Date(NOW.getTime() + 3600_000), refreshToken: 'rotated-late' }
+      },
+      dayEvents: async () => [],
+    }
+    const waitUntil = vi.fn()
+    const { store, calls } = fakeStore({
+      connections: [connection({ id: 'conn-ms', provider: 'microsoft' })],
+      selections: [selection({ id: 'sel-ms', connectionId: 'conn-ms', externalCalendarId: 'cal' })],
+    })
+    const result = await collect(store, { ics: createIcsSource(async () => FIXTURE, parser), google: null, microsoft: late }, createEventsMemory(), {
+      deadlineMs: 20,
+      waitUntil,
+    })
+    expect(result!.connections[0]!.status).toBe('unreachable')
+    releaseRefresh()
+    await vi.waitFor(() => expect(calls.updateSecret).toEqual([['conn-ms', 'rotated-late']]))
+    expect(waitUntil).toHaveBeenCalledTimes(1)
   })
 
   it('runs at most `concurrency` connections at once', async () => {
@@ -315,7 +380,7 @@ describe('collectDayEvents: concurrency and deadline', () => {
       connections: ids.map((id) => connection({ id })),
       selections: ids.map((id) => selection({ id: `sel-${id}`, connectionId: id })),
     })
-    const result = await collect(store, icsSources(fetchIcs), new Map(), { concurrency: 3 })
+    const result = await collect(store, icsSources(fetchIcs), createEventsMemory(), { concurrency: 3 })
     expect(fetchIcs).toHaveBeenCalledTimes(7)
     expect(peak).toBe(3)
     expect(result!.connections.every((c) => c.status === 'ok')).toBe(true)

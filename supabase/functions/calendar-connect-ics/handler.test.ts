@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { AuthError } from '../_shared/auth.ts'
 import { createIcsParser } from '../_shared/ics.ts'
 import { fetchIcsText, type IcsFetchOptions } from '../_shared/icsFetch.ts'
+import { hmacSha256Hex } from '../_shared/pkce.ts'
 import { createConnectIcsHandler, icsLabel, type ConnectIcsDeps } from './handler.ts'
 
 const HOUSEHOLD = 'aaaaaaaa-0000-0000-0000-000000000001'
@@ -11,6 +12,7 @@ const OTHER_MEMBERSHIP = 'bbbbbbbb-0000-0000-0000-000000000002'
 const ENDPOINT = 'http://127.0.0.1:55321/functions/v1/calendar-connect-ics'
 const FEED = 'https://calendar.example.com/private/SECRET-TOKEN/basic.ics'
 const parser = createIcsParser(ICAL)
+const KEY = 'k'.repeat(32)
 
 const ics = (name: string | null) =>
   [
@@ -44,8 +46,9 @@ function deps(overrides: Partial<ConnectIcsDeps> = {}, fetchOverrides: Partial<I
     allowPrivateHosts: false,
     fetchIcs: vi.fn((url: URL) => fetchIcsText(url, options)),
     readCalendarName: (text) => parser.readIcsCalendarName(text),
-    createConnection: vi.fn(async () => 'conn-1'),
-    addSelection: vi.fn(async () => 'sel-1'),
+    fingerprint: vi.fn((value: string) => hmacSha256Hex(KEY, value)),
+    recordConnectAttempt: vi.fn(async () => true),
+    connect: vi.fn(async (input) => ({ connectionId: 'conn-1', alreadyConnected: false, label: input.label, selectionIds: ['sel-1'] })),
     ...overrides,
   }
   return { d, options }
@@ -73,25 +76,32 @@ describe('calendar-connect-ics handler', () => {
     const { res, body } = await call(d, post({ householdId: HOUSEHOLD, url: 'webcal://calendar.example.com/private/SECRET-TOKEN/basic.ics' }))
     expect(res.status).toBe(200)
     expect(res.headers.get('Cache-Control')).toBe('no-store')
-    expect(body).toEqual({ connectionId: 'conn-1', selectionId: 'sel-1', name: 'Ivy school' })
+    expect(body).toEqual({ connectionId: 'conn-1', selectionId: 'sel-1', name: 'Ivy school', alreadyConnected: false })
     expect(options.fetch).toHaveBeenCalledWith(FEED, expect.anything())
-    expect(d.createConnection).toHaveBeenCalledWith({ householdId: HOUSEHOLD, membershipId: MEMBERSHIP, label: 'Ivy school', secret: FEED })
-    expect(d.addSelection).toHaveBeenCalledWith({ connectionId: 'conn-1', externalCalendarId: 'ics', name: 'Ivy school' })
+    expect(d.recordConnectAttempt).toHaveBeenCalledWith(MEMBERSHIP)
+    expect(d.connect).toHaveBeenCalledWith({
+      householdId: HOUSEHOLD,
+      membershipId: MEMBERSHIP,
+      label: 'Ivy school',
+      secret: FEED,
+      fingerprint: await hmacSha256Hex(KEY, `ics:${FEED}`),
+      calendars: [{ id: 'ics', name: 'Ivy school' }],
+    })
   })
 
   it('creates the connection for the caller\'s own membership, never one named in the request', async () => {
     const { d } = deps()
     await call(d, post({ householdId: HOUSEHOLD, url: FEED, membershipId: OTHER_MEMBERSHIP, membership_id: OTHER_MEMBERSHIP }))
     expect(d.requireFullSignInAdult).toHaveBeenCalledWith(expect.any(Request), HOUSEHOLD)
-    expect(d.createConnection).toHaveBeenCalledWith(expect.objectContaining({ membershipId: MEMBERSHIP }))
-    expect(JSON.stringify(vi.mocked(d.createConnection).mock.calls)).not.toContain(OTHER_MEMBERSHIP)
+    expect(d.connect).toHaveBeenCalledWith(expect.objectContaining({ membershipId: MEMBERSHIP }))
+    expect(JSON.stringify(vi.mocked(d.connect).mock.calls)).not.toContain(OTHER_MEMBERSHIP)
   })
 
   it('uses "Calendar subscription" when the calendar has no name', async () => {
     const { d } = deps({}, { fetch: vi.fn(async () => new Response(ics(null))) })
     const { body } = await call(d, post({ householdId: HOUSEHOLD, url: FEED }))
     expect(body.name).toBe('Calendar subscription')
-    expect(d.createConnection).toHaveBeenCalledWith(expect.objectContaining({ label: 'Calendar subscription' }))
+    expect(d.connect).toHaveBeenCalledWith(expect.objectContaining({ label: 'Calendar subscription' }))
   })
 
   it('never uses the URL as the label, even when the calendar is named after it', async () => {
@@ -99,7 +109,7 @@ describe('calendar-connect-ics handler', () => {
       const { d } = deps({}, { fetch: vi.fn(async () => new Response(ics(name))) })
       const { body } = await call(d, post({ householdId: HOUSEHOLD, url: FEED }))
       expect(body.name, name).toBe('Calendar subscription')
-      const label = vi.mocked(d.createConnection).mock.calls[0]![0].label
+      const label = vi.mocked(d.connect).mock.calls[0]![0].label
       expect(label).not.toContain('SECRET-TOKEN')
       expect(label).not.toMatch(/:\/\//)
     }
@@ -117,7 +127,7 @@ describe('calendar-connect-ics handler', () => {
       expect(res.status).toBe(status)
       expect(body).toEqual({ error: 'forbidden' })
       expect(options.fetch).not.toHaveBeenCalled()
-      expect(d.createConnection).not.toHaveBeenCalled()
+      expect(d.connect).not.toHaveBeenCalled()
     }
   })
 
@@ -131,13 +141,11 @@ describe('calendar-connect-ics handler', () => {
     expect(d.requireFullSignInAdult).not.toHaveBeenCalled()
   })
 
-  it('rejects invalid URLs: other schemes, credentials, ports, private addresses', async () => {
+  it('rejects invalid URLs: other schemes, credentials, ports', async () => {
     for (const url of [
       'http://calendar.example.com/a.ics',
       'https://me:pw@calendar.example.com/a.ics',
       'https://calendar.example.com:444/a.ics',
-      'https://10.0.0.5/a.ics',
-      'https://[fd00::1]/a.ics',
       'ftp://x.example.com/a.ics',
       '',
       null,
@@ -150,18 +158,66 @@ describe('calendar-connect-ics handler', () => {
     }
   })
 
-  it('rejects a host that resolves to a private address, and a redirect to one', async () => {
-    let { d } = deps({}, { resolveHost: vi.fn(async () => ['127.0.0.1']) })
-    expect((await call(d, post({ householdId: HOUSEHOLD, url: FEED }))).body).toEqual({ error: 'invalid_url' })
+  it('answers blocked hosts exactly like unreachable ones, so internal names cannot be probed', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const unreachable = await call(deps({}, { fetch: vi.fn(async () => { throw new TypeError('dns') }) }).d, post({ householdId: HOUSEHOLD, url: FEED }))
+    for (const [url, fetchOverrides] of [
+      ['https://10.0.0.5/a.ics', {}],
+      ['https://[fd00::1]/a.ics', {}],
+      ['https://intranet.corp.internal/a.ics', {}],
+      [FEED, { resolveHost: vi.fn(async () => ['127.0.0.1']) }],
+      [
+        FEED,
+        {
+          fetch: vi.fn(async () => new Response(null, { status: 302, headers: { Location: 'https://metadata.example.com/latest' } })),
+          resolveHost: vi.fn(async (host: string) => (host === 'metadata.example.com' ? ['169.254.169.254'] : ['93.184.215.14'])),
+        },
+      ],
+    ] as const) {
+      const { d } = deps({}, fetchOverrides)
+      const blocked = await call(d, post({ householdId: HOUSEHOLD, url }))
+      expect(blocked.res.status, url).toBe(unreachable.res.status)
+      expect(blocked.body).toEqual(unreachable.body)
+      expect(d.connect).not.toHaveBeenCalled()
+    }
+    expect(unreachable).toMatchObject({ body: { error: 'unreachable' } })
+    expect(unreachable.res.status).toBe(422)
+    expect(JSON.stringify(warn.mock.calls)).toContain('blocked_host')
+    expect(JSON.stringify(warn.mock.calls)).not.toMatch(/intranet|metadata|10\.0\.0\.5/)
+    warn.mockRestore()
+  })
 
-    const fetch = vi.fn(async () => new Response(null, { status: 302, headers: { Location: 'https://metadata.example.com/latest' } }))
-    const resolveHost = vi.fn(async (host: string) => (host === 'metadata.example.com' ? ['169.254.169.254'] : ['93.184.215.14']))
-    ;({ d } = deps({}, { fetch, resolveHost }))
+  it('returns the existing connection when the same link is connected again', async () => {
+    const { d } = deps({ connect: vi.fn(async () => ({ connectionId: 'conn-old', alreadyConnected: true, label: 'Old name', selectionIds: ['sel-old'] })) })
     const { res, body } = await call(d, post({ householdId: HOUSEHOLD, url: FEED }))
-    expect(res.status).toBe(400)
-    expect(body).toEqual({ error: 'invalid_url' })
-    expect(fetch).toHaveBeenCalledTimes(1)
-    expect(d.createConnection).not.toHaveBeenCalled()
+    expect(res.status).toBe(200)
+    expect(body).toEqual({ connectionId: 'conn-old', selectionId: 'sel-old', name: 'Old name', alreadyConnected: true })
+  })
+
+  it('fingerprints the normalized URL, so webcal and https forms of one link match', async () => {
+    const { d } = deps()
+    await call(d, post({ householdId: HOUSEHOLD, url: 'webcal://calendar.example.com/private/SECRET-TOKEN/basic.ics#frag' }))
+    await call(d, post({ householdId: HOUSEHOLD, url: FEED }))
+    const [a, b] = vi.mocked(d.connect).mock.calls.map((c) => c[0].fingerprint)
+    expect(a).toBe(b)
+    expect(a).toMatch(/^[0-9a-f]{64}$/)
+    expect(a).not.toContain('SECRET')
+  })
+
+  it('refuses more attempts than the hourly limit before fetching', async () => {
+    const { d, options } = deps({ recordConnectAttempt: vi.fn(async () => false) })
+    const { res, body } = await call(d, post({ householdId: HOUSEHOLD, url: FEED }))
+    expect(res.status).toBe(429)
+    expect(body).toEqual({ error: 'rate_limited' })
+    expect(options.fetch).not.toHaveBeenCalled()
+  })
+
+  it('answers not_configured without a fingerprint key', async () => {
+    const { d, options } = deps({ fingerprint: null })
+    const { res, body } = await call(d, post({ householdId: HOUSEHOLD, url: FEED }))
+    expect(res.status).toBe(503)
+    expect(body).toEqual({ error: 'not_configured' })
+    expect(options.fetch).not.toHaveBeenCalled()
   })
 
   it('reports an oversized calendar as too_large', async () => {
@@ -174,7 +230,7 @@ describe('calendar-connect-ics handler', () => {
     const { res, body } = await call(d, post({ householdId: HOUSEHOLD, url: FEED }))
     expect(res.status).toBe(413)
     expect(body).toEqual({ error: 'too_large' })
-    expect(d.createConnection).not.toHaveBeenCalled()
+    expect(d.connect).not.toHaveBeenCalled()
   })
 
   it('reports something that is not an iCalendar as not_a_calendar', async () => {
@@ -182,10 +238,10 @@ describe('calendar-connect-ics handler', () => {
     const { res, body } = await call(d, post({ householdId: HOUSEHOLD, url: FEED }))
     expect(res.status).toBe(422)
     expect(body).toEqual({ error: 'not_a_calendar' })
-    expect(d.createConnection).not.toHaveBeenCalled()
+    expect(d.connect).not.toHaveBeenCalled()
   })
 
-  it('reports unreachable, failing and revoked links as unreachable', async () => {
+  it('reports unreachable, failing and revoked links as unreachable (422)', async () => {
     for (const fetch of [
       vi.fn(async () => new Response('gone', { status: 404 })),
       vi.fn(async () => new Response('oops', { status: 500 })),
@@ -195,16 +251,16 @@ describe('calendar-connect-ics handler', () => {
     ]) {
       const { d } = deps({}, { fetch })
       const { res, body } = await call(d, post({ householdId: HOUSEHOLD, url: FEED }))
-      expect(res.status).toBe(502)
+      expect(res.status).toBe(422)
       expect(body).toEqual({ error: 'unreachable' })
     }
   })
 
   it('maps a membership that changed meanwhile to forbidden, other failures to a generic 500 without the URL in logs', async () => {
     const log = vi.spyOn(console, 'error').mockImplementation(() => {})
-    let { d } = deps({ createConnection: vi.fn(async () => { throw Object.assign(new Error('member not found'), { code: '42501' }) }) })
+    let { d } = deps({ connect: vi.fn(async () => { throw Object.assign(new Error('member not found'), { code: '42501' }) }) })
     expect((await call(d, post({ householdId: HOUSEHOLD, url: FEED }))).res.status).toBe(403)
-    ;({ d } = deps({ addSelection: vi.fn(async () => { throw new Error('db down') }) }))
+    ;({ d } = deps({ connect: vi.fn(async () => { throw new Error('db down') }) }))
     const { res, body } = await call(d, post({ householdId: HOUSEHOLD, url: FEED }))
     expect(res.status).toBe(500)
     expect(body).toEqual({ error: 'internal' })

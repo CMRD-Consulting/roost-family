@@ -1,10 +1,10 @@
 /**
  * `calendar-oauth-callback` Edge Function (spec §5.5): Google and Microsoft send the browser here after consent. The
- * gateway's JWT check is off (config.toml): the single-use state from calendar-oauth-start authenticates the attempt.
- * See handler.ts for the redirects it answers with.
+ * gateway's JWT check is off (config.toml): the single-use state from calendar-oauth-start identifies the attempt,
+ * and the result is only parked as a pending attempt for calendar-oauth-finish. See handler.ts.
  */
 import type { FetchLike } from '../_shared/calendarProvider.ts'
-import { appUrl, oauthClient, oauthRedirectUri, svc } from '../_shared/calendarDeno.ts'
+import { appUrl, fingerprint, oauthClient, oauthRedirectUri, svc } from '../_shared/calendarDeno.ts'
 import { oauthProviderApi } from '../_shared/oauthProviders.ts'
 import { createOAuthCallbackHandler, type ConsumedState } from './handler.ts'
 
@@ -16,7 +16,6 @@ interface StateRow {
   membership_id: string
   provider: 'google' | 'microsoft'
   code_verifier: string
-  redirect_to: 'settings' | 'manage'
   expired: boolean
 }
 
@@ -25,37 +24,26 @@ const handler = createOAuthCallbackHandler({
     const rows = await svc<StateRow[] | null>('svc_consume_calendar_oauth_state', { p_state_hash: stateHash })
     const row = rows?.[0]
     return row
-      ? {
-          householdId: row.household_id,
-          membershipId: row.membership_id,
-          provider: row.provider,
-          codeVerifier: row.code_verifier,
-          redirectTo: row.redirect_to,
-          expired: row.expired,
-        }
+      ? { householdId: row.household_id, membershipId: row.membership_id, provider: row.provider, codeVerifier: row.code_verifier, expired: row.expired }
       : null
   },
   clients: { google: oauthClient('google'), microsoft: oauthClient('microsoft') },
   api: (provider) => oauthProviderApi(provider, timedFetch),
   redirectUri: oauthRedirectUri,
   appUrl,
-  createConnection: ({ householdId, membershipId, provider, label, secret }) =>
-    svc<string>('svc_create_calendar_connection', {
-      p_household_id: householdId,
-      p_membership_id: membershipId,
-      p_provider: provider,
-      p_label: label,
-      p_secret: secret,
-    }),
-  addSelection: ({ connectionId, externalCalendarId, name }) =>
-    svc<string>('svc_add_calendar_selection', {
-      p_connection_id: connectionId,
-      p_external_calendar_id: externalCalendarId,
-      p_name: name,
-      p_visible: false,
-      p_assigned_membership_id: null,
-      p_assigned_child_id: null,
-    }),
+  fingerprint,
+  createAttempt: async (attempt) => {
+    await svc<string>('svc_create_calendar_oauth_attempt', {
+      p_attempt_hash: attempt.attemptHash,
+      p_household_id: attempt.householdId,
+      p_membership_id: attempt.membershipId,
+      p_provider: attempt.provider,
+      p_secret: attempt.secret,
+      p_account_label: attempt.accountLabel,
+      p_fingerprint: attempt.fingerprint,
+      p_calendars: attempt.calendars,
+    })
+  },
   now: () => new Date(),
 })
 

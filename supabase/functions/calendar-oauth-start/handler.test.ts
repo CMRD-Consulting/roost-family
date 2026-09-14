@@ -18,6 +18,7 @@ function deps(overrides: Partial<OAuthStartDeps> = {}): OAuthStartDeps {
     clients: { google: { clientId: 'google-id', clientSecret: 'google-secret' }, microsoft: { clientId: 'ms-id', clientSecret: 'ms-secret' } },
     api: (provider) => oauthProviderApi(provider, noFetch),
     redirectUri: REDIRECT,
+    ready: true,
     createState: vi.fn(async () => {}),
     ...overrides,
   }
@@ -33,7 +34,7 @@ describe('calendar-oauth-start handler', () => {
 
   it('returns the Google consent URL with the PKCE challenge, storing only the state hash and the verifier', async () => {
     const d = deps()
-    const res = await createOAuthStartHandler(d)(post({ householdId: HOUSEHOLD, provider: 'google', returnTo: 'manage', membershipId: 'someone-else' }))
+    const res = await createOAuthStartHandler(d)(post({ householdId: HOUSEHOLD, provider: 'google', returnTo: 'settings', membershipId: 'someone-else' }))
     expect(res.status).toBe(200)
     expect(res.headers.get('Cache-Control')).toBe('no-store')
     const { url } = (await res.json()) as { url: string }
@@ -55,21 +56,19 @@ describe('calendar-oauth-start handler', () => {
       householdId: HOUSEHOLD,
       membershipId: MEMBERSHIP,
       provider: 'google',
-      redirectTo: 'manage',
     })
     expect(stored.stateHash).not.toContain(state)
     expect(params.get('code_challenge')).toBe(await s256Challenge(stored.codeVerifier))
     expect(url).not.toContain(stored.codeVerifier)
   })
 
-  it('returns the Microsoft consent URL, returning to Settings by default, with a fresh state each time', async () => {
+  it('returns the Microsoft consent URL with a fresh state each time', async () => {
     const d = deps()
     const first = (await (await createOAuthStartHandler(d)(post({ householdId: HOUSEHOLD, provider: 'microsoft' }))).json()) as { url: string }
     const second = (await (await createOAuthStartHandler(d)(post({ householdId: HOUSEHOLD, provider: 'microsoft' }))).json()) as { url: string }
     const params = new URL(first.url).searchParams
     expect(first.url.startsWith('https://login.microsoftonline.com/common/oauth2/v2.0/authorize?')).toBe(true)
-    expect(params.get('scope')).toBe('openid email offline_access Calendars.Read')
-    expect(vi.mocked(d.createState).mock.calls[0]![0].redirectTo).toBe('settings')
+    expect(params.get('scope')).toBe('openid email profile offline_access Calendars.Read')
     expect(new URL(second.url).searchParams.get('state')).not.toBe(params.get('state'))
   })
 
@@ -81,6 +80,20 @@ describe('calendar-oauth-start handler', () => {
     expect(d.createState).not.toHaveBeenCalled()
   })
 
+  it('answers not_configured when APP_URL or the fingerprint key is missing', async () => {
+    const d = deps({ ready: false })
+    const res = await createOAuthStartHandler(d)(post({ householdId: HOUSEHOLD, provider: 'google' }))
+    expect(await res.json()).toEqual({ error: 'not_configured' })
+    expect(d.createState).not.toHaveBeenCalled()
+  })
+
+  it('answers rate_limited when the member has too many open attempts', async () => {
+    const d = deps({ createState: vi.fn(async () => { throw Object.assign(new Error('too many'), { code: 'PT429' }) }) })
+    const res = await createOAuthStartHandler(d)(post({ householdId: HOUSEHOLD, provider: 'google' }))
+    expect(res.status).toBe(429)
+    expect(await res.json()).toEqual({ error: 'rate_limited' })
+  })
+
   it('refuses callers who are not full sign-in adults', async () => {
     const d = deps({ requireFullSignInAdult: vi.fn(async () => { throw new AuthError(403, 'forbidden') }) })
     const res = await createOAuthStartHandler(d)(post({ householdId: HOUSEHOLD, provider: 'google' }))
@@ -89,12 +102,18 @@ describe('calendar-oauth-start handler', () => {
     expect(d.createState).not.toHaveBeenCalled()
   })
 
+  it('ignores returnTo, whatever it says', async () => {
+    const d = deps()
+    const res = await createOAuthStartHandler(d)(post({ householdId: HOUSEHOLD, provider: 'google', returnTo: 'https://evil.test' }))
+    expect(res.status).toBe(200)
+    expect(JSON.stringify(vi.mocked(d.createState).mock.calls)).not.toContain('evil')
+  })
+
   it('rejects malformed requests', async () => {
     const d = deps()
     for (const body of [
       { householdId: 'x', provider: 'google' },
       { householdId: HOUSEHOLD, provider: 'ics' },
-      { householdId: HOUSEHOLD, provider: 'google', returnTo: 'https://evil.test' },
     ]) {
       const res = await createOAuthStartHandler(d)(post(body))
       expect(res.status).toBe(400)

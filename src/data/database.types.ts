@@ -49,6 +49,32 @@ export type Database = {
         }
         Relationships: []
       }
+      calendar_connect_attempts: {
+        Row: {
+          created_at: string
+          id: number
+          membership_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: never
+          membership_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: never
+          membership_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "calendar_connect_attempts_membership_id_fkey"
+            columns: ["membership_id"]
+            isOneToOne: false
+            referencedRelation: "memberships"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       calendar_connections: {
         Row: {
           created_at: string
@@ -57,6 +83,7 @@ export type Database = {
           label: string
           membership_id: string
           provider: string
+          secret_fingerprint: string | null
           status: string
           status_changed_at: string
           vault_secret_id: string
@@ -68,6 +95,7 @@ export type Database = {
           label: string
           membership_id: string
           provider: string
+          secret_fingerprint?: string | null
           status?: string
           status_changed_at?: string
           vault_secret_id: string
@@ -79,6 +107,7 @@ export type Database = {
           label?: string
           membership_id?: string
           provider?: string
+          secret_fingerprint?: string | null
           status?: string
           status_changed_at?: string
           vault_secret_id?: string
@@ -93,6 +122,63 @@ export type Database = {
           },
           {
             foreignKeyName: "calendar_connections_membership_id_household_id_fkey"
+            columns: ["membership_id", "household_id"]
+            isOneToOne: false
+            referencedRelation: "memberships"
+            referencedColumns: ["id", "household_id"]
+          },
+        ]
+      }
+      calendar_oauth_attempts: {
+        Row: {
+          account_label: string | null
+          attempt_hash: string
+          calendars: Json
+          created_at: string
+          expires_at: string
+          household_id: string
+          id: string
+          membership_id: string
+          provider: string
+          secret_fingerprint: string
+          vault_secret_id: string
+        }
+        Insert: {
+          account_label?: string | null
+          attempt_hash: string
+          calendars?: Json
+          created_at?: string
+          expires_at?: string
+          household_id: string
+          id?: string
+          membership_id: string
+          provider: string
+          secret_fingerprint: string
+          vault_secret_id: string
+        }
+        Update: {
+          account_label?: string | null
+          attempt_hash?: string
+          calendars?: Json
+          created_at?: string
+          expires_at?: string
+          household_id?: string
+          id?: string
+          membership_id?: string
+          provider?: string
+          secret_fingerprint?: string
+          vault_secret_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "calendar_oauth_attempts_household_id_fkey"
+            columns: ["household_id"]
+            isOneToOne: false
+            referencedRelation: "households"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "calendar_oauth_attempts_membership_id_household_id_fkey"
             columns: ["membership_id", "household_id"]
             isOneToOne: false
             referencedRelation: "memberships"
@@ -1986,6 +2072,38 @@ export type Database = {
         }
         Returns: string
       }
+      svc_create_calendar_connection_with_selections: {
+        Args: {
+          p_calendars: Json
+          p_fingerprint: string
+          p_household_id: string
+          p_label: string
+          p_membership_id: string
+          p_provider: string
+          p_secret: string
+          p_vault_secret_id: string
+        }
+        Returns: {
+          already_connected: boolean
+          calendar_count: number
+          connection_id: string
+          label: string
+          selection_ids: string[]
+        }[]
+      }
+      svc_create_calendar_oauth_attempt: {
+        Args: {
+          p_account_label: string
+          p_attempt_hash: string
+          p_calendars: Json
+          p_fingerprint: string
+          p_household_id: string
+          p_membership_id: string
+          p_provider: string
+          p_secret: string
+        }
+        Returns: string
+      }
       svc_create_calendar_oauth_state: {
         Args: {
           p_code_verifier: string
@@ -1997,6 +2115,15 @@ export type Database = {
         }
         Returns: string
       }
+      svc_finish_calendar_oauth_attempt: {
+        Args: { p_attempt_hash: string; p_membership_id: string }
+        Returns: {
+          calendar_count: number
+          connection_id: string
+          label: string
+          outcome: string
+        }[]
+      }
       svc_mark_export_failed: {
         Args: { p_error: string; p_export_id: string }
         Returns: undefined
@@ -2004,6 +2131,14 @@ export type Database = {
       svc_mark_export_ready: {
         Args: { p_export_id: string; p_storage_path: string }
         Returns: undefined
+      }
+      svc_peek_calendar_oauth_attempt: {
+        Args: { p_attempt_hash: string }
+        Returns: string
+      }
+      svc_record_calendar_connect_attempt: {
+        Args: { p_membership_id: string }
+        Returns: boolean
       }
       svc_set_calendar_selection_gone: {
         Args: { p_gone: boolean; p_selection_id: string }

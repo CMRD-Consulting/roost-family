@@ -259,5 +259,5 @@ export function exchangeGoogleCode(fetch: FetchLike, input: CodeExchangeInput, n
     code_verifier: input.codeVerifier,
     redirect_uri: input.redirectUri,
   })
-  return exchangeAuthorizationCode(fetch, GOOGLE_TOKEN_URL, form, now, classifyGoogleError)
+  return exchangeAuthorizationCode(fetch, GOOGLE_TOKEN_URL, form, now, classifyGoogleError, ['sub'])
 }

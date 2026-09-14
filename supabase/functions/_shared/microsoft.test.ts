@@ -281,7 +281,7 @@ describe('Microsoft account connection (authorization code + PKCE)', () => {
       redirect_uri: 'https://x.test/cb',
       response_type: 'code',
       response_mode: 'query',
-      scope: 'openid email offline_access Calendars.Read',
+      scope: 'openid email profile offline_access Calendars.Read',
       state: 'st',
       code_challenge: 'ch',
       code_challenge_method: 'S256',
@@ -293,13 +293,14 @@ describe('Microsoft account connection (authorization code + PKCE)', () => {
     const result = await exchangeMicrosoftCode(
       async (url, init) => {
         calls.push({ url, init })
-        return jsonResponse(200, { access_token: 'at', expires_in: 3600, refresh_token: 'rt', id_token: idToken({ preferred_username: 'alex@contoso.com' }) })
+        return jsonResponse(200, { access_token: 'at', expires_in: 3600, refresh_token: 'rt', id_token: idToken({ preferred_username: 'alex@contoso.com', oid: '00000000-aaaa-bbbb', sub: 'pairwise' }) })
       },
       { clientId: 'cid', clientSecret: 'cs', code: 'code-1', codeVerifier: 'v'.repeat(43), redirectUri: 'https://x.test/cb' },
       NOW,
     )
     expect(result.token.refreshToken).toBe('rt')
     expect(result.email).toBe('alex@contoso.com')
+    expect(result.subject).toBe('00000000-aaaa-bbbb')
     expect(calls[0]!.url).toBe('https://login.microsoftonline.com/common/oauth2/v2.0/token')
     expect(Object.fromEntries(new URLSearchParams(String(calls[0]!.init!.body)))).toEqual({
       grant_type: 'authorization_code',
@@ -308,7 +309,7 @@ describe('Microsoft account connection (authorization code + PKCE)', () => {
       code: 'code-1',
       code_verifier: 'v'.repeat(43),
       redirect_uri: 'https://x.test/cb',
-      scope: 'openid email offline_access Calendars.Read',
+      scope: 'openid email profile offline_access Calendars.Read',
     })
   })
 })

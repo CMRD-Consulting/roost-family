@@ -95,17 +95,19 @@ refresh tokens) live only in Supabase Vault.
 | `calendar-connect-ics` | full sign-in adult | subscribe to an ICS link (`https://` or `webcal://`) |
 | `calendar-events` | display or member | today's events, cached in memory for 5 minutes |
 | `calendar-oauth-start` | full sign-in adult | Google / Microsoft consent URL |
-| `calendar-oauth-callback` | the provider's redirect (no JWT; the single-use state authenticates) | stores the connection, returns to the app |
+| `calendar-oauth-callback` | the provider's redirect (no JWT; the single-use state identifies the attempt) | parks the consent as a pending attempt, returns to `/manage?calendar=pending&attempt=…` |
+| `calendar-oauth-finish` | the full sign-in adult who started the attempt | creates the connection and its calendars |
 
 Environment (Edge Function secrets: `supabase secrets set NAME=value`; locally `supabase/functions/.env`, git-ignored):
 
 | Variable | Needed for | Notes |
 |---|---|---|
+| `CALENDAR_FINGERPRINT_KEY` | all connecting (**required in production**) | at least 32 random characters, e.g. `openssl rand -base64 48`. HMAC key for connection fingerprints (the ICS link or the provider account id), which stop the same calendar being connected twice. Keep it stable: changing it makes existing connections unrecognisable. A local stack uses a built-in development key when unset |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google Calendar | OAuth client of type "Web application". Scopes: `openid email https://www.googleapis.com/auth/calendar.readonly`. Publish the app to Production (Testing tokens expire after 7 days) and verify it before 100 users (§15) |
-| `MS_CLIENT_ID`, `MS_CLIENT_SECRET` | Outlook / Microsoft 365 | Entra app registration, "Accounts in any organizational directory and personal Microsoft accounts" (tenant `common`), delegated `offline_access` and `Calendars.Read` |
-| `APP_URL` | OAuth callback | where the browser returns (`/settings?calendar=…` or `/manage?calendar=…`); default `http://localhost:5173` |
+| `MS_CLIENT_ID`, `MS_CLIENT_SECRET` | Outlook / Microsoft 365 | Entra app registration, "Accounts in any organizational directory and personal Microsoft accounts" (tenant `common`), delegated `openid email profile offline_access Calendars.Read` |
+| `APP_URL` | OAuth (**required in production**) | where the browser returns (`/manage?calendar=…`); a local stack defaults to `http://localhost:5173`. Without it elsewhere the OAuth functions answer `not_configured` |
 | `CALENDAR_OAUTH_REDIRECT_URI` | optional | overrides the redirect URI; default `${SUPABASE_URL}/functions/v1/calendar-oauth-callback` |
-| `CALENDAR_ALLOW_PRIVATE_HOSTS` | local verification only | `1` lets ICS links reach private hosts over `http://` and any port (e.g. a fixture at `http://host.docker.internal:8123/…`). Off by default; **never set it in production**, where links must be `https://` on the default port and resolve to public addresses only |
+| `CALENDAR_ALLOW_PRIVATE_HOSTS` | local verification only | `1` lets ICS links reach private hosts over `http://` and any port (e.g. a fixture at `http://host.docker.internal:8123/…`). Honoured only when `SUPABASE_URL` is a local stack (localhost, 127.0.0.1, kong, host.docker.internal); ignored with a warning anywhere else, where links must be `https://` on the default port and resolve to public addresses only |
 
 Redirect URIs to register (Google Cloud Console → Credentials → OAuth client → Authorized redirect URIs; Entra → App
 registrations → Authentication → Web → Redirect URIs):
@@ -115,8 +117,10 @@ registrations → Authentication → Web → Redirect URIs):
   `localhost`; use a separate test client). Also set `CALENDAR_OAUTH_REDIRECT_URI` to it, because `SUPABASE_URL` inside
   the local runtime is not the browser-facing URL.
 
-Without the client id and secret, `calendar-oauth-start` answers `200 { "error": "not_configured" }` and the UI
-disables that provider. The Google and Microsoft network paths (token exchange, refresh, calendar list, events) are
+Without the client id and secret (or `APP_URL` / `CALENDAR_FINGERPRINT_KEY`), `calendar-oauth-start` answers
+`200 { "error": "not_configured" }` and the UI disables that provider. Consent never connects a calendar by itself:
+the callback parks the result for 15 minutes and only the adult who started it can finish it (so a forwarded consent
+link cannot attach someone else's calendar to another household). The Google and Microsoft network paths (token exchange, refresh, calendar list, events) are
 covered by unit tests with recorded response shapes but are not exercised locally without real credentials; ICS
 subscriptions can be verified end to end locally with `CALENDAR_ALLOW_PRIVATE_HOSTS=1`.
 

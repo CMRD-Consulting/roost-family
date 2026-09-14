@@ -98,11 +98,19 @@ describe('isPrivateAddress', () => {
     '2002:c0a8:0101::1',
     '2001:db8::1',
     '100::1',
+    '::ffff:0:127.0.0.1',
+    '::ffff:0:10.1.2.3',
+    '192.88.99.1',
+    '2001:10::1',
+    '2001:1f::1',
+    '2001:20::1',
+    '3fff::1',
+    '3fff:fff::1',
   ])('%s is private', (ip) => {
     expect(isPrivateAddress(ip)).toBe(true)
   })
 
-  it.each(['93.184.215.14', '8.8.8.8', '172.32.0.1', '100.128.0.1', '2606:4700::1111', '::ffff:8.8.8.8', '64:ff9b::808:808'])(
+  it.each(['93.184.215.14', '8.8.8.8', '172.32.0.1', '100.128.0.1', '2606:4700::1111', '::ffff:8.8.8.8', '64:ff9b::808:808', '::ffff:0:8.8.8.8', '192.88.100.1', '2001:4860::8888', '3fff:1000::1'])(
     '%s is public',
     (ip) => {
       expect(isPrivateAddress(ip)).toBe(false)
@@ -132,6 +140,11 @@ describe('fetchIcsText', () => {
       ['https://169.254.169.254/latest/meta-data', []],
       ['https://localhost/a.ics', ['127.0.0.1']],
       ['https://kong/a.ics', ['172.18.0.5']],
+      ['https://metadata.google.internal/a.ics', ['93.184.215.14']],
+      ['https://host.docker.internal/a.ics', ['93.184.215.14']],
+      ['https://printer.local/a.ics', ['93.184.215.14']],
+      ['https://nas.localdomain/a.ics', ['93.184.215.14']],
+      ['https://router.home.arpa./a.ics', ['93.184.215.14']],
       ['https://intranet.example.com/a.ics', ['10.0.0.8']],
       ['https://mixed.example.com/a.ics', ['93.184.215.14', 'fd00::5']],
     ] as const) {

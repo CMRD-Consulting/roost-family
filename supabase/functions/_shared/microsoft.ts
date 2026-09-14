@@ -34,8 +34,11 @@ export const MICROSOFT_TOKEN_URL = 'https://login.microsoftonline.com/common/oau
 export const MICROSOFT_GRAPH_API = 'https://graph.microsoft.com/v1.0'
 export const MICROSOFT_SCOPES = 'offline_access Calendars.Read'
 export const MICROSOFT_AUTH_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize'
-/** Consent scopes: the calendar scopes plus `openid email`, so the connection can be labelled with the account's email. */
-export const MICROSOFT_OAUTH_SCOPES = `openid email ${MICROSOFT_SCOPES}`
+/**
+ * Consent scopes: the calendar scopes plus `openid email profile`, so the connection can be labelled with the account's
+ * email and recognised by its object id (`oid`, which needs `profile`) when it connects again.
+ */
+export const MICROSOFT_OAUTH_SCOPES = `openid email profile ${MICROSOFT_SCOPES}`
 
 const DAY_MS = 86_400_000
 
@@ -223,5 +226,5 @@ export function exchangeMicrosoftCode(fetch: FetchLike, input: CodeExchangeInput
     redirect_uri: input.redirectUri,
     scope: MICROSOFT_OAUTH_SCOPES,
   })
-  return exchangeAuthorizationCode(fetch, MICROSOFT_TOKEN_URL, form, now, classifyMicrosoftError)
+  return exchangeAuthorizationCode(fetch, MICROSOFT_TOKEN_URL, form, now, classifyMicrosoftError, ['oid', 'sub'])
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CalendarProviderError, emailFromIdToken } from './calendarProvider'
+import { CalendarProviderError, emailFromIdToken, subjectFromIdToken } from './calendarProvider'
 import { householdDayWindow } from './events'
 import {
   buildGoogleAuthUrl,
@@ -362,12 +362,16 @@ describe('Google account connection (authorization code + PKCE)', () => {
     const result = await exchangeGoogleCode(
       async (url, init) => {
         calls.push({ url, init })
-        return jsonResponse(200, { access_token: 'at', expires_in: 3599, refresh_token: 'rt', id_token: idToken({ email: 'sam@example.com' }) })
+        return jsonResponse(200, { access_token: 'at', expires_in: 3599, refresh_token: 'rt', id_token: idToken({ sub: '1098765', email: 'sam@example.com' }) })
       },
       { clientId: 'cid', clientSecret: 'cs', code: 'code-1', codeVerifier: 'v'.repeat(43), redirectUri: 'https://x.test/cb' },
       NOW,
     )
-    expect(result).toEqual({ token: { accessToken: 'at', expiresAt: new Date(NOW.getTime() + 3599_000), refreshToken: 'rt' }, email: 'sam@example.com' })
+    expect(result).toEqual({
+      token: { accessToken: 'at', expiresAt: new Date(NOW.getTime() + 3599_000), refreshToken: 'rt' },
+      email: 'sam@example.com',
+      subject: '1098765',
+    })
     expect(calls[0]!.url).toBe('https://oauth2.googleapis.com/token')
     expect(Object.fromEntries(new URLSearchParams(String(calls[0]!.init!.body)))).toEqual({
       grant_type: 'authorization_code',
@@ -391,6 +395,13 @@ describe('emailFromIdToken', () => {
     expect(emailFromIdToken(idToken({ email: 'sam@example.com', preferred_username: 'other@example.com' }))).toBe('sam@example.com')
     expect(emailFromIdToken(idToken({ preferred_username: 'alex@contoso.com' }))).toBe('alex@contoso.com')
     expect(emailFromIdToken(idToken({ email: 'Zoë@exämple.com' }))).toBe('Zoë@exämple.com')
+  })
+
+  it('reads the first present subject claim', () => {
+    expect(subjectFromIdToken(idToken({ sub: 's-1', oid: 'o-1' }), ['oid', 'sub'])).toBe('o-1')
+    expect(subjectFromIdToken(idToken({ sub: 's-1' }), ['oid', 'sub'])).toBe('s-1')
+    expect(subjectFromIdToken(idToken({ oid: '' }), ['oid'])).toBeNull()
+    expect(subjectFromIdToken('garbage', ['sub'])).toBeNull()
   })
 
   it('returns null for anything else', () => {

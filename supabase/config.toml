@@ -415,9 +415,14 @@ verify_jwt = true
 verify_jwt = true
 
 # Google / Microsoft calendar consent callback. The browser arrives from the provider without a Supabase JWT, so the
-# gateway's JWT check is off; the single-use, hashed OAuth state authenticates the attempt.
+# gateway's JWT check is off; the single-use, hashed OAuth state identifies the attempt, which is only parked as pending.
 [functions.calendar-oauth-callback]
 verify_jwt = false
+
+# Finishes a pending Google / Microsoft connection. Callers must send a valid JWT; the function requires the full
+# sign-in adult who started the attempt.
+[functions.calendar-oauth-finish]
+verify_jwt = true
 
 [analytics]
 enabled = true

@@ -6,13 +6,13 @@
 import type { ConnectionStatus } from '../_shared/calendarProvider.ts'
 import { createIcsParser } from '../_shared/ics.ts'
 import { ical } from '../_shared/icalModule.ts'
-import { admin, callerAuth, fetchIcs, oauthClient, svc } from '../_shared/calendarDeno.ts'
-import { collectDayEvents, type CalendarStore, type ConnectionRow, type EventsCache, type SelectionRow } from './collect.ts'
+import { admin, callerAuth, fetchIcs, oauthClient, svc, waitUntil } from '../_shared/calendarDeno.ts'
+import { collectDayEvents, createEventsMemory, type CalendarStore, type ConnectionRow, type SelectionRow } from './collect.ts'
 import { createEventsHandler } from './handler.ts'
 import { createIcsSource, createOAuthSource, type CalendarSources } from './sources.ts'
 
 /** Module-level, so it lives as long as the isolate. Holds event data in memory only. */
-const cache: EventsCache = new Map()
+const memory = createEventsMemory()
 
 const sources: CalendarSources = {
   ics: createIcsSource((url, signal) => fetchIcs(url, signal), createIcsParser(ical)),
@@ -80,7 +80,7 @@ const store: CalendarStore = {
 
 const handler = createEventsHandler({
   callerHousehold: (req, householdId) => callerAuth.callerHousehold(req, householdId),
-  collect: (householdId, now) => collectDayEvents(householdId, { store, sources, cache, now, log: (m) => console.log(m) }),
+  collect: (householdId, now) => collectDayEvents(householdId, { store, sources, memory, now, log: (m) => console.log(m), waitUntil }),
   now: () => new Date(),
 })
 

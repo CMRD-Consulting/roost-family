@@ -162,10 +162,14 @@ export function dateTimeToUtcMs(value: unknown, zone: unknown): number {
 
 // ---- Authorization code flow (connecting an account) ----
 
-/** What the code exchange yields: tokens, and the account's email when the ID token carries one (used as a label). */
+/**
+ * What the code exchange yields: tokens, the account's email when the ID token carries one (used as a label), and the
+ * account's stable subject (Google `sub`, Microsoft `oid`) used to fingerprint the connection.
+ */
 export interface CodeExchangeResult {
   token: AccessToken
   email: string | null
+  subject: string | null
 }
 
 /** Inputs for the provider's authorization URL (PKCE S256). */
@@ -187,11 +191,11 @@ export interface CodeExchangeInput {
 const EMAIL_RE = /^[^\s@]+@[^\s@]+$/
 
 /**
- * The account email from an OpenID Connect ID token (`email`, else an email-shaped `preferred_username`), or null.
- * The token came straight from the provider's token endpoint over TLS, so its signature is not verified (OIDC Core
- * §3.1.3.7 allows this for the code flow); it is only ever used as a display label.
+ * The claims of an OpenID Connect ID token, or null. The token came straight from the provider's token endpoint over
+ * TLS, so its signature is not verified (OIDC Core §3.1.3.7 allows this for the code flow); the claims are only used
+ * for a display label and to recognise the same account connecting again.
  */
-export function emailFromIdToken(idToken: unknown): string | null {
+export function idTokenClaims(idToken: unknown): Record<string, unknown> | null {
   if (typeof idToken !== 'string') return null
   const payload = idToken.split('.')[1]
   if (!payload || payload.length > 16_000) return null
@@ -199,14 +203,31 @@ export function emailFromIdToken(idToken: unknown): string | null {
     const base64 = payload.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(payload.length / 4) * 4, '=')
     const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0))
     const claims: unknown = JSON.parse(new TextDecoder().decode(bytes))
-    if (!isRecord(claims)) return null
-    for (const candidate of [claims.email, claims.preferred_username]) {
-      if (typeof candidate === 'string' && EMAIL_RE.test(candidate.trim()) && candidate.trim().length <= 200) return candidate.trim()
-    }
-    return null
+    return isRecord(claims) ? claims : null
   } catch {
     return null
   }
+}
+
+/** The account email from an ID token (`email`, else an email-shaped `preferred_username`), or null. */
+export function emailFromIdToken(idToken: unknown): string | null {
+  const claims = idTokenClaims(idToken)
+  if (!claims) return null
+  for (const candidate of [claims.email, claims.preferred_username]) {
+    if (typeof candidate === 'string' && EMAIL_RE.test(candidate.trim()) && candidate.trim().length <= 200) return candidate.trim()
+  }
+  return null
+}
+
+/** The first of `claimNames` present in the ID token as a non-empty string (at most 256 characters), or null. */
+export function subjectFromIdToken(idToken: unknown, claimNames: readonly string[]): string | null {
+  const claims = idTokenClaims(idToken)
+  if (!claims) return null
+  for (const name of claimNames) {
+    const value = claims[name]
+    if (typeof value === 'string' && value.trim() && value.length <= 256) return value.trim()
+  }
+  return null
 }
 
 /** POSTs an authorization-code grant and reads the tokens. Throws `CalendarProviderError`; messages never hold tokens. */
@@ -216,6 +237,7 @@ export async function exchangeAuthorizationCode(
   form: URLSearchParams,
   now: Date,
   classify: Classifier,
+  subjectClaims: readonly string[],
 ): Promise<CodeExchangeResult> {
   let res: Response
   try {
@@ -234,5 +256,6 @@ export async function exchangeAuthorizationCode(
     body = null
   }
   const token = parseTokenResponse(res.status, body, now, classify)
-  return { token, email: isRecord(body) ? emailFromIdToken(body.id_token) : null }
+  const idToken = isRecord(body) ? body.id_token : null
+  return { token, email: emailFromIdToken(idToken), subject: subjectFromIdToken(idToken, subjectClaims) }
 }

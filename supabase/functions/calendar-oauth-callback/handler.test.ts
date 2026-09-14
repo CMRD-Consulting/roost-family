@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { oauthProviderApi, type OAuthProvider } from '../_shared/oauthProviders.ts'
-import { sha256Hex } from '../_shared/pkce.ts'
-import { createOAuthCallbackHandler, type ConsumedState, type OAuthCallbackDeps } from './handler.ts'
+import { hmacSha256Hex, sha256Hex } from '../_shared/pkce.ts'
+import { createOAuthCallbackHandler, type ConsumedState, type OAuthCallbackDeps, type PendingAttempt } from './handler.ts'
 
 const HOUSEHOLD = 'aaaaaaaa-0000-0000-0000-000000000001'
 const MEMBERSHIP = 'bbbbbbbb-0000-0000-0000-000000000001'
@@ -9,6 +9,7 @@ const CALLBACK = 'http://127.0.0.1:55321/functions/v1/calendar-oauth-callback'
 const APP = 'http://localhost:5173'
 const VERIFIER = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk'
 const NOW = new Date('2026-09-14T16:00:00Z')
+const KEY = 'k'.repeat(32)
 
 function idToken(claims: Record<string, unknown>): string {
   const b64 = (v: unknown) => btoa(JSON.stringify(v)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
@@ -25,7 +26,7 @@ function googleFetch(options: { token?: Response; list?: Response } = {}) {
     if (url === 'https://oauth2.googleapis.com/token') {
       return (
         options.token ??
-        json(200, { access_token: 'access-1', expires_in: 3599, refresh_token: 'refresh-1', id_token: idToken({ email: 'sam@example.com' }) })
+        json(200, { access_token: 'access-1', expires_in: 3599, refresh_token: 'refresh-1', id_token: idToken({ sub: 'google-sub-1', email: 'sam@example.com' }) })
       )
     }
     if (url.startsWith('https://www.googleapis.com/calendar/v3/users/me/calendarList')) {
@@ -46,6 +47,7 @@ function googleFetch(options: { token?: Response; list?: Response } = {}) {
 
 function deps(state: ConsumedState | null, fetch = googleFetch().fetch, overrides: Partial<OAuthCallbackDeps> = {}) {
   const consumed: string[] = []
+  const attempts: PendingAttempt[] = []
   const d: OAuthCallbackDeps = {
     consumeState: vi.fn(async (hash: string) => {
       consumed.push(hash)
@@ -55,12 +57,14 @@ function deps(state: ConsumedState | null, fetch = googleFetch().fetch, override
     api: (provider: OAuthProvider) => oauthProviderApi(provider, fetch),
     redirectUri: CALLBACK,
     appUrl: APP,
-    createConnection: vi.fn(async () => 'conn-1'),
-    addSelection: vi.fn(async () => 'sel'),
+    fingerprint: (value) => hmacSha256Hex(KEY, value),
+    createAttempt: vi.fn(async (attempt: PendingAttempt) => {
+      attempts.push(attempt)
+    }),
     now: () => NOW,
     ...overrides,
   }
-  return { d, consumed }
+  return { d, consumed, attempts }
 }
 
 const attempt = (overrides: Partial<ConsumedState> = {}): ConsumedState => ({
@@ -68,7 +72,6 @@ const attempt = (overrides: Partial<ConsumedState> = {}): ConsumedState => ({
   membershipId: MEMBERSHIP,
   provider: 'google',
   codeVerifier: VERIFIER,
-  redirectTo: 'settings',
   expired: false,
   ...overrides,
 })
@@ -77,42 +80,54 @@ const get = (query: string) => new Request(`${CALLBACK}?${query}`)
 
 function location(res: Response): URL {
   expect(res.status).toBe(302)
-  return new URL(res.headers.get('Location')!)
+  const to = new URL(res.headers.get('Location')!)
+  expect(`${to.origin}${to.pathname}`).toBe(`${APP}/manage`)
+  return to
 }
 
 describe('calendar-oauth-callback handler', () => {
-  it('connects the account: code exchanged with the verifier, connection labelled with the email, calendars recorded hidden', async () => {
+  it('parks the consent as a pending attempt instead of connecting, and hands the browser a one-time token', async () => {
     const { fetch, calls } = googleFetch()
-    const { d, consumed } = deps(attempt({ redirectTo: 'manage' }), fetch)
+    const { d, consumed, attempts } = deps(attempt(), fetch)
     const res = await createOAuthCallbackHandler(d)(get('state=the-state&code=auth-code&scope=x'))
     const to = location(res)
-    expect(`${to.origin}${to.pathname}`).toBe(`${APP}/manage`)
-    expect(Object.fromEntries(to.searchParams)).toEqual({ calendar: 'connected' })
+    expect(to.searchParams.get('calendar')).toBe('pending')
+    const token = to.searchParams.get('attempt')!
+    expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/)
+    expect([...to.searchParams.keys()].sort()).toEqual(['attempt', 'calendar'])
     expect(res.headers.get('Cache-Control')).toBe('no-store')
     expect(res.headers.get('Referrer-Policy')).toBe('no-referrer')
 
     expect(consumed).toEqual([await sha256Hex('the-state')])
     expect(Object.fromEntries(new URLSearchParams(calls[0]!.body!))).toMatchObject({ code: 'auth-code', code_verifier: VERIFIER, redirect_uri: CALLBACK })
-    expect(d.createConnection).toHaveBeenCalledWith({ householdId: HOUSEHOLD, membershipId: MEMBERSHIP, provider: 'google', label: 'sam@example.com', secret: 'refresh-1' })
-    expect(vi.mocked(d.addSelection).mock.calls.map((c) => c[0])).toEqual([
-      { connectionId: 'conn-1', externalCalendarId: 'sam@example.com', name: 'sam@example.com' },
-      { connectionId: 'conn-1', externalCalendarId: 'kids@group.calendar.google.com', name: 'Kids' },
+    expect(attempts).toEqual([
+      {
+        attemptHash: await sha256Hex(token),
+        householdId: HOUSEHOLD,
+        membershipId: MEMBERSHIP,
+        provider: 'google',
+        secret: 'refresh-1',
+        accountLabel: 'sam@example.com',
+        fingerprint: await hmacSha256Hex(KEY, 'google:google-sub-1'),
+        calendars: [
+          { id: 'sam@example.com', name: 'sam@example.com' },
+          { id: 'kids@group.calendar.google.com', name: 'Kids' },
+        ],
+      },
     ])
+    expect(JSON.stringify(attempts)).not.toContain(token)
     expect(res.headers.get('Location')).not.toMatch(/refresh-1|access-1|auth-code/)
   })
 
-  it('labels the connection "Google Calendar" / "Outlook Calendar" without an email', async () => {
-    const { fetch } = googleFetch({ token: json(200, { access_token: 'a', refresh_token: 'r' }) })
-    const { d } = deps(attempt(), fetch)
-    await createOAuthCallbackHandler(d)(get('state=s&code=c'))
-    expect(d.createConnection).toHaveBeenCalledWith(expect.objectContaining({ label: 'Google Calendar' }))
-
+  it('fingerprints Microsoft accounts by oid, and leaves the label empty without an email', async () => {
     const msFetch = vi.fn(async (url: string) =>
-      url.includes('/oauth2/v2.0/token') ? json(200, { access_token: 'a', refresh_token: 'r' }) : json(200, { value: [{ id: 'cal-1', name: 'Calendar', isDefaultCalendar: true }] }),
+      url.includes('/oauth2/v2.0/token')
+        ? json(200, { access_token: 'a', refresh_token: 'r', id_token: idToken({ oid: 'object-1', sub: 'pairwise-1' }) })
+        : json(200, { value: [{ id: 'cal-1', name: 'Calendar', isDefaultCalendar: true }] }),
     )
-    const ms = deps(attempt({ provider: 'microsoft' }), msFetch)
-    expect(Object.fromEntries(location(await createOAuthCallbackHandler(ms.d)(get('state=s&code=c'))).searchParams)).toEqual({ calendar: 'connected' })
-    expect(ms.d.createConnection).toHaveBeenCalledWith(expect.objectContaining({ provider: 'microsoft', label: 'Outlook Calendar', secret: 'r' }))
+    const { d, attempts } = deps(attempt({ provider: 'microsoft' }), msFetch)
+    expect(location(await createOAuthCallbackHandler(d)(get('state=s&code=c'))).searchParams.get('calendar')).toBe('pending')
+    expect(attempts[0]).toMatchObject({ provider: 'microsoft', accountLabel: null, secret: 'r', fingerprint: await hmacSha256Hex(KEY, 'microsoft:object-1') })
   })
 
   it('refuses a missing, unknown or used state before any provider call', async () => {
@@ -120,17 +135,16 @@ describe('calendar-oauth-callback handler', () => {
       const { fetch } = googleFetch()
       const { d } = deps(null, fetch)
       const to = location(await createOAuthCallbackHandler(d)(get(query)))
-      expect(`${to.pathname}?${to.searchParams}`).toBe('/settings?calendar=error&reason=invalid_state')
+      expect(Object.fromEntries(to.searchParams)).toEqual({ calendar: 'error', reason: 'invalid_state' })
       expect(fetch).not.toHaveBeenCalled()
-      expect(d.createConnection).not.toHaveBeenCalled()
+      expect(d.createAttempt).not.toHaveBeenCalled()
     }
   })
 
   it('refuses an expired state', async () => {
     const { fetch } = googleFetch()
-    const { d } = deps(attempt({ expired: true, redirectTo: 'manage' }), fetch)
-    const to = location(await createOAuthCallbackHandler(d)(get('state=s&code=c')))
-    expect(`${to.pathname}?${to.searchParams}`).toBe('/manage?calendar=error&reason=expired')
+    const { d } = deps(attempt({ expired: true }), fetch)
+    expect(location(await createOAuthCallbackHandler(d)(get('state=s&code=c'))).searchParams.get('reason')).toBe('expired')
     expect(fetch).not.toHaveBeenCalled()
   })
 
@@ -145,51 +159,64 @@ describe('calendar-oauth-callback handler', () => {
     ;({ d } = deps(attempt()))
     to = location(await createOAuthCallbackHandler(d)(get('state=s')))
     expect(to.searchParams.get('reason')).toBe('provider_error')
-    expect(d.createConnection).not.toHaveBeenCalled()
+    expect(d.createAttempt).not.toHaveBeenCalled()
   })
 
   it('reports an exchange failure without logging the code or tokens', async () => {
     const log = vi.spyOn(console, 'error').mockImplementation(() => {})
     const { fetch } = googleFetch({ token: json(400, { error: 'invalid_grant', error_description: 'Bad code auth-code-zz' }) })
     const { d } = deps(attempt(), fetch)
-    const to = location(await createOAuthCallbackHandler(d)(get('state=s&code=auth-code-zz')))
-    expect(to.searchParams.get('reason')).toBe('exchange_failed')
-    expect(d.createConnection).not.toHaveBeenCalled()
+    expect(location(await createOAuthCallbackHandler(d)(get('state=s&code=auth-code-zz'))).searchParams.get('reason')).toBe('exchange_failed')
+    expect(d.createAttempt).not.toHaveBeenCalled()
     expect(JSON.stringify(log.mock.calls)).not.toContain('auth-code-zz')
     log.mockRestore()
   })
 
-  it('refuses a token response without a refresh token', async () => {
-    const { fetch } = googleFetch({ token: json(200, { access_token: 'a', expires_in: 3600 }) })
-    const { d } = deps(attempt(), fetch)
+  it('refuses a token response without a refresh token or without an account id', async () => {
+    let { d } = deps(attempt(), googleFetch({ token: json(200, { access_token: 'a', expires_in: 3600, id_token: idToken({ sub: 'x' }) }) }).fetch)
     expect(location(await createOAuthCallbackHandler(d)(get('state=s&code=c'))).searchParams.get('reason')).toBe('no_refresh_token')
-    expect(d.createConnection).not.toHaveBeenCalled()
+    ;({ d } = deps(attempt(), googleFetch({ token: json(200, { access_token: 'a', refresh_token: 'r' }) }).fetch))
+    expect(location(await createOAuthCallbackHandler(d)(get('state=s&code=c'))).searchParams.get('reason')).toBe('provider_error')
+    expect(d.createAttempt).not.toHaveBeenCalled()
   })
 
-  it('creates nothing when the calendars cannot be listed', async () => {
+  it('stores nothing when the calendars cannot be listed', async () => {
     const log = vi.spyOn(console, 'error').mockImplementation(() => {})
-    const { fetch } = googleFetch({ list: json(503, { error: { code: 503 } }) })
-    const { d } = deps(attempt(), fetch)
+    const { d } = deps(attempt(), googleFetch({ list: json(503, { error: { code: 503 } }) }).fetch)
     expect(location(await createOAuthCallbackHandler(d)(get('state=s&code=c'))).searchParams.get('reason')).toBe('list_failed')
-    expect(d.createConnection).not.toHaveBeenCalled()
+    expect(d.createAttempt).not.toHaveBeenCalled()
     log.mockRestore()
   })
 
-  it('reports forbidden when the member can no longer connect, and not_configured without a client', async () => {
+  it('reports forbidden, not_configured, and internal errors', async () => {
     let { d } = deps(attempt(), googleFetch().fetch, {
-      createConnection: vi.fn(async () => {
+      createAttempt: vi.fn(async () => {
         throw Object.assign(new Error('member not found'), { code: '42501' })
       }),
     })
     expect(location(await createOAuthCallbackHandler(d)(get('state=s&code=c'))).searchParams.get('reason')).toBe('forbidden')
     ;({ d } = deps(attempt(), googleFetch().fetch, { clients: { google: null, microsoft: null } }))
     expect(location(await createOAuthCallbackHandler(d)(get('state=s&code=c'))).searchParams.get('reason')).toBe('not_configured')
+    ;({ d } = deps(attempt(), googleFetch().fetch, { fingerprint: null }))
+    expect(location(await createOAuthCallbackHandler(d)(get('state=s&code=c'))).searchParams.get('reason')).toBe('not_configured')
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    ;({ d } = deps(attempt(), googleFetch().fetch, { createAttempt: vi.fn(async () => { throw new Error('db down') }) }))
+    expect(location(await createOAuthCallbackHandler(d)(get('state=s&code=c'))).searchParams.get('reason')).toBe('internal')
+    log.mockRestore()
+  })
+
+  it('fails closed with 503 when APP_URL is not configured, consuming nothing', async () => {
+    const { d } = deps(attempt(), googleFetch().fetch, { appUrl: null })
+    const res = await createOAuthCallbackHandler(d)(get('state=s&code=c'))
+    expect(res.status).toBe(503)
+    expect(await res.json()).toEqual({ error: 'not_configured' })
+    expect(d.consumeState).not.toHaveBeenCalled()
   })
 
   it('never uses a URL-like email as the label', async () => {
-    const { fetch } = googleFetch({ token: json(200, { access_token: 'a', refresh_token: 'r', id_token: idToken({ email: 'x@https://evil.test' }) }) })
-    const { d } = deps(attempt(), fetch)
+    const { fetch } = googleFetch({ token: json(200, { access_token: 'a', refresh_token: 'r', id_token: idToken({ sub: 's', email: 'x@https://evil.test' }) }) })
+    const { d, attempts } = deps(attempt(), fetch)
     await createOAuthCallbackHandler(d)(get('state=s&code=c'))
-    expect(d.createConnection).toHaveBeenCalledWith(expect.objectContaining({ label: 'Google Calendar' }))
+    expect(attempts[0]!.accountLabel).toBeNull()
   })
 })

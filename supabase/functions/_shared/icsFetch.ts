@@ -4,8 +4,9 @@
  *
  * - URLs: `https://` only (`webcal://` and `webcals://` are read as `https://`), no user info, the default port.
  * - Hosts: literal IPs and every address a name resolves to must be public (not loopback, private, CGNAT,
- *   link-local, multicast, reserved, or IPv6 equivalents including IPv4-mapped, NAT64 and 6to4 forms); single-label
- *   names and `localhost` are refused without resolving.
+ *   link-local, multicast, reserved, documentation, or IPv6 equivalents including IPv4-mapped and -translated, NAT64
+ *   and 6to4 forms); single-label names, `localhost` and names under `.localhost`, `.internal`, `.local`,
+ *   `.localdomain` and `.home.arpa` are refused without resolving.
  * - Fetching: a 10 s timeout for the whole exchange (redirects and body), at most 3 redirects with every hop checked
  *   the same way, and a 1 MB body cap enforced while streaming.
  *
@@ -60,6 +61,8 @@ export const ICS_MAX_BYTES = 1_000_000
 export const ICS_MAX_REDIRECTS = 3
 const URL_MAX = 2048
 const GONE_STATUSES = new Set([401, 403, 404, 410])
+/** Names that only ever resolve inside a private network; refused without asking DNS. */
+const LOCAL_SUFFIXES = ['.localhost', '.internal', '.local', '.localdomain', '.home.arpa']
 
 // ---- URLs ----
 
@@ -139,6 +142,7 @@ function ipv4IsPrivate([a, b, c]: number[]): boolean {
     (a === 169 && b === 254) || // link-local (cloud metadata)
     (a === 172 && b! >= 16 && b! <= 31) ||
     (a === 192 && b === 0 && (c === 0 || c === 2)) || // IETF assignments, TEST-NET-1
+    (a === 192 && b === 88 && c === 99) || // 6to4 relay anycast
     (a === 192 && b === 168) ||
     (a === 198 && (b === 18 || b === 19)) || // benchmarking
     (a === 198 && b === 51 && c === 100) || // TEST-NET-2
@@ -155,12 +159,15 @@ export function isPrivateAddress(address: string): boolean {
   if (!b) return true
   const zeroPrefix = (n: number) => b.slice(0, n).every((x) => x === 0)
   if (zeroPrefix(10) && b[10] === 0xff && b[11] === 0xff) return ipv4IsPrivate(b.slice(12)) // ::ffff:a.b.c.d
+  if (zeroPrefix(8) && b[8] === 0xff && b[9] === 0xff && b[10] === 0 && b[11] === 0) return ipv4IsPrivate(b.slice(12)) // ::ffff:0:a.b.c.d
   if (zeroPrefix(12)) return true // ::, ::1, IPv4-compatible
   if (b[0] === 0x00 && b[1] === 0x64 && b[2] === 0xff && b[3] === 0x9b) {
     return b.slice(4, 12).every((x) => x === 0) ? ipv4IsPrivate(b.slice(12)) : true // NAT64, local-use NAT64
   }
   if (b[0] === 0x20 && b[1] === 0x02) return ipv4IsPrivate(b.slice(2, 6)) // 6to4
   if (b[0] === 0x20 && b[1] === 0x01 && ((b[2] === 0x00 && b[3] === 0x00) || (b[2] === 0x0d && b[3] === 0xb8))) return true // Teredo, documentation
+  if (b[0] === 0x20 && b[1] === 0x01 && b[2] === 0x00 && b[3]! >= 0x10 && b[3]! <= 0x2f) return true // ORCHID 2001:10::/28, ORCHIDv2 2001:20::/28
+  if (b[0] === 0x3f && b[1] === 0xff && (b[2]! & 0xf0) === 0x00) return true // documentation 3fff::/20
   if (b[0] === 0x01 && b[1] === 0x00 && b.slice(2, 8).every((x) => x === 0)) return true // discard 100::/64
   if ((b[0]! & 0xfe) === 0xfc) return true // unique local fc00::/7
   if (b[0] === 0xfe && (b[1]! & 0xc0) === 0x80) return true // link-local fe80::/10
@@ -176,7 +183,7 @@ async function assertPublicHost(url: URL, options: IcsFetchOptions): Promise<voi
     if (isPrivateAddress(host)) throw new IcsFetchError('blocked_host', 'the address is not public')
     return
   }
-  if (!host.includes('.') || host === 'localhost' || host.endsWith('.localhost')) {
+  if (!host.includes('.') || host === 'localhost' || LOCAL_SUFFIXES.some((suffix) => host.endsWith(suffix))) {
     throw new IcsFetchError('blocked_host', 'the host is not a public name')
   }
   let addresses: string[]

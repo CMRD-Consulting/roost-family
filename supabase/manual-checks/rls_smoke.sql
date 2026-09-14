@@ -1918,8 +1918,8 @@ select set_config('request.jwt.claims', :'H', true);
 select pg_temp.expect('a former member sees no calendars', not exists (select 1 from public.calendar_connections)
   and not exists (select 1 from public.calendar_selections));
 reset role;
-select pg_temp.expect('column privileges: authenticated selects every connection column but vault_secret_id', (
-  select bool_and(has_column_privilege('authenticated', 'public.calendar_connections', a.attname, 'select') = (a.attname <> 'vault_secret_id'))
+select pg_temp.expect('column privileges: authenticated selects every connection column but vault_secret_id (and secret_fingerprint, migration 11)', (
+  select bool_and(has_column_privilege('authenticated', 'public.calendar_connections', a.attname, 'select') = (a.attname not in ('vault_secret_id', 'secret_fingerprint')))
   from pg_attribute a where a.attrelid = 'public.calendar_connections'::regclass and a.attnum > 0 and not a.attisdropped));
 
 \echo '[85] Calendars: clients cannot insert, update or delete directly'
@@ -1972,14 +1972,14 @@ select pg_temp.expect('anon and authenticated cannot execute any private calenda
     'set_calendar_status', 'set_calendar_selection_gone', 'require_calendar_assignee', 'hide_unassigned_calendar_selection',
     'delete_calendar_vault_secret', 'end_membership')
     and (has_function_privilege('authenticated', p.oid, 'execute') or has_function_privilege('anon', p.oid, 'execute'))));
-select pg_temp.expect('only service_role can execute the 11 svc_ wrappers (6 here, 2 OAuth state wrappers in migration 9, 3 export wrappers in migration 10)', (
+select pg_temp.expect('only service_role can execute the 16 svc_ wrappers (6 here, 2 OAuth state wrappers in migration 9, 3 export wrappers in migration 10, 5 calendar wrappers in migration 11)', (
   select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
   where n.nspname = 'public' and p.proname like 'svc\_%'
     and has_function_privilege('service_role', p.oid, 'execute')
     and not has_function_privilege('authenticated', p.oid, 'execute')
-    and not has_function_privilege('anon', p.oid, 'execute')) = 11
+    and not has_function_privilege('anon', p.oid, 'execute')) = 16
   and (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-       where n.nspname = 'public' and p.proname like 'svc\_%') = 11);
+       where n.nspname = 'public' and p.proname like 'svc\_%') = 16);
 select pg_temp.expect('anon cannot execute svc_calendar_secret',
   not has_function_privilege('anon', 'public.svc_calendar_secret(uuid)', 'execute'));
 select pg_temp.expect('PUBLIC cannot execute any calendar function', not exists (
@@ -2668,6 +2668,157 @@ reset role;
 select pg_temp.expect('a deleted household has no exports rows (the storage sweep erases the files)', not exists (
   select 1 from public.household_exports where household_id = :'household_x'));
 select pg_temp.expect('other households keep theirs', exists (select 1 from public.household_exports where household_id = :'household_v'));
+
+-- ─── Calendar OAuth attempts, fingerprints and rate limits (migration 11) ──
+\echo '[109] Calendar attempts and connect-attempt counters: no client access; new svc wrappers service role only; fingerprints server-only and unique'
+select pg_temp.expect('calendar_oauth_attempts and calendar_connect_attempts: RLS on, no policies, no privileges for anon, authenticated or service_role', (
+  select bool_and(relrowsecurity) from pg_class where oid in ('public.calendar_oauth_attempts'::regclass, 'public.calendar_connect_attempts'::regclass))
+  and not exists (select 1 from pg_policies where schemaname = 'public' and tablename in ('calendar_oauth_attempts', 'calendar_connect_attempts'))
+  and not exists (
+    select 1 from unnest(array['anon', 'authenticated', 'service_role']) as r (role_name),
+      unnest(array['public.calendar_oauth_attempts', 'public.calendar_connect_attempts']) as t (table_name)
+    where has_table_privilege(r.role_name, t.table_name, 'select, insert, update, delete, truncate, references, trigger')
+       or has_any_column_privilege(r.role_name, t.table_name, 'select')));
+select pg_temp.expect('the migration 11 svc_ wrappers are executable by service_role only; their private helpers by nobody', (
+  select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public' and p.proname in ('svc_create_calendar_connection_with_selections', 'svc_record_calendar_connect_attempt',
+      'svc_create_calendar_oauth_attempt', 'svc_peek_calendar_oauth_attempt', 'svc_finish_calendar_oauth_attempt')
+    and has_function_privilege('service_role', p.oid, 'execute')
+    and not has_function_privilege('authenticated', p.oid, 'execute')
+    and not has_function_privilege('anon', p.oid, 'execute')) = 5
+  and not exists (
+    select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'private' and p.proname in ('create_calendar_connection_with_selections', 'record_calendar_connect_attempt',
+        'create_calendar_oauth_attempt', 'peek_calendar_oauth_attempt', 'finish_calendar_oauth_attempt', 'normalize_calendar_list',
+        'delete_calendar_attempt_vault_secret')
+      and (has_function_privilege('anon', p.oid, 'execute') or has_function_privilege('authenticated', p.oid, 'execute')
+           or has_function_privilege('service_role', p.oid, 'execute'))));
+select pg_temp.expect('secret_fingerprint is not selectable by clients; unique per member and provider', (
+  not has_column_privilege('authenticated', 'public.calendar_connections', 'secret_fingerprint', 'select')
+  and not has_column_privilege('anon', 'public.calendar_connections', 'secret_fingerprint', 'select')
+  and exists (select 1 from pg_constraint where conrelid = 'public.calendar_connections'::regclass and contype = 'u'
+    and conname = 'calendar_connections_membership_provider_fingerprint_key')));
+set local role authenticated;
+select set_config('request.jwt.claims', :'F', true);
+select pg_temp.expect_error('member cannot select secret_fingerprint', $q$select secret_fingerprint from public.calendar_connections$q$, '42501');
+reset role;
+set local role service_role;
+select connection_id as conn_fp, already_connected as fp_again, selection_ids[1] as sel_fp
+from public.svc_create_calendar_connection_with_selections(:'household_f', :'membership_f', 'ics', 'Soccer club', 'https://calendar.test/soccer.ics',
+  null, repeat('e', 64), '[{"id": "ics", "name": "Soccer club"}]') \gset
+select pg_temp.expect('a new ICS connection is created with its selection, hidden and unassigned', not :'fp_again'::boolean
+  and (select count(*) from public.calendar_selections s where s.connection_id = :'conn_fp' and s.id = :'sel_fp' and not s.visible
+       and s.assigned_membership_id is null and s.assigned_child_id is null) = 1);
+select pg_temp.expect('the same link again returns the existing connection, unchanged', (
+  select connection_id = :'conn_fp'::uuid and already_connected and label = 'Soccer club' and selection_ids = array[:'sel_fp'::uuid]
+  from public.svc_create_calendar_connection_with_selections(:'household_f', :'membership_f', 'ics', 'Other name', 'https://calendar.test/soccer.ics',
+    null, repeat('e', 64), '[{"id": "ics", "name": "Other name"}]'))
+  and (select count(*) from public.calendar_connections where secret_fingerprint = repeat('e', 64)) = 1);
+select pg_temp.expect_error('connect with a URL in the label',
+  format('select * from public.svc_create_calendar_connection_with_selections(%L, %L, %L, %L, %L, null, %L, %L)',
+    :'household_f', :'membership_f', 'ics', 'https://calendar.test/x.ics', 'https://calendar.test/x.ics', repeat('f', 64), '[]'), '23514');
+select pg_temp.expect_error('connect for a caregiver',
+  format('select * from public.svc_create_calendar_connection_with_selections(%L, %L, %L, %L, %L, null, %L, %L)',
+    :'household_f', :'membership_g', 'ics', 'X', 'https://calendar.test/x.ics', repeat('f', 64), '[]'), '42501');
+select pg_temp.expect_error('connect with both a secret and a Vault secret id',
+  format('select * from public.svc_create_calendar_connection_with_selections(%L, %L, %L, %L, %L, %L, %L, %L)',
+    :'household_f', :'membership_f', 'ics', 'X', 'https://calendar.test/x.ics', gen_random_uuid(), repeat('f', 64), '[]'), '22023');
+select pg_temp.expect_error('connect with malformed calendars',
+  format('select * from public.svc_create_calendar_connection_with_selections(%L, %L, %L, %L, %L, null, %L, %L)',
+    :'household_f', :'membership_f', 'ics', 'X', 'https://calendar.test/x.ics', repeat('f', 64), '[{"name": "no id"}]'), '22023');
+reset role;
+
+\echo '[110] OAuth attempts: only the adult who started one can finish it; single use; expiry; the Vault secret moves to the connection'
+select count(*) as vault_before_attempts from vault.secrets \gset
+set local role service_role;
+select public.svc_create_calendar_oauth_attempt(repeat('1', 64), :'household_f', :'membership_f', 'google', 'refresh-attempt-1', 'frankie@example.com',
+  repeat('9', 64), '[{"id": "frankie@example.com", "name": "Frankie", "summary": "dropped"}, {"id": "kids", "name": "  "}]') as attempt_one \gset
+reset role;
+select vault_secret_id as attempt_secret from public.calendar_oauth_attempts where id = :'attempt_one' \gset
+select pg_temp.expect('an attempt stores only the hash, the id+name calendar list and a Vault secret', (
+  select calendars = '[{"id": "frankie@example.com", "name": "Frankie"}, {"id": "kids", "name": "Calendar"}]'::jsonb
+    and expires_at - created_at = interval '15 minutes'
+  from public.calendar_oauth_attempts where id = :'attempt_one')
+  and (select decrypted_secret = 'refresh-attempt-1' from vault.decrypted_secrets where id = :'attempt_secret'));
+set local role service_role;
+select pg_temp.expect('peek returns the household without consuming', public.svc_peek_calendar_oauth_attempt(repeat('1', 64)) = :'household_f'::uuid);
+select pg_temp.expect('another member (a caregiver of the household) finishing it is forbidden', (
+  select outcome = 'forbidden' and connection_id is null from public.svc_finish_calendar_oauth_attempt(repeat('1', 64), pg_temp.v('membership_g'))));
+select pg_temp.expect('another household''s member finishing it is forbidden', (
+  select outcome = 'forbidden' from public.svc_finish_calendar_oauth_attempt(repeat('1', 64), pg_temp.v('membership_b'))));
+reset role;
+select pg_temp.expect('a forbidden finish leaves the attempt in place', exists (select 1 from public.calendar_oauth_attempts where id = :'attempt_one'));
+set local role service_role;
+select connection_id as conn_oauth, calendar_count as oauth_calendars, label as oauth_label
+from public.svc_finish_calendar_oauth_attempt(repeat('1', 64), :'membership_f') where outcome = 'ok' \gset
+select pg_temp.expect('a replayed attempt is invalid', (
+  select outcome = 'invalid_attempt' from public.svc_finish_calendar_oauth_attempt(repeat('1', 64), pg_temp.v('membership_f'))));
+reset role;
+select pg_temp.expect('finishing creates the connection with all calendars and moves the attempt''s Vault secret to it', :'oauth_calendars'::int = 2
+  and :'oauth_label' = 'frankie@example.com'
+  and (select vault_secret_id = :'attempt_secret'::uuid and secret_fingerprint = repeat('9', 64) and status = 'ok'
+       from public.calendar_connections where id = :'conn_oauth')
+  and (select decrypted_secret = 'refresh-attempt-1' and name like 'roost_calendar_google_%' from vault.decrypted_secrets where id = :'attempt_secret')
+  and not exists (select 1 from public.calendar_oauth_attempts where id = :'attempt_one')
+  and (select count(*) from public.calendar_selections where connection_id = :'conn_oauth' and not visible) = 2);
+select vault_secret_id as oauth_secret from public.calendar_connections where id = :'conn_oauth' \gset
+update public.calendar_connections set status = 'auth_expired' where id = :'conn_oauth';
+set local role service_role;
+select public.svc_create_calendar_oauth_attempt(repeat('2', 64), :'household_f', :'membership_f', 'google', 'refresh-attempt-2', null,
+  repeat('9', 64), '[{"id": "frankie@example.com", "name": "Frankie"}, {"id": "new-cal", "name": "New"}]') as attempt_two \gset
+reset role;
+select vault_secret_id as attempt_two_secret from public.calendar_oauth_attempts where id = :'attempt_two' \gset
+set local role service_role;
+select pg_temp.expect('reconnecting the same account updates the existing connection', (
+  select outcome = 'ok' and connection_id = :'conn_oauth'::uuid and label = 'frankie@example.com' and calendar_count = 3
+  from public.svc_finish_calendar_oauth_attempt(repeat('2', 64), :'membership_f')));
+reset role;
+select pg_temp.expect('the new token replaced the old in place, status is ok again, and the attempt''s secret is gone', (
+  select decrypted_secret = 'refresh-attempt-2' from vault.decrypted_secrets where id = :'oauth_secret')
+  and (select status = 'ok' from public.calendar_connections where id = :'conn_oauth')
+  and (select count(*) from public.calendar_connections where secret_fingerprint = repeat('9', 64)) = 1
+  and not exists (select 1 from vault.secrets where id = :'attempt_two_secret'));
+insert into public.calendar_oauth_attempts (attempt_hash, household_id, membership_id, provider, vault_secret_id, secret_fingerprint, expires_at)
+values (repeat('3', 64), :'household_f', :'membership_f', 'google', private.store_calendar_secret('refresh-expired', 'roost_calendar_attempt_google'),
+  repeat('8', 64), now() - interval '1 minute')
+returning vault_secret_id as expired_secret \gset
+set local role service_role;
+select pg_temp.expect('an expired attempt is reported expired', (
+  select outcome = 'expired' from public.svc_finish_calendar_oauth_attempt(repeat('3', 64), pg_temp.v('membership_f'))));
+reset role;
+select pg_temp.expect('and deleted with its Vault secret, without creating a connection',
+  not exists (select 1 from public.calendar_oauth_attempts where attempt_hash = repeat('3', 64))
+  and not exists (select 1 from vault.secrets where id = :'expired_secret')
+  and not exists (select 1 from public.calendar_connections where secret_fingerprint = repeat('8', 64)));
+insert into public.calendar_oauth_attempts (attempt_hash, household_id, membership_id, provider, vault_secret_id, secret_fingerprint, expires_at)
+values (repeat('4', 64), :'household_f', :'membership_f', 'microsoft', private.store_calendar_secret('refresh-stale', 'roost_calendar_attempt_microsoft'),
+  repeat('7', 64), now() - interval '1 minute')
+returning vault_secret_id as stale_secret \gset
+select private.purge_deleted_households();
+select pg_temp.expect('the purge removes expired attempts and their Vault secrets',
+  not exists (select 1 from public.calendar_oauth_attempts where attempt_hash = repeat('4', 64))
+  and not exists (select 1 from vault.secrets where id = :'stale_secret'));
+select pg_temp.expect('no attempt secrets are left behind', (select count(*) from vault.secrets) = :vault_before_attempts + 1);
+
+\echo '[111] Rate limits and lock order: 5 open OAuth states per member, 10 ICS connect attempts per hour; set_calendar_selection locks memberships first'
+insert into public.calendar_oauth_states (state_hash, code_verifier, household_id, membership_id, provider, redirect_to)
+select encode(extensions.digest('limit-' || g::text, 'sha256'), 'hex'), :'VERIFIER', :'household_f', :'membership_f', 'google', 'manage'
+from generate_series(1, greatest(0, 5 - (select count(*) from public.calendar_oauth_states where membership_id = :'membership_f' and expires_at > now()))) as g;
+set local role service_role;
+select pg_temp.expect_error('a sixth open OAuth state',
+  format('select public.svc_create_calendar_oauth_state(%L, %L, %L, %L, %L, %L)', repeat('e', 64), :'VERIFIER', :'household_f', :'membership_f', 'google', 'manage'), 'PT429');
+select pg_temp.expect('10 connect attempts an hour are allowed, the 11th is refused', (
+  select array_agg(public.svc_record_calendar_connect_attempt(pg_temp.v('membership_g')) order by g) from generate_series(1, 11) as g)
+  = array[true, true, true, true, true, true, true, true, true, true, false]);
+reset role;
+select pg_temp.expect('a refused attempt is not recorded', (select count(*) from public.calendar_connect_attempts where membership_id = :'membership_g') = 10);
+update public.calendar_connect_attempts set created_at = now() - interval '61 minutes' where membership_id = :'membership_g';
+set local role service_role;
+select pg_temp.expect('attempts older than an hour no longer count', public.svc_record_calendar_connect_attempt(:'membership_g'));
+reset role;
+select pg_temp.expect('set_calendar_selection share-locks memberships before locking the selection row', (
+  select position('for share of m' in p.prosrc) between 1 and position('for update of s' in p.prosrc)
+  from pg_proc p where p.oid = 'public.set_calendar_selection(uuid, boolean, uuid, uuid)'::regprocedure));
 \o
 \echo 'ALL RLS SMOKE CHECKS PASSED'
 rollback;
