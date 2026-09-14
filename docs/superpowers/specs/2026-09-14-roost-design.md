@@ -1,7 +1,8 @@
 # Roost — Design Spec
 
 **Date:** 2026-09-14
-**Revision:** 2. Adds product, account, privacy and platform decisions from the grilling session. Replaces the single-household version; see [16. Changes from Revision 1](#16-changes-from-revision-1).
+**Revision:** 3. Revision 2 added the product, account, privacy and platform decisions; Revision 3 reconciles the spec with the Claude Design handoff (v2). See [16. Revision History](#16-revision-history).
+**Design source:** `docs/design/handoff/project/Roost Family App v2.dc.html`
 **Status:** Approved, ready for visual design (Claude Design) and implementation planning
 
 ## Table of Contents
@@ -31,7 +32,7 @@
 13. [Offline & Error States](#13-offline--error-states)
 14. [Testing](#14-testing)
 15. [Launch Gate — Before the First Outside Family](#15-launch-gate--before-the-first-outside-family)
-16. [Changes from Revision 1](#16-changes-from-revision-1)
+16. [Revision History](#16-revision-history)
 17. [Screen List for Claude Design](#17-screen-list-for-claude-design)
 
 ---
@@ -47,6 +48,8 @@ It starts as one family's app (household #1, the author's) but is built as a mul
 | Topic | Decision |
 |---|---|
 | **Name** | Public brand **Roost Family**; project and repo name **Roost**. A trademark clearance search happens before public launch |
+| **Brand** | Logo **1A "Gable"** (line-drawn birdhouse) with lowercase **"roost family"** wordmark; accent `#E2703A`; typeface **Outfit** (400/500/600/700) |
+| **Domain** | **roost.family** (to be registered) |
 | **Audience** | Families with kids about 0–6, with features that grow with the kids (age-based defaults, [7.2](#72-main-screen)) |
 | **Build order** | Household #1 first, built product-ready (accounts, household scoping) from the first commit. No billing or marketing site in v1 |
 | **Business model** | Free hosted service, closed source. Payment may be added later; the household record carries a `plan` field (always `free` for now) |
@@ -72,11 +75,22 @@ It starts as one family's app (household #1, the author's) but is built as a mul
 
 1. **Glanceable first.** The main screen must be readable in about 2 seconds from about 3 m (10 ft). Primary numbers (clock, wake window, last dose) are large; secondary information is visibly secondary.
 2. **One tap to log.** The most common actions (sleep, feeding, medicine, sticker, jot, grocery) start from the main screen, never from a menu. The adult is often holding a child.
-3. **Big targets, messy hands.** Minimum touch target 60×60 pt; primary log buttons at least 88 pt tall.
+3. **Big targets, messy hands.** Two tiers:
+   - **In-the-moment surfaces** (main screen, log sheets, PIN pad, Kids' Corner, Sitter Mode, Undo toast): minimum touch target **60×60 pt**; primary log buttons at least 88 pt tall.
+   - **Deliberate surfaces** (Settings, setup wizard, Join a household, Manage household): minimum **44×44 pt**.
 4. **Toddler-proof.** Nothing that changes data can happen from a single accidental tap ([7.3](#73-toddler-guard--pins)).
-5. **Never color alone.** Every person's color is always paired with their avatar or initial. Palette checked for color-blind safety and contrast in day and Night Mode. Main-screen text is at least 24 pt. Respects the OS "Reduce Motion" setting.
-6. **Calm, warm, high-contrast.** It lives in a home, not an office. Playfulness is reserved for Kids' Corner.
-7. **Lightweight.** Minimal animation outside Kids' Corner; the oldest supported hardware is a 2015–2017 iPad Pro.
+5. **Readable across the room.** Main-screen text is tiered:
+   - **Glanceable figures ≥ 24 pt:** clock, wake window / sleeping time, next dose, event titles, tonight's dinner.
+   - **Secondary text ≥ 18 pt:** date, weather details, feeding line, event times and locations, log button labels, Now/Next content.
+   - **Nothing on the main screen below 16 pt** (including badges, hints and section labels).
+6. **Never color alone; always legible.**
+   - Every person's color is always paired with their avatar or initial.
+   - **Person colors** come from a dedicated 10-color palette that shares no color with the log-button colors; past 10 people, colors repeat.
+   - All text meets **WCAG AA contrast** (4.5:1 normal, 3:1 for text ≥ 24 pt, or ≥ 18.5 pt bold). Bright accent colors are used for icons and fills; text on or in them uses the deep variants (e.g., `#B8542A`, `#2F6B57`). The faint neutral (`#B3A092`) is never used for text.
+   - Palette checked for color-blind safety in day and Night Mode.
+   - Respects the OS "Reduce Motion" setting.
+7. **Calm, warm, high-contrast.** It lives in a home, not an office. Playfulness is reserved for Kids' Corner.
+8. **Lightweight.** Minimal animation outside Kids' Corner; the oldest supported hardware is a 2015–2017 iPad Pro.
 
 ## 5. Platform & Architecture
 
@@ -193,7 +207,7 @@ It starts as one family's app (household #1, the author's) but is built as a mul
 
 Every entry records:
 - `deviceId`: which display it was logged on.
-- `loggedBy`: the adult chosen in the log sheet's **"Who?"** row (avatars of the household's adults). Optional for every log type except **Medicine**, where it's required. Left empty, the entry shows as "Kitchen" (the display name).
+- `loggedBy`: the adult chosen in the log sheet's **"Who?"** row (avatars of the household's adults). The row appears only on **kid logs** (Sleep, Feeding, Medicine, Sticker, Diaper). It's optional except on **Medicine**, where it's required. Left empty, the entry shows as "Kitchen" (the display name). Jots and grocery items are attributed to the display only.
 - In Sitter Mode, `loggedBy` is replaced by the sitter's name automatically.
 - Settings changes are attributed to the adult whose PIN unlocked Settings.
 
@@ -204,7 +218,7 @@ Every entry records:
 Runs on the tablet the first time Roost Family opens. Each step is one screen with large touch targets.
 
 1. **Welcome:** "Set up a household" or "Join a household" (the latter goes to [6.4](#64-adding-adults-and-displays)).
-2. **Invite code** (while invite-only is active).
+2. **Invite code** (while invite-only is active), entered in 6 character boxes.
 3. **Sign in:** Apple, Google or email code.
 4. **Consent:** terms, privacy policy, and explicit consent to store children's health information (medicine, sleep, feeding logs). Consent is recorded with its version and time.
 5. **Household:** name, ZIP code (weather location), time zone (pre-filled from the ZIP code).
@@ -251,6 +265,7 @@ Defaults are re-evaluated daily, so a feature turns on the day a child reaches i
 | Undo the last log | Tap "Undo" on the toast shown for 10 s after any save |
 | Edit or delete a past entry (non-medicine) | Long-press the entry, then confirm |
 | Void a medicine entry | Adult PIN + reason ("logged by mistake"); voided doses stay visible in history, struck through |
+| Acknowledge a dose-conflict alert | Adult PIN |
 | Open Settings; start or exit Sitter Mode | **Adult PIN** (any adult's own 4-digit PIN) |
 | Exit Kids' Corner | Long-press 2 s in a corner, then adult PIN |
 | Sensitive actions ([6.3](#63-adult-sessions-on-a-display)) | Full sign-in |
@@ -264,11 +279,11 @@ Defaults are re-evaluated daily, so a feature turns on the day a child reaches i
 All log sheets are modal overlays with:
 - a large **child picker** (avatars + colors; only children for whom that log is enabled),
 - a **time** field that defaults to now and adjusts in 5-minute steps,
-- a **"Who?"** row of adult avatars ([6.5](#65-attribution)).
+- a **"Who?"** row of adult avatars on kid logs only ([6.5](#65-attribution)).
 
 **Sleep**
 - One button toggles "Start sleep" → "End sleep" per child.
-- A sleep starting between **6:00 PM and 5:00 AM** (household time; boundaries set in Settings) is *Night*, otherwise *Nap*. The type can be changed in the sheet.
+- A sleep starting inside **that child's night-sleep window** is *Night*, otherwise *Nap*. Each child's window defaults to the household default (**6:00 PM–5:00 AM**, household time) and can be changed per child in Settings → Children. The type can be changed in the sheet.
 - **Wake window** = time since the most recent sleep ended. With no sleep ended today, the card shows "Log wake-up".
 
 **Feeding**
@@ -276,7 +291,7 @@ All log sheets are modal overlays with:
 - Optional amount (oz for milk; "a little / some / all" for meals) and note.
 
 **Medicine**
-- Pick from the household's medicine list (Settings). Each medicine has:
+- Pick from **the selected child's medicine list** (Settings → Medicines, defined per child, so "Infant ibuprofen" for one child and "Children's ibuprofen" for another never share limits). Each medicine has:
   - **Minimum hours between doses** (required)
   - **Maximum doses in 24 hours** (optional)
   - Both entered by the parent from the label or doctor. **No built-in medicines, presets or suggested values.**
@@ -285,7 +300,7 @@ All log sheets are modal overlays with:
 - **Warnings** (confirmation required to save, never blocked):
   - Early: "Last dose was 3h 20m ago by Sam. Minimum is 6h."
   - Over daily max: "This would be dose 5 in 24 hours. Maximum is 4."
-- **Offline:** "Can't check whether another adult gave a dose. Log anyway?" Confirming queues the dose, marked as logged offline. If it syncs and triggers an early or over-max warning, every display shows an alert until an adult acknowledges it.
+- **Offline:** "Can't check whether another adult gave a dose. Log anyway?" Confirming queues the dose, marked as logged offline. If it syncs and triggers an early or over-max warning, every display shows an alert until an adult acknowledges it with their PIN.
 - The app gives no dosing guidance and has no dose calculator.
 
 **Sticker**
@@ -296,7 +311,8 @@ All log sheets are modal overlays with:
 - A single text field. Saves to the Inbox (Settings → Inbox: check off or delete).
 
 **Grocery**
-- A single text field; adds to the grocery list. The sheet shows the current list (tap to check off) and a **Take list** button ([7.8](#78-take-list-grocery-qr)).
+- A single text field; adds to the grocery list. The sheet shows the current list (tap to check off, ✕ to delete) and a **Take list** button ([7.8](#78-take-list-grocery-qr)).
+- Checked items clear automatically 24 hours after being checked.
 
 **Diaper** (only when enabled)
 - Wet / Dirty / Both.
@@ -362,7 +378,8 @@ For times a sitter is in charge.
 
 **Nap Mode**
 - Toggled with the moon button.
-- Dims the screen and silences all sounds.
+- Dims the screen and silences all sounds. **The main screen stays fully usable under the dimming** (logging "End sleep" is the most common action during a nap). Taps do not end Nap Mode; only the moon button or the automatic rules below do.
+- Sticker celebrations still show during Nap Mode, silently.
 - Ends automatically when every sleep entry that was open when Nap Mode started has ended, or after 3 hours, whichever comes first. If no sleep entry was open, it ends only by tapping the moon again or after 3 hours.
 
 ### 7.8 Take List (Grocery QR)
@@ -372,7 +389,7 @@ Carries the grocery list out of the kitchen without a phone app.
 1. Grocery sheet → **Take list**.
 2. The display shows a QR code for a private link (random token of at least 128 bits) valid for **24 hours**.
 3. Scanning it opens a **simple phone checklist page**: the list's items, tap to check off. Check-offs sync back to the displays in real time.
-4. The link stops working after 24 hours, when **Done shopping** is tapped (on the phone page or the display), or when a new Take list link is created (only one active link per household).
+4. The link stops working after 24 hours, when **Done shopping** is tapped (on the phone page, or **"Done shopping — end link"** on the display's QR screen), or when a new Take list link is created (only one active link per household).
 
 The page shows **groceries only**. It never includes children's names, health data or any other household information, and it can't add or delete items.
 
@@ -380,12 +397,12 @@ The page shows **groceries only**. It never includes children's names, health da
 
 Opened with an adult PIN. Sections marked 🔐 require a full sign-in ([6.3](#63-adult-sessions-on-a-display)).
 
-- **Children:** name, birthday, color, photo, allergies, food rules, per-feature overrides of age-based defaults
+- **Children:** name, birthday, color, photo, allergies, food rules, night-sleep window (defaults to household), per-feature overrides of age-based defaults
 - **Routines:** per child; create and edit routines and steps (icon library or photo); default routine per weekday; switch today's routine
-- **Medicines:** name, minimum hours between doses, optional max doses in 24 hours
+- **Medicines:** per child; name, minimum hours between doses, optional max doses in 24 hours
 - **Stickers:** categories
 - **Sitter info:** nap and bedtime instructions, emergency contacts, pediatrician, address, "where things are" notes
-- **Household:** name, ZIP code / time zone, leave-by buffer, night-sleep boundaries, Night Mode schedule, Diaper log on/off, tonight's dinner
+- **Household:** name, ZIP code / time zone, leave-by buffer, default night-sleep window, Night Mode schedule, Diaper log on/off, tonight's dinner
 - **Photos:** slideshow photos (up to 200)
 - **Logs:** history per child and type; edit or delete entries; void doses
 - **Inbox:** jots (check off or delete)
@@ -398,7 +415,7 @@ Opened with an adult PIN. Sections marked 🔐 require a full sign-in ([6.3](#63
 
 ### 7.10 Manage Household (any browser)
 
-- Roost Family's web address, opened in any browser (laptop, borrowed phone), offers **Manage household** after a full sign-in.
+- **roost.family/manage**, opened in any browser (laptop, borrowed phone), offers **Manage household** after a full sign-in.
 - Uses the tablet layout; it isn't designed for phones, but works on them.
 - **Owners:** Displays (revoke), Members (remove), Export, Delete household.
 - **Adults:** My account (disconnect calendars, leave household).
@@ -456,7 +473,7 @@ Native iOS/Android apps · open source or self-hosting · voice control · budge
 
 ### 11.4 Medicine Safety Rules (summary)
 
-- Timing and counting only; parents enter all intervals and maximums.
+- Timing and counting only; parents enter all intervals and maximums, per child.
 - Dose logging requires choosing who gave it.
 - Early and over-max warnings require confirmation.
 - Offline dose logging requires confirmation and raises an alert on sync if it conflicts.
@@ -464,7 +481,7 @@ Native iOS/Android apps · open source or self-hosting · voice control · budge
 
 ## 12. Data Model
 
-All household-owned tables carry `householdId`; row-level security limits every read and write to members and displays of that household.
+All household-owned tables are scoped to a household, directly through `householdId` or through `childId` → ChildHousehold; row-level security limits every read and write to members and displays of that household.
 
 | Entity | Key fields |
 |---|---|
@@ -474,15 +491,15 @@ All household-owned tables carry `householdId`; row-level security limits every 
 | **Membership** | id, userId, householdId, role (owner/adult/caregiver), color, pinHash, joinedAt, leftAt |
 | **ConsentRecord** | id, userId, policyVersion, healthDataConsent, acceptedAt |
 | **Display** | id, householdId, name, credentialHash, lastSeenAt, revokedAt |
-| **Child** | id, name, birthday, color, photoId, allergies, foodRules |
+| **Child** | id, name, birthday, color, photoId, allergies, foodRules, nightSleepStart, nightSleepEnd (both nullable → household default) |
 | **ChildHousehold** | childId, householdId |
 | **FeatureOverride** | childId, feature, enabled |
 | **CalendarConnection** | id, membershipId, provider (google/microsoft/ics), vaultSecretId, status |
 | **CalendarSelection** | id, connectionId, externalCalendarId, assignedMembershipId or assignedChildId, visible |
 | **SleepEntry** | id, childId, start, end (nullable), type (nap/night), attribution* |
 | **FeedingEntry** | id, childId, time, type (milk/meal/snack), amount, note, attribution* |
-| **Medicine** | id, householdId, name, minIntervalHours, maxDosesPer24h (nullable) |
-| **DoseEntry** | id, childId, medicineId, time, note, loggedOffline, warningsConfirmed[], voidedAt, voidedBy, voidReason, attribution* |
+| **Medicine** | id, childId, name, minIntervalHours, maxDosesPer24h (nullable) |
+| **DoseEntry** | id, childId, medicineId, time, note, loggedOffline, warningsConfirmed[], conflictAcknowledgedAt, conflictAcknowledgedBy, voidedAt, voidedBy, voidReason, attribution* |
 | **StickerCategory** | id, householdId, name, iconKey |
 | **StickerEntry** | id, childId, categoryId, time, attribution* |
 | **DiaperEntry** | id, childId, time, kind (wet/dirty/both), attribution* |
@@ -492,7 +509,7 @@ All household-owned tables carry `householdId`; row-level security limits every 
 | **GroceryItem** | id, householdId, text, createdAt, checkedAt, attribution* |
 | **TakeListLink** | id, householdId, tokenHash, expiresAt, revokedAt |
 | **SitterSession** | id, householdId, displayId, sitterName, start, end, summaryShownAt |
-| **HouseholdSettings** | householdId, leaveByBufferMin, nightSleepStart/End, nightModeStart/End, diaperLogEnabled, dinnerTonight, sitterInfo |
+| **HouseholdSettings** | householdId, leaveByBufferMin, defaultNightSleepStart/End, nightModeStart/End, diaperLogEnabled, dinnerTonight, sitterInfo |
 | **Photo** | id, householdId, storagePath, kind (avatar/step/slideshow), addedAt |
 | **SettingsAudit** | id, householdId, membershipId, change, at |
 
@@ -503,7 +520,7 @@ All household-owned tables carry `householdId`; row-level security limits every 
 | Situation | Behavior |
 |---|---|
 | **Network lost** | Keep working from local data. Sleep, feeding, sticker, diaper, jot and grocery entries queue locally (IndexedDB) and sync when back online. Small "Offline" badge in the header |
-| **Medicine while offline** | "Can't check whether another adult gave a dose. Log anyway?" Confirmed doses queue with `loggedOffline`; conflicts found on sync raise an alert on all displays until acknowledged |
+| **Medicine while offline** | "Can't check whether another adult gave a dose. Log anyway?" Confirmed doses queue with `loggedOffline`; conflicts found on sync raise an alert on all displays until an adult acknowledges it with their PIN |
 | **Realtime disconnected** | Reconnect on the 30-min version check or on the next touch; show "Updated 2 min ago" only when data is more than 5 min old |
 | **Calendar not refreshed in >30 min** | "Calendar updated 45 min ago" under the Today zone |
 | **Calendar auth expired** | That adult's events are hidden; Today zone shows "Sam's calendar needs reconnecting" |
@@ -550,7 +567,26 @@ All household-owned tables carry `householdId`; row-level security limits every 
 6. Trademark clearance search for "Roost Family"
 7. Invite codes enabled; per-household limits enforced
 
-## 16. Changes from Revision 1
+## 16. Revision History
+
+### Revision 3: reconciled with Claude Design v2
+
+| Revision 2 | Revision 3 |
+|---|---|
+| One household medicine list | Medicines defined **per child** |
+| One household night-sleep boundary | **Per-child** night-sleep window, defaulting to a household window |
+| Brand and domain unspecified | Logo 1A "Gable", accent `#E2703A`, Outfit typeface; domain **roost.family** |
+| All main-screen text ≥ 24 pt | Tiered: glanceable ≥ 24 pt, secondary ≥ 18 pt, nothing < 16 pt |
+| All touch targets ≥ 60 pt | Tiered: 60 pt on in-the-moment surfaces, 44 pt on Settings, wizard, Join, Manage household |
+| Person colors unspecified | Dedicated 10-color person palette, separate from log-button colors |
+| "High-contrast" | WCAG AA contrast; deep accent variants for text |
+| "Who?" row on every log | Kid logs only; jots and groceries attributed to the display |
+| Nap Mode behavior under taps unspecified | Dim but fully usable; only the moon or automatic rules end it; sticker celebrations shown silently |
+| — | Added from the design: grocery ✕ delete and 24-hour auto-clear of checked items, "Done shopping — end link" on the display, PIN to acknowledge a dose-conflict alert, 6-box invite code |
+
+**Design gaps:** screens and states the v2 design doesn't show (email-code entry, Diaper sheet body, empty/error/stale states, Add-adult flow, Manage household Members and My account panes, per-child routines and age overrides in Settings, voided doses, Night Mode tap-to-peek) are built from this spec using the v2 design system. Claude Design is asked only for final routine icon artwork (`docs/design/2026-09-14-claude-design-update-2.md`).
+
+### Revision 2: multi-household product
 
 | Revision 1 | Revision 2 |
 |---|---|
@@ -587,4 +623,6 @@ All household-owned tables carry `householdId`; row-level security limits every 
 **Any browser**
 12. **Manage household:** sign-in, displays, members, my account
 
-**Design rules to apply everywhere:** avatar always paired with color · main-screen text ≥ 24 pt · touch targets ≥ 60 pt · Reduce Motion variants for celebrations · color-blind-safe palette in day and Night Mode
+**Design rules to apply everywhere:** avatar always paired with color · tiered text sizes and touch targets ([4](#4-design-principles)) · WCAG AA contrast · separate person palette · Reduce Motion variants for celebrations · color-blind-safe palette in day and Night Mode
+
+**Status:** Screens 1–12 are designed in `docs/design/handoff/project/Roost Family App v2.dc.html`, with the gaps listed in [16](#16-revision-history). Final illustrated routine icons are pending from Claude Design.
