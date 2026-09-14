@@ -75,12 +75,16 @@ function doseRow(entry: DoseEntry, householdId: string, attribution: Attribution
   }
 }
 
+// Jots and groceries carry their own timestamps, so an undo that re-adds one keeps its place and checked state.
 function jotRow(jot: Jot, householdId: string, displayId: string | null) {
-  return { id: jot.id, household_id: householdId, text: jot.text, display_id: displayId }
+  return { id: jot.id, household_id: householdId, text: jot.text, display_id: displayId, created_at: jot.createdAt, done_at: jot.doneAt }
 }
 
 function groceryRow(item: GroceryItem, householdId: string, displayId: string | null) {
-  return { id: item.id, household_id: householdId, text: item.text, display_id: displayId }
+  return {
+    id: item.id, household_id: householdId, text: item.text, display_id: displayId,
+    created_at: item.createdAt, checked_at: item.checkedAt,
+  }
 }
 
 type OpResult = { error: { message: string; code?: string } | null; data?: unknown; status?: number }

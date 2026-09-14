@@ -246,7 +246,10 @@ describe('createSupabaseLogWriter', () => {
         {
           table: 'jots',
           op: 'upsert',
-          payload: { id: 'jot-1', household_id: householdId, text: 'Remember this', display_id: 'demo-display' },
+          payload: {
+            id: 'jot-1', household_id: householdId, text: 'Remember this', display_id: 'demo-display',
+            created_at: '2026-09-14T19:00:00Z', done_at: null,
+          },
           options: { onConflict: 'id', ignoreDuplicates: true },
         },
       ])
@@ -262,10 +265,31 @@ describe('createSupabaseLogWriter', () => {
         {
           table: 'grocery_items',
           op: 'upsert',
-          payload: { id: 'grocery-1', household_id: householdId, text: 'Milk', display_id: 'demo-display' },
+          payload: {
+            id: 'grocery-1', household_id: householdId, text: 'Milk', display_id: 'demo-display',
+            created_at: '2026-09-14T19:00:00Z', checked_at: null,
+          },
           options: { onConflict: 'id', ignoreDuplicates: true },
         },
       ])
+    })
+  })
+
+  describe('restores keep the original timestamps', () => {
+    it('grocery.add restoring a deleted checked item sends its created_at and checked_at', async () => {
+      const { client, calls } = createFakeClient()
+      const item = { id: 'grocery-1', text: 'Milk', createdAt: '2026-09-10T08:00:00Z', checkedAt: '2026-09-11T09:30:00Z' }
+      await createSupabaseLogWriter(client).execute({ kind: 'grocery.add', householdId, item, displayId: null })
+
+      expect(calls[0]?.payload).toMatchObject({ created_at: '2026-09-10T08:00:00Z', checked_at: '2026-09-11T09:30:00Z' })
+    })
+
+    it('jot.add sends its created_at and done_at', async () => {
+      const { client, calls } = createFakeClient()
+      const jot = { id: 'jot-1', text: 'x', createdAt: '2026-09-10T08:00:00Z', doneAt: '2026-09-12T08:00:00Z' }
+      await createSupabaseLogWriter(client).execute({ kind: 'jot.add', householdId, jot, displayId: null })
+
+      expect(calls[0]?.payload).toMatchObject({ created_at: '2026-09-10T08:00:00Z', done_at: '2026-09-12T08:00:00Z' })
     })
   })
 
