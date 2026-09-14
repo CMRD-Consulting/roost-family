@@ -40,7 +40,14 @@ describe('currentStepIndex', () => {
     expect(currentStepIndex(homeDay, [0], at('12:45'))).toBe(3)
   })
   it('does not jump back to a completed timed step', () => {
-    expect(currentStepIndex(homeDay, [0, 3], at('12:45'))).toBe(1)
+    // Anchor is 'Nap' (index 3, due by 12:45); the first unfinished step at or
+    // after it is 'Bath' (index 4) — earlier skipped steps are not revisited.
+    expect(currentStepIndex(homeDay, [0, 3], at('12:45'))).toBe(4)
+  })
+  it('anchors on the last timed step whose time has passed, done or not', () => {
+    // 'Bath' (index 4, 18:30) is the anchor at 19:00; nothing is done, so it's current.
+    expect(currentStepIndex(homeDay, [], at('19:00'))).toBe(4)
+    expect(nextStepIndex(homeDay, [], 4)).toBeNull()
   })
   it('returns null when every step is done', () => {
     expect(currentStepIndex(homeDay, [0, 1, 2, 3, 4], at('20:00'))).toBeNull()

@@ -17,14 +17,19 @@ export function routineForDay(
 
 export function currentStepIndex(routine: Routine, completed: number[], nowMinutes: number): number | null {
   const done = new Set(completed)
-  const firstOpen = routine.steps.findIndex((_, i) => !done.has(i))
-  if (firstOpen === -1) return null
 
-  let latestDue = -1
+  // Anchor = the latest step (completed or not) whose time has passed; -1 if none.
+  let anchor = -1
   routine.steps.forEach((s, i) => {
-    if (s.time !== null && !done.has(i) && parseHourMinute(s.time) <= nowMinutes) latestDue = i
+    if (s.time !== null && parseHourMinute(s.time) <= nowMinutes) anchor = i
   })
-  return Math.max(firstOpen, latestDue)
+
+  // Current = the first unfinished step at or after the anchor. Earlier unfinished
+  // steps are skipped, not revisited.
+  for (let i = Math.max(anchor, 0); i < routine.steps.length; i++) {
+    if (!done.has(i)) return i
+  }
+  return null
 }
 
 export function nextStepIndex(routine: Routine, completed: number[], current: number): number | null {
