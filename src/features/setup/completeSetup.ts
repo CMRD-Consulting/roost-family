@@ -53,8 +53,10 @@ export async function completeSetup(
       p_name: progress.householdName.trim(),
       p_time_zone: progress.timeZone,
       p_zip: progress.zip,
-      p_lat: progress.lat,
-      p_lon: progress.lon,
+      // The SQL function accepts null (location is optional); the CLI types every
+      // argument without a default as non-nullable.
+      p_lat: progress.lat as number,
+      p_lon: progress.lon as number,
       p_invite_code: progress.inviteCode.trim().toUpperCase(),
       p_display_name: progress.displayName.trim(),
       p_color: progress.color,

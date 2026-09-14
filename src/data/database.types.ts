@@ -1,4 +1,3 @@
-// Hand-written from supabase/migrations (Docker unavailable); regenerate with pnpm db:types when Supabase runs locally.
 export type Json =
   | string
   | number
@@ -8,6 +7,31 @@ export type Json =
   | Json[]
 
 export type Database = {
+  graphql_public: {
+    Tables: {
+      [_ in never]: never
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      graphql: {
+        Args: {
+          extensions?: Json
+          operationName?: string
+          query?: string
+          variables?: Json
+        }
+        Returns: Json
+      }
+    }
+    Enums: {
+      [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
+    }
+  }
   public: {
     Tables: {
       app_config: {
@@ -57,108 +81,108 @@ export type Database = {
       }
       children: {
         Row: {
+          allergies: string
+          birthday: string
+          color: string
+          created_at: string
+          food_rules: string
           id: string
           name: string
-          birthday: string
-          color: string
-          photo_id: string | null
-          allergies: string
-          food_rules: string
-          night_sleep_start: string | null
           night_sleep_end: string | null
+          night_sleep_start: string | null
+          photo_id: string | null
           sort_order: number
-          created_at: string
         }
         Insert: {
-          id?: string
-          name: string
+          allergies?: string
           birthday: string
           color: string
-          photo_id?: string | null
-          allergies?: string
-          food_rules?: string
-          night_sleep_start?: string | null
-          night_sleep_end?: string | null
-          sort_order?: number
           created_at?: string
+          food_rules?: string
+          id?: string
+          name: string
+          night_sleep_end?: string | null
+          night_sleep_start?: string | null
+          photo_id?: string | null
+          sort_order?: number
         }
         Update: {
-          id?: string
-          name?: string
+          allergies?: string
           birthday?: string
           color?: string
-          photo_id?: string | null
-          allergies?: string
-          food_rules?: string
-          night_sleep_start?: string | null
-          night_sleep_end?: string | null
-          sort_order?: number
           created_at?: string
+          food_rules?: string
+          id?: string
+          name?: string
+          night_sleep_end?: string | null
+          night_sleep_start?: string | null
+          photo_id?: string | null
+          sort_order?: number
         }
         Relationships: []
       }
       consent_records: {
         Row: {
-          id: string
-          user_id: string
-          policy_version: string
-          health_data_consent: boolean
           accepted_at: string
+          health_data_consent: boolean
+          id: string
+          policy_version: string
+          user_id: string
         }
         Insert: {
-          id?: string
-          user_id: string
-          policy_version: string
-          health_data_consent: boolean
           accepted_at?: string
+          health_data_consent: boolean
+          id?: string
+          policy_version: string
+          user_id: string
         }
         Update: {
-          id?: string
-          user_id?: string
-          policy_version?: string
-          health_data_consent?: boolean
           accepted_at?: string
+          health_data_consent?: boolean
+          id?: string
+          policy_version?: string
+          user_id?: string
         }
         Relationships: []
       }
       diaper_entries: {
         Row: {
-          id: string
-          household_id: string
-          child_id: string
           at: string
-          kind: string
-          display_id: string | null
-          logged_by_membership_id: string | null
-          sitter_session_id: string | null
-          logged_by_name: string | null
+          child_id: string
           created_at: string
+          display_id: string | null
+          household_id: string
+          id: string
+          kind: string
+          logged_by_membership_id: string | null
+          logged_by_name: string | null
+          sitter_session_id: string | null
           updated_at: string
         }
         Insert: {
-          id?: string
-          household_id: string
-          child_id: string
           at: string
-          kind: string
-          display_id?: string | null
-          logged_by_membership_id?: string | null
-          sitter_session_id?: string | null
-          logged_by_name?: string | null
+          child_id: string
           created_at?: string
+          display_id?: string | null
+          household_id: string
+          id?: string
+          kind: string
+          logged_by_membership_id?: string | null
+          logged_by_name?: string | null
+          sitter_session_id?: string | null
           updated_at?: string
         }
         Update: {
-          id?: string
-          household_id?: string
-          child_id?: string
           at?: string
-          kind?: string
-          display_id?: string | null
-          logged_by_membership_id?: string | null
-          sitter_session_id?: string | null
-          logged_by_name?: string | null
+          child_id?: string
           created_at?: string
+          display_id?: string | null
+          household_id?: string
+          id?: string
+          kind?: string
+          logged_by_membership_id?: string | null
+          logged_by_name?: string | null
+          sitter_session_id?: string | null
           updated_at?: string
         }
         Relationships: [
@@ -202,18 +226,18 @@ export type Database = {
       display_claims: {
         Row: {
           display_id: string
-          token_hash: string
           expires_at: string
+          token_hash: string
         }
         Insert: {
           display_id: string
-          token_hash: string
           expires_at: string
+          token_hash: string
         }
         Update: {
           display_id?: string
-          token_hash?: string
           expires_at?: string
+          token_hash?: string
         }
         Relationships: [
           {
@@ -227,31 +251,31 @@ export type Database = {
       }
       displays: {
         Row: {
-          id: string
-          household_id: string
-          name: string
           auth_user_id: string | null
-          last_seen_at: string | null
-          revoked_at: string | null
           created_at: string
+          household_id: string
+          id: string
+          last_seen_at: string | null
+          name: string
+          revoked_at: string | null
         }
         Insert: {
-          id?: string
-          household_id: string
-          name: string
           auth_user_id?: string | null
-          last_seen_at?: string | null
-          revoked_at?: string | null
           created_at?: string
+          household_id: string
+          id?: string
+          last_seen_at?: string | null
+          name: string
+          revoked_at?: string | null
         }
         Update: {
-          id?: string
-          household_id?: string
-          name?: string
           auth_user_id?: string | null
-          last_seen_at?: string | null
-          revoked_at?: string | null
           created_at?: string
+          household_id?: string
+          id?: string
+          last_seen_at?: string | null
+          name?: string
+          revoked_at?: string | null
         }
         Relationships: [
           {
@@ -265,67 +289,67 @@ export type Database = {
       }
       dose_entries: {
         Row: {
-          id: string
-          household_id: string
-          child_id: string
-          medicine_id: string
           at: string
-          note: string | null
-          logged_offline: boolean
-          warnings_confirmed: string[]
+          child_id: string
           conflict_acknowledged_at: string | null
           conflict_acknowledged_by: string | null
+          created_at: string
+          display_id: string | null
+          household_id: string
+          id: string
+          logged_by_membership_id: string | null
+          logged_by_name: string | null
+          logged_offline: boolean
+          medicine_id: string
+          note: string | null
+          sitter_session_id: string | null
+          updated_at: string
+          void_reason: string | null
           voided_at: string | null
           voided_by: string | null
-          void_reason: string | null
-          display_id: string | null
-          logged_by_membership_id: string | null
-          sitter_session_id: string | null
-          logged_by_name: string | null
-          created_at: string
-          updated_at: string
+          warnings_confirmed: string[]
         }
         Insert: {
-          id?: string
-          household_id: string
-          child_id: string
-          medicine_id: string
           at: string
-          note?: string | null
-          logged_offline?: boolean
-          warnings_confirmed?: string[]
+          child_id: string
           conflict_acknowledged_at?: string | null
           conflict_acknowledged_by?: string | null
+          created_at?: string
+          display_id?: string | null
+          household_id: string
+          id?: string
+          logged_by_membership_id?: string | null
+          logged_by_name?: string | null
+          logged_offline?: boolean
+          medicine_id: string
+          note?: string | null
+          sitter_session_id?: string | null
+          updated_at?: string
+          void_reason?: string | null
           voided_at?: string | null
           voided_by?: string | null
-          void_reason?: string | null
-          display_id?: string | null
-          logged_by_membership_id?: string | null
-          sitter_session_id?: string | null
-          logged_by_name?: string | null
-          created_at?: string
-          updated_at?: string
+          warnings_confirmed?: string[]
         }
         Update: {
-          id?: string
-          household_id?: string
-          child_id?: string
-          medicine_id?: string
           at?: string
-          note?: string | null
-          logged_offline?: boolean
-          warnings_confirmed?: string[]
+          child_id?: string
           conflict_acknowledged_at?: string | null
           conflict_acknowledged_by?: string | null
+          created_at?: string
+          display_id?: string | null
+          household_id?: string
+          id?: string
+          logged_by_membership_id?: string | null
+          logged_by_name?: string | null
+          logged_offline?: boolean
+          medicine_id?: string
+          note?: string | null
+          sitter_session_id?: string | null
+          updated_at?: string
+          void_reason?: string | null
           voided_at?: string | null
           voided_by?: string | null
-          void_reason?: string | null
-          display_id?: string | null
-          logged_by_membership_id?: string | null
-          sitter_session_id?: string | null
-          logged_by_name?: string | null
-          created_at?: string
-          updated_at?: string
+          warnings_confirmed?: string[]
         }
         Relationships: [
           {
@@ -388,22 +412,22 @@ export type Database = {
       }
       feature_overrides: {
         Row: {
-          id: string
           child_id: string
-          feature: string
           enabled: boolean
+          feature: string
+          id: string
         }
         Insert: {
-          id?: string
           child_id: string
-          feature: string
           enabled: boolean
+          feature: string
+          id?: string
         }
         Update: {
-          id?: string
           child_id?: string
-          feature?: string
           enabled?: boolean
+          feature?: string
+          id?: string
         }
         Relationships: [
           {
@@ -417,48 +441,48 @@ export type Database = {
       }
       feeding_entries: {
         Row: {
-          id: string
-          household_id: string
-          child_id: string
-          at: string
-          type: string
           amount: string | null
-          note: string | null
-          display_id: string | null
-          logged_by_membership_id: string | null
-          sitter_session_id: string | null
-          logged_by_name: string | null
+          at: string
+          child_id: string
           created_at: string
+          display_id: string | null
+          household_id: string
+          id: string
+          logged_by_membership_id: string | null
+          logged_by_name: string | null
+          note: string | null
+          sitter_session_id: string | null
+          type: string
           updated_at: string
         }
         Insert: {
-          id?: string
-          household_id: string
-          child_id: string
-          at: string
-          type: string
           amount?: string | null
-          note?: string | null
-          display_id?: string | null
-          logged_by_membership_id?: string | null
-          sitter_session_id?: string | null
-          logged_by_name?: string | null
+          at: string
+          child_id: string
           created_at?: string
+          display_id?: string | null
+          household_id: string
+          id?: string
+          logged_by_membership_id?: string | null
+          logged_by_name?: string | null
+          note?: string | null
+          sitter_session_id?: string | null
+          type: string
           updated_at?: string
         }
         Update: {
-          id?: string
-          household_id?: string
-          child_id?: string
-          at?: string
-          type?: string
           amount?: string | null
-          note?: string | null
-          display_id?: string | null
-          logged_by_membership_id?: string | null
-          sitter_session_id?: string | null
-          logged_by_name?: string | null
+          at?: string
+          child_id?: string
           created_at?: string
+          display_id?: string | null
+          household_id?: string
+          id?: string
+          logged_by_membership_id?: string | null
+          logged_by_name?: string | null
+          note?: string | null
+          sitter_session_id?: string | null
+          type?: string
           updated_at?: string
         }
         Relationships: [
@@ -501,28 +525,28 @@ export type Database = {
       }
       grocery_items: {
         Row: {
-          id: string
-          household_id: string
-          text: string
-          display_id: string | null
-          created_at: string
           checked_at: string | null
+          created_at: string
+          display_id: string | null
+          household_id: string
+          id: string
+          text: string
         }
         Insert: {
-          id?: string
-          household_id: string
-          text: string
-          display_id?: string | null
-          created_at?: string
           checked_at?: string | null
+          created_at?: string
+          display_id?: string | null
+          household_id: string
+          id?: string
+          text: string
         }
         Update: {
-          id?: string
-          household_id?: string
-          text?: string
-          display_id?: string | null
-          created_at?: string
           checked_at?: string | null
+          created_at?: string
+          display_id?: string | null
+          household_id?: string
+          id?: string
+          text?: string
         }
         Relationships: [
           {
@@ -543,79 +567,79 @@ export type Database = {
       }
       households: {
         Row: {
-          id: string
-          name: string
-          time_zone: string
-          zip: string | null
-          lat: number | null
-          lon: number | null
-          plan: string
-          default_night_sleep_start: string
+          created_at: string
           default_night_sleep_end: string
-          night_mode_start: string
-          night_mode_end: string
-          leave_by_buffer_min: number
+          default_night_sleep_start: string
+          deleted_at: string | null
           diaper_log_enabled: boolean
           dinner_tonight: string | null
+          id: string
+          lat: number | null
+          leave_by_buffer_min: number
+          lon: number | null
+          name: string
+          night_mode_end: string
+          night_mode_start: string
+          plan: string
           sitter_info: Json
-          created_at: string
-          deleted_at: string | null
+          time_zone: string
+          zip: string | null
         }
         Insert: {
+          created_at?: string
+          default_night_sleep_end?: string
+          default_night_sleep_start?: string
+          deleted_at?: string | null
+          diaper_log_enabled?: boolean
+          dinner_tonight?: string | null
           id?: string
+          lat?: number | null
+          leave_by_buffer_min?: number
+          lon?: number | null
           name: string
+          night_mode_end?: string
+          night_mode_start?: string
+          plan?: string
+          sitter_info?: Json
           time_zone: string
           zip?: string | null
-          lat?: number | null
-          lon?: number | null
-          plan?: string
-          default_night_sleep_start?: string
-          default_night_sleep_end?: string
-          night_mode_start?: string
-          night_mode_end?: string
-          leave_by_buffer_min?: number
-          diaper_log_enabled?: boolean
-          dinner_tonight?: string | null
-          sitter_info?: Json
-          created_at?: string
-          deleted_at?: string | null
         }
         Update: {
-          id?: string
-          name?: string
-          time_zone?: string
-          zip?: string | null
-          lat?: number | null
-          lon?: number | null
-          plan?: string
-          default_night_sleep_start?: string
+          created_at?: string
           default_night_sleep_end?: string
-          night_mode_start?: string
-          night_mode_end?: string
-          leave_by_buffer_min?: number
+          default_night_sleep_start?: string
+          deleted_at?: string | null
           diaper_log_enabled?: boolean
           dinner_tonight?: string | null
+          id?: string
+          lat?: number | null
+          leave_by_buffer_min?: number
+          lon?: number | null
+          name?: string
+          night_mode_end?: string
+          night_mode_start?: string
+          plan?: string
           sitter_info?: Json
-          created_at?: string
-          deleted_at?: string | null
+          time_zone?: string
+          zip?: string | null
         }
         Relationships: []
       }
       invite_codes: {
         Row: {
           code: string
-          used_by_household_id: string | null
           used_at: string | null
+          used_by_household_id: string | null
         }
         Insert: {
           code: string
-          used_by_household_id?: string | null
           used_at?: string | null
+          used_by_household_id?: string | null
         }
         Update: {
           code?: string
-          used_by_household_id?: string | null
           used_at?: string | null
+          used_by_household_id?: string | null
         }
         Relationships: [
           {
@@ -629,28 +653,28 @@ export type Database = {
       }
       jots: {
         Row: {
-          id: string
-          household_id: string
-          text: string
-          display_id: string | null
           created_at: string
+          display_id: string | null
           done_at: string | null
+          household_id: string
+          id: string
+          text: string
         }
         Insert: {
-          id?: string
-          household_id: string
-          text: string
-          display_id?: string | null
           created_at?: string
+          display_id?: string | null
           done_at?: string | null
+          household_id: string
+          id?: string
+          text: string
         }
         Update: {
-          id?: string
-          household_id?: string
-          text?: string
-          display_id?: string | null
           created_at?: string
+          display_id?: string | null
           done_at?: string | null
+          household_id?: string
+          id?: string
+          text?: string
         }
         Relationships: [
           {
@@ -671,34 +695,34 @@ export type Database = {
       }
       medicines: {
         Row: {
-          id: string
-          household_id: string
-          child_id: string
-          name: string
-          min_interval_hours: number
-          max_doses_per_24h: number | null
           archived_at: string | null
+          child_id: string
           created_at: string
+          household_id: string
+          id: string
+          max_doses_per_24h: number | null
+          min_interval_hours: number
+          name: string
         }
         Insert: {
-          id?: string
-          household_id: string
-          child_id: string
-          name: string
-          min_interval_hours: number
-          max_doses_per_24h?: number | null
           archived_at?: string | null
+          child_id: string
           created_at?: string
+          household_id: string
+          id?: string
+          max_doses_per_24h?: number | null
+          min_interval_hours: number
+          name: string
         }
         Update: {
-          id?: string
-          household_id?: string
-          child_id?: string
-          name?: string
-          min_interval_hours?: number
-          max_doses_per_24h?: number | null
           archived_at?: string | null
+          child_id?: string
           created_at?: string
+          household_id?: string
+          id?: string
+          max_doses_per_24h?: number | null
+          min_interval_hours?: number
+          name?: string
         }
         Relationships: [
           {
@@ -745,34 +769,34 @@ export type Database = {
       }
       memberships: {
         Row: {
-          id: string
-          user_id: string
-          household_id: string
-          role: string
-          display_name: string
           color: string
+          display_name: string
+          household_id: string
+          id: string
           joined_at: string
           left_at: string | null
+          role: string
+          user_id: string
         }
         Insert: {
-          id?: string
-          user_id: string
-          household_id: string
-          role: string
-          display_name: string
           color: string
+          display_name: string
+          household_id: string
+          id?: string
           joined_at?: string
           left_at?: string | null
+          role: string
+          user_id: string
         }
         Update: {
-          id?: string
-          user_id?: string
-          household_id?: string
-          role?: string
-          display_name?: string
           color?: string
+          display_name?: string
+          household_id?: string
+          id?: string
           joined_at?: string
           left_at?: string | null
+          role?: string
+          user_id?: string
         }
         Relationships: [
           {
@@ -786,25 +810,25 @@ export type Database = {
       }
       photos: {
         Row: {
-          id: string
-          household_id: string
-          storage_path: string
-          kind: string
           added_at: string
+          household_id: string
+          id: string
+          kind: string
+          storage_path: string
         }
         Insert: {
-          id?: string
-          household_id: string
-          storage_path: string
-          kind: string
           added_at?: string
+          household_id: string
+          id?: string
+          kind: string
+          storage_path: string
         }
         Update: {
-          id?: string
-          household_id?: string
-          storage_path?: string
-          kind?: string
           added_at?: string
+          household_id?: string
+          id?: string
+          kind?: string
+          storage_path?: string
         }
         Relationships: [
           {
@@ -818,24 +842,24 @@ export type Database = {
       }
       routine_day_overrides: {
         Row: {
-          id: string
-          household_id: string
           child_id: string
           day: string
+          household_id: string
+          id: string
           routine_id: string
         }
         Insert: {
-          id?: string
-          household_id: string
           child_id: string
           day: string
+          household_id: string
+          id?: string
           routine_id: string
         }
         Update: {
-          id?: string
-          household_id?: string
           child_id?: string
           day?: string
+          household_id?: string
+          id?: string
           routine_id?: string
         }
         Relationships: [
@@ -864,28 +888,28 @@ export type Database = {
       }
       routine_progress: {
         Row: {
-          id: string
-          household_id: string
           child_id: string
-          routine_id: string
-          day: string
           completed_step_indexes: number[]
+          day: string
+          household_id: string
+          id: string
+          routine_id: string
         }
         Insert: {
-          id?: string
-          household_id: string
           child_id: string
-          routine_id: string
-          day: string
           completed_step_indexes?: number[]
+          day: string
+          household_id: string
+          id?: string
+          routine_id: string
         }
         Update: {
-          id?: string
-          household_id?: string
           child_id?: string
-          routine_id?: string
-          day?: string
           completed_step_indexes?: number[]
+          day?: string
+          household_id?: string
+          id?: string
+          routine_id?: string
         }
         Relationships: [
           {
@@ -913,34 +937,34 @@ export type Database = {
       }
       routines: {
         Row: {
-          id: string
-          household_id: string
           child_id: string
-          name: string
-          weekdays: number[]
-          steps: Json
-          sort_order: number
           created_at: string
+          household_id: string
+          id: string
+          name: string
+          sort_order: number
+          steps: Json
+          weekdays: number[]
         }
         Insert: {
-          id?: string
-          household_id: string
           child_id: string
-          name: string
-          weekdays?: number[]
-          steps?: Json
-          sort_order?: number
           created_at?: string
+          household_id: string
+          id?: string
+          name: string
+          sort_order?: number
+          steps?: Json
+          weekdays?: number[]
         }
         Update: {
-          id?: string
-          household_id?: string
           child_id?: string
-          name?: string
-          weekdays?: number[]
-          steps?: Json
-          sort_order?: number
           created_at?: string
+          household_id?: string
+          id?: string
+          name?: string
+          sort_order?: number
+          steps?: Json
+          weekdays?: number[]
         }
         Relationships: [
           {
@@ -961,25 +985,25 @@ export type Database = {
       }
       settings_audit: {
         Row: {
-          id: number
-          household_id: string
-          membership_id: string | null
-          change: Json
           at: string
+          change: Json
+          household_id: string
+          id: number
+          membership_id: string | null
         }
         Insert: {
-          id?: number
-          household_id: string
-          membership_id?: string | null
-          change: Json
           at?: string
+          change: Json
+          household_id: string
+          id?: never
+          membership_id?: string | null
         }
         Update: {
-          id?: number
-          household_id?: string
-          membership_id?: string | null
-          change?: Json
           at?: string
+          change?: Json
+          household_id?: string
+          id?: never
+          membership_id?: string | null
         }
         Relationships: [
           {
@@ -1000,30 +1024,30 @@ export type Database = {
       }
       sitter_sessions: {
         Row: {
-          id: string
-          household_id: string
           display_id: string | null
+          ended_at: string | null
+          household_id: string
+          id: string
           sitter_name: string | null
           started_at: string
-          ended_at: string | null
           summary_shown_at: string | null
         }
         Insert: {
-          id?: string
-          household_id: string
           display_id?: string | null
+          ended_at?: string | null
+          household_id: string
+          id?: string
           sitter_name?: string | null
           started_at?: string
-          ended_at?: string | null
           summary_shown_at?: string | null
         }
         Update: {
-          id?: string
-          household_id?: string
           display_id?: string | null
+          ended_at?: string | null
+          household_id?: string
+          id?: string
           sitter_name?: string | null
           started_at?: string
-          ended_at?: string | null
           summary_shown_at?: string | null
         }
         Relationships: [
@@ -1045,45 +1069,45 @@ export type Database = {
       }
       sleep_entries: {
         Row: {
-          id: string
-          household_id: string
           child_id: string
-          start_at: string
-          end_at: string | null
-          type: string
-          display_id: string | null
-          logged_by_membership_id: string | null
-          sitter_session_id: string | null
-          logged_by_name: string | null
           created_at: string
+          display_id: string | null
+          end_at: string | null
+          household_id: string
+          id: string
+          logged_by_membership_id: string | null
+          logged_by_name: string | null
+          sitter_session_id: string | null
+          start_at: string
+          type: string
           updated_at: string
         }
         Insert: {
-          id?: string
-          household_id: string
           child_id: string
-          start_at: string
-          end_at?: string | null
-          type: string
-          display_id?: string | null
-          logged_by_membership_id?: string | null
-          sitter_session_id?: string | null
-          logged_by_name?: string | null
           created_at?: string
+          display_id?: string | null
+          end_at?: string | null
+          household_id: string
+          id?: string
+          logged_by_membership_id?: string | null
+          logged_by_name?: string | null
+          sitter_session_id?: string | null
+          start_at: string
+          type: string
           updated_at?: string
         }
         Update: {
-          id?: string
-          household_id?: string
           child_id?: string
-          start_at?: string
-          end_at?: string | null
-          type?: string
-          display_id?: string | null
-          logged_by_membership_id?: string | null
-          sitter_session_id?: string | null
-          logged_by_name?: string | null
           created_at?: string
+          display_id?: string | null
+          end_at?: string | null
+          household_id?: string
+          id?: string
+          logged_by_membership_id?: string | null
+          logged_by_name?: string | null
+          sitter_session_id?: string | null
+          start_at?: string
+          type?: string
           updated_at?: string
         }
         Relationships: [
@@ -1126,28 +1150,28 @@ export type Database = {
       }
       sticker_categories: {
         Row: {
-          id: string
-          household_id: string
-          name: string
-          icon_key: string
-          sort_order: number
           archived_at: string | null
+          household_id: string
+          icon_key: string
+          id: string
+          name: string
+          sort_order: number
         }
         Insert: {
-          id?: string
-          household_id: string
-          name: string
-          icon_key: string
-          sort_order?: number
           archived_at?: string | null
+          household_id: string
+          icon_key: string
+          id?: string
+          name: string
+          sort_order?: number
         }
         Update: {
-          id?: string
-          household_id?: string
-          name?: string
-          icon_key?: string
-          sort_order?: number
           archived_at?: string | null
+          household_id?: string
+          icon_key?: string
+          id?: string
+          name?: string
+          sort_order?: number
         }
         Relationships: [
           {
@@ -1161,42 +1185,42 @@ export type Database = {
       }
       sticker_entries: {
         Row: {
-          id: string
-          household_id: string
-          child_id: string
-          category_id: string
           at: string
-          display_id: string | null
-          logged_by_membership_id: string | null
-          sitter_session_id: string | null
-          logged_by_name: string | null
+          category_id: string
+          child_id: string
           created_at: string
+          display_id: string | null
+          household_id: string
+          id: string
+          logged_by_membership_id: string | null
+          logged_by_name: string | null
+          sitter_session_id: string | null
           updated_at: string
         }
         Insert: {
-          id?: string
-          household_id: string
-          child_id: string
-          category_id: string
           at: string
-          display_id?: string | null
-          logged_by_membership_id?: string | null
-          sitter_session_id?: string | null
-          logged_by_name?: string | null
+          category_id: string
+          child_id: string
           created_at?: string
+          display_id?: string | null
+          household_id: string
+          id?: string
+          logged_by_membership_id?: string | null
+          logged_by_name?: string | null
+          sitter_session_id?: string | null
           updated_at?: string
         }
         Update: {
-          id?: string
-          household_id?: string
-          child_id?: string
-          category_id?: string
           at?: string
-          display_id?: string | null
-          logged_by_membership_id?: string | null
-          sitter_session_id?: string | null
-          logged_by_name?: string | null
+          category_id?: string
+          child_id?: string
           created_at?: string
+          display_id?: string | null
+          household_id?: string
+          id?: string
+          logged_by_membership_id?: string | null
+          logged_by_name?: string | null
+          sitter_session_id?: string | null
           updated_at?: string
         }
         Relationships: [
@@ -1246,28 +1270,28 @@ export type Database = {
       }
       take_list_links: {
         Row: {
-          id: string
-          household_id: string
-          token_hash: string
-          expires_at: string
-          revoked_at: string | null
           created_at: string
+          expires_at: string
+          household_id: string
+          id: string
+          revoked_at: string | null
+          token_hash: string
         }
         Insert: {
-          id?: string
-          household_id: string
-          token_hash: string
-          expires_at: string
-          revoked_at?: string | null
           created_at?: string
+          expires_at: string
+          household_id: string
+          id?: string
+          revoked_at?: string | null
+          token_hash: string
         }
         Update: {
-          id?: string
-          household_id?: string
-          token_hash?: string
-          expires_at?: string
-          revoked_at?: string | null
           created_at?: string
+          expires_at?: string
+          household_id?: string
+          id?: string
+          revoked_at?: string | null
+          token_hash?: string
         }
         Relationships: [
           {
@@ -1285,26 +1309,20 @@ export type Database = {
     }
     Functions: {
       acknowledge_dose_conflict: {
-        Args: {
-          p_dose_id: string
-          p_membership_id: string
-          p_pin: string
-        }
+        Args: { p_dose_id: string; p_membership_id: string; p_pin: string }
         Returns: undefined
       }
       add_child: {
         Args: {
-          p_household_id: string
-          p_name: string
           p_birthday: string
           p_color: string
+          p_household_id: string
+          p_name: string
         }
         Returns: string
       }
       claim_display: {
-        Args: {
-          p_token: string
-        }
+        Args: { p_token: string }
         Returns: {
           out_display_id: string
           out_household_id: string
@@ -1312,23 +1330,20 @@ export type Database = {
       }
       create_household: {
         Args: {
+          p_color: string
+          p_display_name: string
+          p_invite_code: string
+          p_lat: number
+          p_lon: number
           p_name: string
           p_time_zone: string
           p_zip: string
-          p_lat: number | null
-          p_lon: number | null
-          p_invite_code: string
-          p_display_name: string
-          p_color: string
         }
         Returns: string
       }
-      display_heartbeat: {
-        Args: Record<PropertyKey, never>
-        Returns: boolean
-      }
+      display_heartbeat: { Args: never; Returns: boolean }
       my_display: {
-        Args: Record<PropertyKey, never>
+        Args: never
         Returns: {
           out_display_id: string
           out_household_id: string
@@ -1337,62 +1352,42 @@ export type Database = {
         }[]
       }
       record_consent: {
-        Args: {
-          p_policy_version: string
-          p_health_data_consent: boolean
-        }
+        Args: { p_health_data_consent: boolean; p_policy_version: string }
         Returns: undefined
       }
       register_display: {
-        Args: {
-          p_household_id: string
-          p_name: string
-        }
+        Args: { p_household_id: string; p_name: string }
         Returns: {
-          out_display_id: string
           out_claim_token: string
+          out_display_id: string
         }[]
       }
-      revoke_display: {
-        Args: {
-          p_display_id: string
-        }
-        Returns: undefined
-      }
+      revoke_display: { Args: { p_display_id: string }; Returns: undefined }
       set_dinner_tonight: {
-        Args: {
-          p_household_id: string
-          p_text: string
-        }
+        Args: { p_household_id: string; p_text: string }
         Returns: undefined
       }
       set_my_pin: {
-        Args: {
-          p_household_id: string
-          p_pin: string
-        }
+        Args: { p_household_id: string; p_pin: string }
         Returns: undefined
       }
       setup_household: {
         Args: {
+          p_color: string
+          p_display_name: string
+          p_invite_code: string
+          p_kids: Json
+          p_lat: number
+          p_lon: number
           p_name: string
+          p_pin: string
           p_time_zone: string
           p_zip: string
-          p_lat: number | null
-          p_lon: number | null
-          p_invite_code: string
-          p_display_name: string
-          p_color: string
-          p_kids: Json
-          p_pin: string
         }
         Returns: string
       }
       verify_pin: {
-        Args: {
-          p_membership_id: string
-          p_pin: string
-        }
+        Args: { p_membership_id: string; p_pin: string }
         Returns: boolean
       }
       void_dose: {
@@ -1414,27 +1409,33 @@ export type Database = {
   }
 }
 
-type PublicSchema = Database[Extract<keyof Database, "public">]
+type DatabaseWithoutInternals = Omit<Database, "__InternalSupabase">
+
+type DefaultSchema = DatabaseWithoutInternals[Extract<keyof Database, "public">]
 
 export type Tables<
-  PublicTableNameOrOptions extends
-    | keyof (PublicSchema["Tables"] & PublicSchema["Views"])
-    | { schema: keyof Database },
-  TableName extends PublicTableNameOrOptions extends { schema: keyof Database }
-    ? keyof (Database[PublicTableNameOrOptions["schema"]]["Tables"] &
-        Database[PublicTableNameOrOptions["schema"]]["Views"])
+  DefaultSchemaTableNameOrOptions extends
+    | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
+    | { schema: keyof DatabaseWithoutInternals },
+  TableName extends DefaultSchemaTableNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
+        DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
     : never = never,
-> = PublicTableNameOrOptions extends { schema: keyof Database }
-  ? (Database[PublicTableNameOrOptions["schema"]]["Tables"] &
-      Database[PublicTableNameOrOptions["schema"]]["Views"])[TableName] extends {
+> = DefaultSchemaTableNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
+      DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])[TableName] extends {
       Row: infer R
     }
     ? R
     : never
-  : PublicTableNameOrOptions extends keyof (PublicSchema["Tables"] &
-        PublicSchema["Views"])
-    ? (PublicSchema["Tables"] &
-        PublicSchema["Views"])[PublicTableNameOrOptions] extends {
+  : DefaultSchemaTableNameOrOptions extends keyof (DefaultSchema["Tables"] &
+        DefaultSchema["Views"])
+    ? (DefaultSchema["Tables"] &
+        DefaultSchema["Views"])[DefaultSchemaTableNameOrOptions] extends {
         Row: infer R
       }
       ? R
@@ -1442,20 +1443,24 @@ export type Tables<
     : never
 
 export type TablesInsert<
-  PublicTableNameOrOptions extends
-    | keyof PublicSchema["Tables"]
-    | { schema: keyof Database },
-  TableName extends PublicTableNameOrOptions extends { schema: keyof Database }
-    ? keyof Database[PublicTableNameOrOptions["schema"]]["Tables"]
+  DefaultSchemaTableNameOrOptions extends
+    | keyof DefaultSchema["Tables"]
+    | { schema: keyof DatabaseWithoutInternals },
+  TableName extends DefaultSchemaTableNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
     : never = never,
-> = PublicTableNameOrOptions extends { schema: keyof Database }
-  ? Database[PublicTableNameOrOptions["schema"]]["Tables"][TableName] extends {
+> = DefaultSchemaTableNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
       Insert: infer I
     }
     ? I
     : never
-  : PublicTableNameOrOptions extends keyof PublicSchema["Tables"]
-    ? PublicSchema["Tables"][PublicTableNameOrOptions] extends {
+  : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
+    ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
         Insert: infer I
       }
       ? I
@@ -1463,22 +1468,70 @@ export type TablesInsert<
     : never
 
 export type TablesUpdate<
-  PublicTableNameOrOptions extends
-    | keyof PublicSchema["Tables"]
-    | { schema: keyof Database },
-  TableName extends PublicTableNameOrOptions extends { schema: keyof Database }
-    ? keyof Database[PublicTableNameOrOptions["schema"]]["Tables"]
+  DefaultSchemaTableNameOrOptions extends
+    | keyof DefaultSchema["Tables"]
+    | { schema: keyof DatabaseWithoutInternals },
+  TableName extends DefaultSchemaTableNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
     : never = never,
-> = PublicTableNameOrOptions extends { schema: keyof Database }
-  ? Database[PublicTableNameOrOptions["schema"]]["Tables"][TableName] extends {
+> = DefaultSchemaTableNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
       Update: infer U
     }
     ? U
     : never
-  : PublicTableNameOrOptions extends keyof PublicSchema["Tables"]
-    ? PublicSchema["Tables"][PublicTableNameOrOptions] extends {
+  : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
+    ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
         Update: infer U
       }
       ? U
       : never
     : never
+
+export type Enums<
+  DefaultSchemaEnumNameOrOptions extends
+    | keyof DefaultSchema["Enums"]
+    | { schema: keyof DatabaseWithoutInternals },
+  EnumName extends DefaultSchemaEnumNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
+    : never = never,
+> = DefaultSchemaEnumNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"][EnumName]
+  : DefaultSchemaEnumNameOrOptions extends keyof DefaultSchema["Enums"]
+    ? DefaultSchema["Enums"][DefaultSchemaEnumNameOrOptions]
+    : never
+
+export type CompositeTypes<
+  PublicCompositeTypeNameOrOptions extends
+    | keyof DefaultSchema["CompositeTypes"]
+    | { schema: keyof DatabaseWithoutInternals },
+  CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
+    : never = never,
+> = PublicCompositeTypeNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"][CompositeTypeName]
+  : PublicCompositeTypeNameOrOptions extends keyof DefaultSchema["CompositeTypes"]
+    ? DefaultSchema["CompositeTypes"][PublicCompositeTypeNameOrOptions]
+    : never
+
+export const Constants = {
+  graphql_public: {
+    Enums: {},
+  },
+  public: {
+    Enums: {},
+  },
+} as const
+

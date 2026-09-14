@@ -318,14 +318,15 @@ select pg_temp.expect('authenticated cannot execute private write helpers', not 
   select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
   where n.nspname = 'private' and p.proname in ('create_household_for', 'add_child_to', 'set_pin_for', 'pin_ok')
     and has_function_privilege('authenticated', p.oid, 'execute')));
-set local role anon;
-select set_config('request.jwt.claims', '{"role":"anon"}', true);
-select pg_temp.expect_error('anon calls create_household',
-  $q$select public.create_household('X', 'America/New_York', '28202', null, null, 'SMOKE5', 'X', '#5B6ACF')$q$, '42501');
-select pg_temp.expect_error('anon calls verify_pin',
-  $q$select public.verify_pin(pg_temp.v('membership_a'), '4242')$q$, '42501');
-select pg_temp.expect_error('anon selects households', $q$select 1 from public.households$q$, '42501');
-reset role;
+-- Privilege checks rather than calls made as anon: on the Supabase Postgres image, invoking a
+-- pg_temp helper under `set role anon` that then hits a permission error segfaults the backend.
+-- The REST-level anon check lives in supabase/manual-checks/anon_api_check.sh.
+select pg_temp.expect('anon cannot execute create_household',
+  not has_function_privilege('anon', 'public.create_household(text, text, text, double precision, double precision, text, text, text)', 'execute'));
+select pg_temp.expect('anon cannot execute verify_pin',
+  not has_function_privilege('anon', 'public.verify_pin(uuid, text)', 'execute'));
+select pg_temp.expect('anon cannot select households',
+  not has_table_privilege('anon', 'public.households', 'select'));
 select pg_temp.expect('authenticated has no truncate/references/trigger', not exists (
   select 1 from pg_class c join pg_namespace n on n.oid = c.relnamespace
   where n.nspname = 'public'
