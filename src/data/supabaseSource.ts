@@ -44,7 +44,7 @@ async function loadDoseRows(
   cutoff48h: string,
 ): Promise<Tables<'dose_entries'>[]> {
   const recent = unwrap<Tables<'dose_entries'>[]>(
-    await client.from('dose_entries').select('*').eq('household_id', householdId).gte('at', cutoff48h),
+    await client.from('dose_entries').select('*').eq('household_id', householdId).gte('at', cutoff48h).order('at', { ascending: true }),
   )
   const unresolvedConflicts = unwrap<Tables<'dose_entries'>[]>(
     await client
@@ -53,7 +53,8 @@ async function loadDoseRows(
       .eq('household_id', householdId)
       .eq('logged_offline', true)
       .is('voided_at', null)
-      .is('conflict_acknowledged_at', null),
+      .is('conflict_acknowledged_at', null)
+      .order('at', { ascending: true }),
   )
 
   const byId = new Map<string, Tables<'dose_entries'>>()
@@ -69,7 +70,13 @@ async function loadDoseRows(
     const windowStart = new Date(oldestMs - CONFLICT_CONTEXT_WINDOW_MS).toISOString()
     const windowEnd = new Date(oldestMs + CONFLICT_CONTEXT_WINDOW_MS).toISOString()
     const windowRows = unwrap<Tables<'dose_entries'>[]>(
-      await client.from('dose_entries').select('*').eq('household_id', householdId).gte('at', windowStart).lte('at', windowEnd),
+      await client
+        .from('dose_entries')
+        .select('*')
+        .eq('household_id', householdId)
+        .gte('at', windowStart)
+        .lte('at', windowEnd)
+        .order('at', { ascending: true }),
     )
     for (const d of windowRows) byId.set(d.id, d)
   }
@@ -157,11 +164,16 @@ export function createSupabaseSource(client: RoostClient): HouseholdSource {
       loadChildrenAndOverrides(client, householdId),
       client.from('medicines').select('*').eq('household_id', householdId).is('archived_at', null),
       loadDoseRows(client, householdId, cutoff48h),
-      client.from('sleep_entries').select('*').eq('household_id', householdId).or(`start_at.gte.${cutoff48h},end_at.is.null`),
-      client.from('feeding_entries').select('*').eq('household_id', householdId).gte('at', cutoff48h),
-      client.from('diaper_entries').select('*').eq('household_id', householdId).gte('at', cutoff48h),
+      client
+        .from('sleep_entries')
+        .select('*')
+        .eq('household_id', householdId)
+        .or(`start_at.gte.${cutoff48h},end_at.is.null`)
+        .order('start_at', { ascending: true }),
+      client.from('feeding_entries').select('*').eq('household_id', householdId).gte('at', cutoff48h).order('at', { ascending: true }),
+      client.from('diaper_entries').select('*').eq('household_id', householdId).gte('at', cutoff48h).order('at', { ascending: true }),
       client.from('sticker_categories').select('*').eq('household_id', householdId).is('archived_at', null).order('sort_order'),
-      client.from('sticker_entries').select('*').eq('household_id', householdId).gte('at', cutoff8d),
+      client.from('sticker_entries').select('*').eq('household_id', householdId).gte('at', cutoff8d).order('at', { ascending: true }),
       client.from('routines').select('*').eq('household_id', householdId).order('sort_order'),
       client.from('routine_progress').select('*').eq('household_id', householdId).in('day', [today, tomorrow]),
       client.from('routine_day_overrides').select('*').eq('household_id', householdId).in('day', [today, tomorrow]),

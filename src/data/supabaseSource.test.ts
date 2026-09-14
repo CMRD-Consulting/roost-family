@@ -237,22 +237,22 @@ describe('createSupabaseSource load', () => {
       'select:*', 'eq:household_id=h1', 'is:archived_at=null',
     ])
     expect(calls.find((c) => c.table === 'dose_entries')?.ops).toEqual([
-      'select:*', 'eq:household_id=h1', `gte:at=${cutoff48h}`,
+      'select:*', 'eq:household_id=h1', `gte:at=${cutoff48h}`, 'order:at:asc',
     ])
     expect(calls.find((c) => c.table === 'sleep_entries')?.ops).toEqual([
-      'select:*', 'eq:household_id=h1', `or:start_at.gte.${cutoff48h},end_at.is.null`,
+      'select:*', 'eq:household_id=h1', `or:start_at.gte.${cutoff48h},end_at.is.null`, 'order:start_at:asc',
     ])
     expect(calls.find((c) => c.table === 'feeding_entries')?.ops).toEqual([
-      'select:*', 'eq:household_id=h1', `gte:at=${cutoff48h}`,
+      'select:*', 'eq:household_id=h1', `gte:at=${cutoff48h}`, 'order:at:asc',
     ])
     expect(calls.find((c) => c.table === 'diaper_entries')?.ops).toEqual([
-      'select:*', 'eq:household_id=h1', `gte:at=${cutoff48h}`,
+      'select:*', 'eq:household_id=h1', `gte:at=${cutoff48h}`, 'order:at:asc',
     ])
     expect(calls.find((c) => c.table === 'sticker_categories')?.ops).toEqual([
       'select:*', 'eq:household_id=h1', 'is:archived_at=null', 'order:sort_order:asc',
     ])
     expect(calls.find((c) => c.table === 'sticker_entries')?.ops).toEqual([
-      'select:*', 'eq:household_id=h1', `gte:at=${cutoff8d}`,
+      'select:*', 'eq:household_id=h1', `gte:at=${cutoff8d}`, 'order:at:asc',
     ])
     expect(calls.find((c) => c.table === 'routines')?.ops).toEqual([
       'select:*', 'eq:household_id=h1', 'order:sort_order:asc',
@@ -398,7 +398,7 @@ describe('createSupabaseSource load', () => {
       expect(doseCalls).toHaveLength(2)
       expect(doseCalls[1]?.ops).toEqual([
         'select:*', 'eq:household_id=h1', 'eq:logged_offline=true',
-        'is:voided_at=null', 'is:conflict_acknowledged_at=null',
+        'is:voided_at=null', 'is:conflict_acknowledged_at=null', 'order:at:asc',
       ])
     })
 
@@ -428,7 +428,7 @@ describe('createSupabaseSource load', () => {
       const doseCalls = calls.filter((c) => c.table === 'dose_entries')
       expect(doseCalls).toHaveLength(3)
       expect(doseCalls[2]?.ops).toEqual([
-        'select:*', 'eq:household_id=h1', `gte:at=${windowStart}`, `lte:at=${windowEnd}`,
+        'select:*', 'eq:household_id=h1', `gte:at=${windowStart}`, `lte:at=${windowEnd}`, 'order:at:asc',
       ])
     })
 
