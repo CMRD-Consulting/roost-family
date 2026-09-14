@@ -83,9 +83,11 @@ function groceryRow(item: GroceryItem, householdId: string, displayId: string | 
   return { id: item.id, household_id: householdId, text: item.text, display_id: displayId }
 }
 
-/** Runs a Postgrest/RPC call and maps failures to LogWriteError. */
-async function run(op: () => PromiseLike<{ error: { message: string; code?: string } | null }>): Promise<void> {
-  let result: { error: { message: string; code?: string } | null }
+type OpResult = { error: { message: string; code?: string } | null; data?: unknown }
+
+/** Runs a Postgrest/RPC call and maps failures to LogWriteError. Returns the response data. */
+async function run(op: () => PromiseLike<OpResult>): Promise<unknown> {
+  let result: OpResult
   try {
     result = await op()
   } catch (e) {
@@ -95,6 +97,21 @@ async function run(op: () => PromiseLike<{ error: { message: string; code?: stri
     const code = result.error.code || null
     throw new LogWriteError(result.error.message, !code, code)
   }
+  return result.data
+}
+
+function rowCount(data: unknown): number {
+  return Array.isArray(data) ? data.length : 0
+}
+
+/** An update (with `.select('id')`) that matched no row: the row may not have synced yet, so retry later. */
+async function runUpdate(op: () => PromiseLike<OpResult>): Promise<void> {
+  if (rowCount(await run(op)) === 0) throw new LogWriteError('Not found yet', true, 'NOT_FOUND')
+}
+
+/** Inserts, RPCs and deletes. (A delete matching no row means it's already gone, which is success.) */
+async function runWrite(op: () => PromiseLike<OpResult>): Promise<void> {
+  await run(op)
 }
 
 export function createSupabaseLogWriter(client: RoostClient): LogWriter {
@@ -102,42 +119,42 @@ export function createSupabaseLogWriter(client: RoostClient): LogWriter {
     switch (cmd.kind) {
       case 'sleep.start':
       case 'sleep.restore':
-        return run(() => client.from('sleep_entries').upsert(sleepRow(cmd.entry, cmd.householdId, cmd.attribution), UPSERT_OPTS))
+        return runWrite(() => client.from('sleep_entries').upsert(sleepRow(cmd.entry, cmd.householdId, cmd.attribution), UPSERT_OPTS))
       case 'sleep.end':
-        return run(() => client.from('sleep_entries').update({ end_at: cmd.endAt }).eq('id', cmd.entryId))
+        return runUpdate(() => client.from('sleep_entries').update({ end_at: cmd.endAt }).eq('id', cmd.entryId).select('id'))
       case 'sleep.discard':
-        return run(() => client.from('sleep_entries').delete().eq('id', cmd.entry.id))
+        return runWrite(() => client.from('sleep_entries').delete().eq('id', cmd.entry.id).select('id'))
 
       case 'feeding.add':
-        return run(() => client.from('feeding_entries').upsert(feedingRow(cmd.entry, cmd.householdId, cmd.attribution), UPSERT_OPTS))
+        return runWrite(() => client.from('feeding_entries').upsert(feedingRow(cmd.entry, cmd.householdId, cmd.attribution), UPSERT_OPTS))
       case 'sticker.add':
-        return run(() => client.from('sticker_entries').upsert(stickerRow(cmd.entry, cmd.householdId, cmd.attribution), UPSERT_OPTS))
+        return runWrite(() => client.from('sticker_entries').upsert(stickerRow(cmd.entry, cmd.householdId, cmd.attribution), UPSERT_OPTS))
       case 'diaper.add':
-        return run(() => client.from('diaper_entries').upsert(diaperRow(cmd.entry, cmd.householdId, cmd.attribution), UPSERT_OPTS))
+        return runWrite(() => client.from('diaper_entries').upsert(diaperRow(cmd.entry, cmd.householdId, cmd.attribution), UPSERT_OPTS))
       case 'dose.add':
-        return run(() => client.from('dose_entries').upsert(doseRow(cmd.entry, cmd.householdId, cmd.attribution), UPSERT_OPTS))
+        return runWrite(() => client.from('dose_entries').upsert(doseRow(cmd.entry, cmd.householdId, cmd.attribution), UPSERT_OPTS))
 
       case 'jot.add':
-        return run(() => client.from('jots').upsert(jotRow(cmd.jot, cmd.householdId, cmd.displayId), UPSERT_OPTS))
+        return runWrite(() => client.from('jots').upsert(jotRow(cmd.jot, cmd.householdId, cmd.displayId), UPSERT_OPTS))
 
       case 'grocery.add':
-        return run(() => client.from('grocery_items').upsert(groceryRow(cmd.item, cmd.householdId, cmd.displayId), UPSERT_OPTS))
+        return runWrite(() => client.from('grocery_items').upsert(groceryRow(cmd.item, cmd.householdId, cmd.displayId), UPSERT_OPTS))
       case 'grocery.check':
-        return run(() => client.from('grocery_items').update({ checked_at: cmd.checkedAt }).eq('id', cmd.itemId))
+        return runUpdate(() => client.from('grocery_items').update({ checked_at: cmd.checkedAt }).eq('id', cmd.itemId).select('id'))
       case 'grocery.delete':
-        return run(() => client.from('grocery_items').delete().eq('id', cmd.item.id))
+        return runWrite(() => client.from('grocery_items').delete().eq('id', cmd.item.id).select('id'))
 
       case 'entry.delete':
-        return run(() => client.from(cmd.table).delete().eq('id', cmd.entryId))
+        return runWrite(() => client.from(cmd.table).delete().eq('id', cmd.entryId).select('id'))
 
       case 'dose.void':
-        return run(() =>
+        return runWrite(() =>
           client.rpc('void_dose', { p_dose_id: cmd.doseId, p_membership_id: cmd.membershipId, p_pin: cmd.pin, p_reason: cmd.reason }),
         )
       case 'dose.acknowledge':
-        return run(() => client.rpc('acknowledge_dose_conflict', { p_dose_id: cmd.doseId, p_membership_id: cmd.membershipId, p_pin: cmd.pin }))
+        return runWrite(() => client.rpc('acknowledge_dose_conflict', { p_dose_id: cmd.doseId, p_membership_id: cmd.membershipId, p_pin: cmd.pin }))
       case 'dinner.set':
-        return run(() => client.rpc('set_dinner_tonight', { p_household_id: cmd.householdId, p_text: cmd.text ?? '' }))
+        return runWrite(() => client.rpc('set_dinner_tonight', { p_household_id: cmd.householdId, p_text: cmd.text ?? '' }))
     }
   }
 
