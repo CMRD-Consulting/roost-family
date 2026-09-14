@@ -10,6 +10,9 @@ begin;
 create function pg_temp.v(p_name text) returns uuid
 language sql stable as $$ select current_setting('smoke.' || p_name)::uuid $$;
 
+create function pg_temp.v_text(p_name text) returns text
+language sql stable as $$ select current_setting('smoke.' || p_name) $$;
+
 create function pg_temp.expect(p_label text, p_ok boolean) returns void
 language plpgsql as $$
 begin
@@ -330,8 +333,9 @@ begin
     end if;
     checked := checked + 1;
   end loop;
-  if checked < 19 then
-    raise exception 'FAIL: expected to scan at least 19 household-scoped tables, scanned %', checked;
+  -- take_list_links is not client-readable since the take list migration, so it is no longer scanned.
+  if checked < 18 then
+    raise exception 'FAIL: expected to scan at least 18 household-scoped tables, scanned %', checked;
   end if;
   if exists (select 1 from public.households where id = pg_temp.v('household_a'))
      or exists (select 1 from public.children where id = pg_temp.v('kid_a'))
@@ -344,11 +348,13 @@ begin
 end $$;
 
 -- ─── anon ────────────────────────────────────────────────────────────────
-\echo '[25] anon cannot execute any public function or read any table'
+\echo '[25] anon cannot execute any public function (except the take list token RPCs) or read any table'
 reset role;
-select pg_temp.expect('anon has no execute on any public function', not exists (
+select pg_temp.expect('anon has no execute on any public function but the take list token RPCs', not exists (
   select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-  where n.nspname = 'public' and has_function_privilege('anon', p.oid, 'execute')));
+  where n.nspname = 'public' and has_function_privilege('anon', p.oid, 'execute')
+    and p.oid not in ('public.take_list_items(text)'::regprocedure, 'public.take_list_set_checked(text, uuid, boolean)'::regprocedure,
+                      'public.take_list_done(text)'::regprocedure)));
 select pg_temp.expect('anon has no privilege on any public table', not exists (
   select 1 from pg_class c join pg_namespace n on n.oid = c.relnamespace
   where n.nspname = 'public'
@@ -1224,6 +1230,154 @@ select pg_temp.expect('member_invites: RLS on, no policies, no client privileges
   and not has_table_privilege('authenticated', 'public.member_invites', 'select, insert, update, delete, truncate, references, trigger')
   and not has_table_privilege('anon', 'public.member_invites', 'select, insert, update, delete, truncate, references, trigger')
   and not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and tablename = 'member_invites'));
+
+-- ─── Take list (spec §7.8) ───────────────────────────────────────────────
+-- The token RPCs are security definer and ignore the caller, so their behavior is checked as authenticated with
+-- no claims; what anon may execute is checked with privilege functions (see the note above [26]) and
+-- supabase/manual-checks/anon_api_check.sh.
+\set J '{"sub":"00000000-0000-0000-0000-000000000013","role":"authenticated","is_anonymous":true}'
+\set NO_CLAIMS '{"role":"anon"}'
+reset role;
+insert into auth.users (id, instance_id, aud, role, email, raw_app_meta_data, raw_user_meta_data, is_anonymous, created_at, updated_at)
+values ('00000000-0000-0000-0000-000000000013', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', null, '{}', '{}', true, now(), now());
+insert into public.households (name, time_zone) values ('K family', 'America/New_York') returning id as household_k \gset
+insert into public.grocery_items (household_id, text, created_at, checked_at) values
+  (:'household_f', 'Milk', now() - interval '3 hours', null) returning id as grocery_milk \gset
+insert into public.grocery_items (household_id, text, created_at, checked_at) values
+  (:'household_f', 'Apples', now() - interval '4 hours', now() - interval '1 hour') returning id as grocery_apples \gset
+insert into public.grocery_items (household_id, text, created_at, checked_at) values
+  (:'household_f', 'Old bread', now() - interval '3 days', now() - interval '25 hours'),
+  (:'household_f', 'Eggs', now() - interval '2 hours', null);
+insert into public.grocery_items (household_id, text) values (:'household_k', 'K coffee') returning id as grocery_k \gset
+select set_config('smoke.grocery_milk', :'grocery_milk', true), set_config('smoke.grocery_k', :'grocery_k', true);
+set local role authenticated;
+
+\echo '[64] create_take_list_link: members and displays only; returns a 256-bit token stored only as a hash'
+select set_config('request.jwt.claims', :'A', true);
+select pg_temp.expect_error('non-member creates a link',
+  $q$select * from public.create_take_list_link(pg_temp.v('household_f'))$q$, '42501');
+select pg_temp.expect_error('non-member revokes links',
+  $q$select public.revoke_take_list_link(pg_temp.v('household_f'))$q$, '42501');
+select set_config('request.jwt.claims', :'F', true);
+select out_display_id as display_f2, out_claim_token as token_f2 from public.register_display(:'household_f', 'Hall tablet') \gset
+select set_config('request.jwt.claims', :'J', true);
+select public.claim_display(:'token_f2');
+select out_token as take_token_1, out_expires_at as take_expires_1 from public.create_take_list_link(:'household_f') \gset
+select set_config('smoke.take_token_1', :'take_token_1', true);
+select pg_temp.expect('token is 43 base64url characters', :'take_token_1' ~ '^[A-Za-z0-9_-]{43}$');
+select pg_temp.expect('link expires in 24 hours',
+  :'take_expires_1'::timestamptz between now() + interval '23 hours 59 minutes' and now() + interval '24 hours 1 minute');
+reset role;
+select pg_temp.expect('only the SHA-256 hash is stored', (
+  select count(*) from public.take_list_links
+  where household_id = pg_temp.v('household_f') and token_hash = encode(extensions.digest(:'take_token_1', 'sha256'), 'hex')
+    and revoked_at is null) = 1
+  and not exists (select 1 from public.take_list_links where token_hash = :'take_token_1'));
+set local role authenticated;
+
+\echo '[65] take_list_items: this household''s groceries only, unchecked first, checked within 24 hours'
+select set_config('request.jwt.claims', :'NO_CLAIMS', true);
+select pg_temp.expect('items are Milk, Eggs (unchecked, oldest first), then Apples (checked)', (
+  select array_agg(out_text || ':' || out_checked order by ord) from public.take_list_items(pg_temp.v_text('take_token_1'))
+    with ordinality as t (out_id, out_text, out_checked, ord)) = array['Milk:false', 'Eggs:false', 'Apples:true']);
+select pg_temp.expect_error('unknown token rejected',
+  $q$select * from public.take_list_items('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')$q$, '42501');
+select pg_temp.expect_error('malformed token rejected',
+  $q$select * from public.take_list_items('not a token')$q$, '42501');
+select pg_temp.expect_error('null token rejected',
+  $q$select * from public.take_list_items(null)$q$, '42501');
+
+\echo '[66] take_list_set_checked toggles an item of the link''s household only'
+select public.take_list_set_checked(:'take_token_1', :'grocery_milk', true);
+reset role;
+select pg_temp.expect('milk checked', (select checked_at is not null from public.grocery_items where id = pg_temp.v('grocery_milk')));
+update public.grocery_items set checked_at = now() - interval '5 minutes' where id = :'grocery_milk';
+set local role authenticated;
+select public.take_list_set_checked(:'take_token_1', :'grocery_milk', true);
+reset role;
+select pg_temp.expect('checking a checked item keeps its time', (
+  select checked_at < now() - interval '4 minutes' from public.grocery_items where id = pg_temp.v('grocery_milk')));
+set local role authenticated;
+select public.take_list_set_checked(:'take_token_1', :'grocery_milk', false);
+reset role;
+select pg_temp.expect('milk unchecked', (select checked_at is null from public.grocery_items where id = pg_temp.v('grocery_milk')));
+set local role authenticated;
+select pg_temp.expect_error('another household''s item rejected',
+  $q$select public.take_list_set_checked(pg_temp.v_text('take_token_1'), pg_temp.v('grocery_k'), true)$q$, '22023');
+select pg_temp.expect_error('null checked rejected',
+  $q$select public.take_list_set_checked(pg_temp.v_text('take_token_1'), pg_temp.v('grocery_milk'), null)$q$, '22023');
+reset role;
+select pg_temp.expect('K item untouched', (select checked_at is null from public.grocery_items where id = pg_temp.v('grocery_k')));
+set local role authenticated;
+
+\echo '[67] Creating a second link revokes the first; expired and revoked links are rejected'
+select set_config('request.jwt.claims', :'F', true);
+select out_token as take_token_2 from public.create_take_list_link(:'household_f') \gset
+select set_config('smoke.take_token_2', :'take_token_2', true);
+select set_config('request.jwt.claims', :'NO_CLAIMS', true);
+select pg_temp.expect_error('first link revoked by the second',
+  $q$select * from public.take_list_items(pg_temp.v_text('take_token_1'))$q$, '42501');
+select pg_temp.expect_error('revoked link cannot check items',
+  $q$select public.take_list_set_checked(pg_temp.v_text('take_token_1'), pg_temp.v('grocery_milk'), true)$q$, '42501');
+select pg_temp.expect_error('revoked link cannot finish',
+  $q$select public.take_list_done(pg_temp.v_text('take_token_1'))$q$, '42501');
+select pg_temp.expect('second link works', (select count(*) from public.take_list_items(:'take_token_2')) = 3);
+reset role;
+select pg_temp.expect('one active link per household', (
+  select count(*) from public.take_list_links where household_id = pg_temp.v('household_f') and revoked_at is null) = 1);
+update public.take_list_links set expires_at = now() - interval '1 second'
+where token_hash = encode(extensions.digest(:'take_token_2', 'sha256'), 'hex');
+set local role authenticated;
+select pg_temp.expect_error('expired link rejected',
+  $q$select * from public.take_list_items(pg_temp.v_text('take_token_2'))$q$, '42501');
+
+\echo '[68] take_list_done and revoke_take_list_link end the link'
+select set_config('request.jwt.claims', :'F', true);
+select out_token as take_token_3 from public.create_take_list_link(:'household_f') \gset
+select set_config('smoke.take_token_3', :'take_token_3', true);
+select set_config('request.jwt.claims', :'NO_CLAIMS', true);
+select public.take_list_done(:'take_token_3');
+select pg_temp.expect_error('done link rejected',
+  $q$select * from public.take_list_items(pg_temp.v_text('take_token_3'))$q$, '42501');
+reset role;
+select pg_temp.expect('done revokes the link', (
+  select revoked_at is not null from public.take_list_links
+  where token_hash = encode(extensions.digest(:'take_token_3', 'sha256'), 'hex')));
+set local role authenticated;
+select set_config('request.jwt.claims', :'J', true);
+select out_token as take_token_4 from public.create_take_list_link(:'household_f') \gset
+select set_config('smoke.take_token_4', :'take_token_4', true);
+select public.revoke_take_list_link(:'household_f');
+select pg_temp.expect_error('revoked link rejected',
+  $q$select * from public.take_list_items(pg_temp.v_text('take_token_4'))$q$, '42501');
+
+\echo '[69] Take list privileges'
+reset role;
+select pg_temp.expect('anon and authenticated can execute the token RPCs',
+  has_function_privilege('anon', 'public.take_list_items(text)', 'execute')
+  and has_function_privilege('anon', 'public.take_list_set_checked(text, uuid, boolean)', 'execute')
+  and has_function_privilege('anon', 'public.take_list_done(text)', 'execute')
+  and has_function_privilege('authenticated', 'public.take_list_items(text)', 'execute')
+  and has_function_privilege('authenticated', 'public.take_list_set_checked(text, uuid, boolean)', 'execute')
+  and has_function_privilege('authenticated', 'public.take_list_done(text)', 'execute'));
+select pg_temp.expect('PUBLIC cannot execute the token RPCs', not exists (
+  select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+  where n.nspname = 'public' and p.proname in ('take_list_items', 'take_list_set_checked', 'take_list_done',
+    'create_take_list_link', 'revoke_take_list_link')
+    and a.grantee = 0 and a.privilege_type = 'EXECUTE'));
+select pg_temp.expect('only authenticated can create or revoke links',
+  not has_function_privilege('anon', 'public.create_take_list_link(uuid)', 'execute')
+  and not has_function_privilege('anon', 'public.revoke_take_list_link(uuid)', 'execute')
+  and has_function_privilege('authenticated', 'public.create_take_list_link(uuid)', 'execute')
+  and has_function_privilege('authenticated', 'public.revoke_take_list_link(uuid)', 'execute'));
+select pg_temp.expect('no client role can execute the take list helper', not exists (
+  select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'private' and p.proname = 'take_list_household'
+    and (has_function_privilege('authenticated', p.oid, 'execute') or has_function_privilege('anon', p.oid, 'execute'))));
+select pg_temp.expect('take_list_links: no client privileges and no policies',
+  not has_table_privilege('authenticated', 'public.take_list_links', 'select, insert, update, delete, truncate, references, trigger')
+  and not has_table_privilege('anon', 'public.take_list_links', 'select, insert, update, delete, truncate, references, trigger')
+  and not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'take_list_links'));
 
 \o
 \echo 'ALL RLS SMOKE CHECKS PASSED'

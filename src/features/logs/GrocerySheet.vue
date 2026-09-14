@@ -1,11 +1,13 @@
 <script setup lang="ts">
-/** Grocery list (spec §7.4): add items, check them off, remove them. Stays open between actions. */
+/** Grocery list (spec §7.4): add items, check them off, remove them. Stays open between actions. "Take list" opens
+ *  the QR sheet that carries the list to a phone (spec §7.8). */
 import { computed, ref, watch } from 'vue'
 import { newId } from '@/data/logCommands'
 import type { GroceryItem } from '@/data/snapshot'
 import RButton from '@/ui/RButton.vue'
 import RInput from '@/ui/RInput.vue'
 import RSheet from '@/ui/RSheet.vue'
+import TakeListQr from '@/features/takelist/TakeListQr.vue'
 import SheetError from './SheetError.vue'
 import { visibleGroceries } from './logSheetModel'
 import { useLogSheet, type SaveResult } from './useLogSheet'
@@ -19,12 +21,16 @@ const { view, displayId, error, submit, clearError } = useLogSheet()
 
 const now = ref(new Date())
 const draft = ref('')
+const takeListOpen = ref(false)
 const items = computed(() => (view.value ? visibleGroceries(view.value.groceries, now.value) : []))
 
 watch(
   () => props.open,
   (open) => {
-    if (!open) return
+    if (!open) {
+      takeListOpen.value = false
+      return
+    }
     now.value = new Date()
     draft.value = ''
     clearError()
@@ -114,10 +120,8 @@ async function remove(item: GroceryItem): Promise<void> {
     </div>
 
     <template #footer>
-      <div class="flex flex-col gap-2">
-        <RButton variant="secondary" tier="moment" class="w-full" disabled>Take list</RButton>
-        <p class="text-center text-[18px] text-ink-3">Coming soon</p>
-      </div>
+      <RButton variant="secondary" tier="moment" class="w-full" @click="takeListOpen = true">Take list</RButton>
     </template>
   </RSheet>
+  <TakeListQr :open="open && takeListOpen" @close="takeListOpen = false" />
 </template>

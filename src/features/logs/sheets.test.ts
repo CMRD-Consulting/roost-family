@@ -497,8 +497,8 @@ describe('log sheets', () => {
       const names = () => w.findAll('[data-testid="grocery-item"]').map((li) => li.get('[role="checkbox"] > span:last-child').text())
 
       expect(names()).toEqual(['Whole milk', 'Bananas'])
-      expect(button(w, 'Take list').attributes('disabled')).toBeDefined()
-      expect(w.text()).toContain('Coming soon')
+      expect(button(w, 'Take list').attributes('disabled')).toBeUndefined()
+      expect(w.text()).not.toContain('Coming soon')
 
       await w.get('input').setValue('   ')
       await w.get('form').trigger('submit')

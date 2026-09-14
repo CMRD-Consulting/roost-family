@@ -1443,6 +1443,13 @@ export type Database = {
           out_token: string
         }[]
       }
+      create_take_list_link: {
+        Args: { p_household_id: string }
+        Returns: {
+          out_expires_at: string
+          out_token: string
+        }[]
+      }
       delete_household: {
         Args: { p_confirm_name: string; p_household_id: string }
         Returns: undefined
@@ -1496,6 +1503,10 @@ export type Database = {
         Returns: undefined
       }
       revoke_display: { Args: { p_display_id: string }; Returns: undefined }
+      revoke_take_list_link: {
+        Args: { p_household_id: string }
+        Returns: undefined
+      }
       set_dinner_tonight: {
         Args: { p_household_id: string; p_text: string }
         Returns: undefined
@@ -1574,6 +1585,19 @@ export type Database = {
           p_sitter_name?: string
         }
         Returns: string
+      }
+      take_list_done: { Args: { p_token: string }; Returns: undefined }
+      take_list_items: {
+        Args: { p_token: string }
+        Returns: {
+          out_checked: boolean
+          out_id: string
+          out_text: string
+        }[]
+      }
+      take_list_set_checked: {
+        Args: { p_checked: boolean; p_item_id: string; p_token: string }
+        Returns: undefined
       }
       update_child: {
         Args: {

@@ -26,3 +26,14 @@ export function createAdultClient(): RoostClient {
     global,
   })
 }
+
+/**
+ * A client with no session at all, for public pages that authorize with a token of their own (the Take list
+ * phone page). It never reads or writes stored sessions, so it can't pick up or disturb a display's identity.
+ */
+export function createAnonClient(): RoostClient {
+  return createClient<Database>(url, anonKey, {
+    auth: { storageKey: 'roost-anon', persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    global,
+  })
+}

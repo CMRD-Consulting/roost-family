@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { resolveDisplayRoute, resolveSettingsRoute } from './router'
+import { isPublicRoute, resolveDisplayRoute, resolveSettingsRoute, router } from './router'
 
 vi.mock('@/data/supabase', () => ({ displayClient: {} }))
 
@@ -41,5 +41,20 @@ describe('resolveSettingsRoute', () => {
   it('ignores routes that do not need a settings session', () => {
     expect(resolveSettingsRoute(at('registered'), false)).toBe(true)
     expect(resolveSettingsRoute(at(), false)).toBe(true)
+  })
+})
+
+describe('public routes', () => {
+  it('serves the Take list phone page at /list/:token without display guards', () => {
+    const route = router.resolve('/list/abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ')
+    expect(route.matched).toHaveLength(1)
+    expect(route.params.token).toBe('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ')
+    expect(isPublicRoute(route)).toBe(true)
+    expect(route.meta.requires).toBeUndefined()
+  })
+
+  it('treats the household screens as guarded', () => {
+    expect(isPublicRoute(router.resolve('/home'))).toBe(false)
+    expect(isPublicRoute(router.resolve('/setup'))).toBe(false)
   })
 })

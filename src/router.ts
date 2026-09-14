@@ -12,6 +12,8 @@ declare module 'vue-router' {
     settingsSession?: boolean
     /** Leaving Settings for this route keeps the settings session open (e.g. About's policy pages). */
     keepsSettingsSession?: boolean
+    /** Reachable on any device with no display registration and no display checks (the Take list phone page). */
+    public?: boolean
   }
 }
 
@@ -51,6 +53,13 @@ export const router = createRouter({
       props: { title: 'Terms' },
       meta: { keepsSettingsSession: true },
     },
+    // The Take list phone page (spec §7.8): opened from a QR code on a phone, never on a display.
+    {
+      path: '/list/:token',
+      component: () => import('@/features/takelist/TakeListPage.vue'),
+      props: true,
+      meta: { public: true },
+    },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
 })
@@ -75,7 +84,13 @@ export function resolveSettingsRoute(to: Pick<RouteLocationNormalized, 'meta'>, 
   return to.meta.settingsSession && !hasSettingsSession ? '/home' : true
 }
 
+/** Public routes skip the display guards entirely: they must not start or check a display session. */
+export function isPublicRoute(to: Pick<RouteLocationNormalized, 'meta'>): boolean {
+  return to.meta.public === true
+}
+
 router.beforeEach(async (to) => {
+  if (isPublicRoute(to)) return true
   const store = useDisplayStore()
   let state: DisplayStoreState
   try {
@@ -88,7 +103,8 @@ router.beforeEach(async (to) => {
   return resolveSettingsRoute(to, useSettingsSessionStore().info !== null)
 })
 
-// A lazy route chunk that fails to load (stale build after a deploy, or no network) reloads to /home once.
-router.onError((error) => {
-  recoverFromChunkError(error, window.sessionStorage, (url) => window.location.assign(url))
+// A lazy route chunk that fails to load (stale build after a deploy, or no network) reloads to /home once;
+// a public page (a phone that has no /home) reloads itself instead.
+router.onError((error, to) => {
+  recoverFromChunkError(error, window.sessionStorage, (url) => window.location.assign(isPublicRoute(to) ? to.fullPath : url))
 })
