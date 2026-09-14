@@ -32,6 +32,14 @@ status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/rest/v1/rpc/verify
   -d '{"p_membership_id":"bbbbbbbb-0000-0000-0000-000000000001","p_pin":"1234"}')
 check "anon calls verify_pin" 401 "$status"
 
+status=$(curl -s -o /dev/null -w '%{http_code}' "$API/rest/v1/calendar_connections?select=id,label" -H "apikey: $KEY" -H "Authorization: Bearer $KEY")
+check "anon selects calendar_connections" 401 "$status"
+
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/rest/v1/rpc/svc_calendar_secret" \
+  -H "apikey: $KEY" -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d '{"p_connection_id":"00000000-0000-0000-0000-000000000000"}')
+check "anon calls svc_calendar_secret" 401 "$status"
+
 status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/rest/v1/rpc/create_household" \
   -H "apikey: $KEY" -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
   -d '{"p_name":"X","p_time_zone":"America/New_York","p_zip":"28202","p_lat":null,"p_lon":null,"p_invite_code":"ROOST1","p_display_name":"X","p_color":"#2C7F8C"}')

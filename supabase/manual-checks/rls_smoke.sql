@@ -1844,6 +1844,397 @@ select pg_temp.expect('only authenticated can execute revoke_member_invite',
   has_function_privilege('authenticated', 'public.revoke_member_invite(text)', 'execute')
   and not has_function_privilege('anon', 'public.revoke_member_invite(text)', 'execute'));
 
+
+-- ─── Calendars (migration 8, spec §5.5, §6.3, §11.3) ─────────────────────
+-- F owns household F (PIN 2468), G is its caregiver, H has left it, J is its display. I joins F as an adult here.
+-- A owns households A2 and A3. The service role's calls are made through the svc_* wrappers as service_role.
+reset role;
+insert into public.memberships (user_id, household_id, role, display_name, color)
+values ('00000000-0000-0000-0000-000000000012', :'household_f', 'adult', 'Indy', '#2F86A6') returning id as membership_i \gset
+select h.id as household_a2 from public.households h where h.name = 'A2' \gset
+select m.id as membership_a2 from public.memberships m where m.household_id = :'household_a2' \gset
+insert into public.children (name, birthday, color) values ('A2 kid', '2024-02-02', '#C2477A') returning id as kid_a2 \gset
+insert into public.child_households (child_id, household_id) values (:'kid_a2', :'household_a2');
+insert into public.children (name, birthday, color) values ('Pip', '2024-03-03', '#C2477A') returning id as kid_pip \gset
+insert into public.child_households (child_id, household_id) values (:'kid_pip', :'household_f');
+select count(*) as vault_before from vault.secrets \gset
+grant execute on all functions in schema pg_temp to service_role;
+set local role service_role;
+select public.svc_create_calendar_connection(:'household_f', :'membership_f', 'ics', '  Family  ', 'https://calendar.test/f.ics') as conn_f \gset
+select public.svc_create_calendar_connection(:'household_f', :'membership_i', 'google', 'indy@work.test', 'refresh-i-1') as conn_i \gset
+select public.svc_create_calendar_connection(:'household_a2', :'membership_a2', 'microsoft', 'Alex', 'refresh-a2') as conn_a2 \gset
+select public.svc_add_calendar_selection(:'conn_f', 'f-cal-1', 'Family', null, null, null) as sel_f1 \gset
+select public.svc_add_calendar_selection(:'conn_f', 'f-cal-2', 'Ivy school', true, null, :'kid_f') as sel_f2 \gset
+select public.svc_add_calendar_selection(:'conn_i', 'i-cal-1', 'Work', false, :'membership_i', null) as sel_i1 \gset
+select public.svc_add_calendar_selection(:'conn_a2', 'a2-cal-1', 'Alex', true, :'membership_a2', null) as sel_a2 \gset
+reset role;
+select set_config('smoke.membership_i', :'membership_i', true), set_config('smoke.household_a2', :'household_a2', true),
+       set_config('smoke.membership_a2', :'membership_a2', true), set_config('smoke.kid_a2', :'kid_a2', true),
+       set_config('smoke.kid_pip', :'kid_pip', true), set_config('smoke.conn_f', :'conn_f', true),
+       set_config('smoke.conn_i', :'conn_i', true), set_config('smoke.conn_a2', :'conn_a2', true),
+       set_config('smoke.sel_f1', :'sel_f1', true), set_config('smoke.sel_f2', :'sel_f2', true),
+       set_config('smoke.sel_i1', :'sel_i1', true), set_config('smoke.sel_a2', :'sel_a2', true);
+create function pg_temp.vault_secret_exists(p_connection uuid) returns boolean
+language sql stable as $$
+  select exists (select 1 from vault.secrets s join public.calendar_connections c on c.vault_secret_id = s.id where c.id = p_connection)
+$$;
+
+\echo '[84] Calendars: members and displays read their household''s connections (not vault_secret_id) and selections; other households see nothing'
+select pg_temp.expect('three connections create three Vault secrets', (select count(*) from vault.secrets) = :vault_before + 3);
+select pg_temp.expect('the label is trimmed; a new calendar is hidden and unassigned by default', (
+  select label = 'Family' and status = 'ok' from public.calendar_connections where id = pg_temp.v('conn_f'))
+  and (select not visible and not gone and assigned_membership_id is null and assigned_child_id is null
+       from public.calendar_selections where id = pg_temp.v('sel_f1')));
+select pg_temp.expect('Vault stores the secret encrypted under a unique calendar name', (
+  select s.secret <> 'https://calendar.test/f.ics' and s.name like 'roost_calendar_ics_%'
+  from vault.secrets s join public.calendar_connections c on c.vault_secret_id = s.id where c.id = pg_temp.v('conn_f')));
+set local role authenticated;
+select set_config('request.jwt.claims', :'F', true);
+select pg_temp.expect('member reads the household''s connections', (
+  select array_agg(id order by label) from public.calendar_connections
+  where household_id = pg_temp.v('household_f')) = array[pg_temp.v('conn_f'), pg_temp.v('conn_i')]);
+select pg_temp.expect('member reads connection names, owners and status', (
+  select membership_id = pg_temp.v('membership_i') and provider = 'google' and label = 'indy@work.test' and status = 'ok'
+  from public.calendar_connections where id = pg_temp.v('conn_i')));
+select pg_temp.expect('member reads the household''s selections only', (
+  select count(*) from public.calendar_selections) = 3
+  and not exists (select 1 from public.calendar_selections where household_id <> pg_temp.v('household_f')));
+select pg_temp.expect_error('member cannot select vault_secret_id',
+  $q$select vault_secret_id from public.calendar_connections$q$, '42501');
+select pg_temp.expect_error('member cannot select * from calendar_connections (it includes vault_secret_id)',
+  $q$select * from public.calendar_connections$q$, '42501');
+select set_config('request.jwt.claims', :'J', true);
+select pg_temp.expect('display reads its household''s selections and connections', (
+  select count(*) from public.calendar_selections where household_id = pg_temp.v('household_f')) = 3
+  and (select count(*) from public.calendar_connections where household_id = pg_temp.v('household_f')) = 2
+  and (select assigned_child_id from public.calendar_selections where id = pg_temp.v('sel_f2')) = pg_temp.v('kid_f'));
+select pg_temp.expect_error('display cannot select vault_secret_id',
+  $q$select vault_secret_id from public.calendar_connections$q$, '42501');
+select set_config('request.jwt.claims', :'A', true);
+select pg_temp.expect('another household sees none of F''s calendars', (
+  select array_agg(id) from public.calendar_connections) = array[pg_temp.v('conn_a2')]
+  and (select array_agg(id) from public.calendar_selections) = array[pg_temp.v('sel_a2')]);
+select set_config('request.jwt.claims', :'H', true);
+select pg_temp.expect('a former member sees no calendars', not exists (select 1 from public.calendar_connections)
+  and not exists (select 1 from public.calendar_selections));
+reset role;
+select pg_temp.expect('column privileges: authenticated selects every connection column but vault_secret_id', (
+  select bool_and(has_column_privilege('authenticated', 'public.calendar_connections', a.attname, 'select') = (a.attname <> 'vault_secret_id'))
+  from pg_attribute a where a.attrelid = 'public.calendar_connections'::regclass and a.attnum > 0 and not a.attisdropped));
+
+\echo '[85] Calendars: clients cannot insert, update or delete directly'
+set local role authenticated;
+select set_config('request.jwt.claims', :'F', true);
+select pg_temp.expect_error('member inserts a connection',
+  $q$insert into public.calendar_connections (household_id, membership_id, provider, label, vault_secret_id)
+     values (pg_temp.v('household_f'), pg_temp.v('membership_f'), 'ics', 'X', gen_random_uuid())$q$, '42501');
+select pg_temp.expect_error('member inserts a selection',
+  $q$insert into public.calendar_selections (household_id, connection_id, external_calendar_id, name)
+     values (pg_temp.v('household_f'), pg_temp.v('conn_f'), 'x', 'X')$q$, '42501');
+select pg_temp.expect_error('member updates a connection''s status',
+  $q$update public.calendar_connections set status = 'ok' where id = pg_temp.v('conn_f')$q$, '42501');
+select pg_temp.expect_error('member shows a selection directly',
+  $q$update public.calendar_selections set visible = false where id = pg_temp.v('sel_f2')$q$, '42501');
+select pg_temp.expect_error('member deletes a connection directly',
+  $q$delete from public.calendar_connections where id = pg_temp.v('conn_f')$q$, '42501');
+select set_config('request.jwt.claims', :'J', true);
+select pg_temp.expect_error('display deletes a selection directly',
+  $q$delete from public.calendar_selections where id = pg_temp.v('sel_f1')$q$, '42501');
+reset role;
+select pg_temp.expect('table privileges: authenticated select only, anon nothing, service_role select only',
+  not has_table_privilege('authenticated', 'public.calendar_connections', 'insert, update, delete, truncate, references, trigger')
+  and has_table_privilege('authenticated', 'public.calendar_selections', 'select')
+  and not has_table_privilege('authenticated', 'public.calendar_selections', 'insert, update, delete, truncate, references, trigger')
+  and not has_table_privilege('anon', 'public.calendar_connections', 'select, insert, update, delete, truncate, references, trigger')
+  and not has_table_privilege('anon', 'public.calendar_selections', 'select, insert, update, delete, truncate, references, trigger')
+  and not has_any_column_privilege('anon', 'public.calendar_connections', 'select')
+  and has_table_privilege('service_role', 'public.calendar_connections', 'select')
+  and not has_table_privilege('service_role', 'public.calendar_connections', 'insert, update, delete')
+  and not has_table_privilege('service_role', 'public.calendar_selections', 'insert, update, delete'));
+select pg_temp.expect('check constraints: at most one assignee, and a visible calendar has one', (
+  select count(*) from pg_constraint where conrelid = 'public.calendar_selections'::regclass
+    and conname in ('calendar_selections_one_assignee', 'calendar_selections_visible_needs_assignee')) = 2);
+select pg_temp.expect_error('constraint: visible without an assignee',
+  $q$update public.calendar_selections set visible = true where id = pg_temp.v('sel_f1')$q$, '23514');
+select pg_temp.expect_error('constraint: two assignees',
+  $q$update public.calendar_selections set assigned_membership_id = pg_temp.v('membership_f') where id = pg_temp.v('sel_f2')$q$, '23514');
+select pg_temp.expect_error('constraint: a selection pointing at another household''s child',
+  $q$update public.calendar_selections set assigned_child_id = pg_temp.v('kid_a2') where id = pg_temp.v('sel_f1')$q$, '23503');
+select pg_temp.expect_error('constraint: a connection for another household''s member',
+  $q$insert into public.calendar_connections (household_id, membership_id, provider, label, vault_secret_id)
+     values (pg_temp.v('household_f'), pg_temp.v('membership_a2'), 'ics', 'X', gen_random_uuid())$q$, '23503');
+
+\echo '[86] Calendar helpers: no client role executes the private helpers or the service wrappers'
+select pg_temp.expect('anon and authenticated cannot execute any private calendar helper', not exists (
+  select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'private' and p.proname in (
+    'store_calendar_secret', 'update_calendar_secret', 'calendar_secret', 'create_calendar_connection', 'add_calendar_selection',
+    'set_calendar_status', 'set_calendar_selection_gone', 'require_calendar_assignee', 'hide_unassigned_calendar_selection',
+    'delete_calendar_vault_secret', 'end_membership')
+    and (has_function_privilege('authenticated', p.oid, 'execute') or has_function_privilege('anon', p.oid, 'execute'))));
+select pg_temp.expect('only service_role can execute the 6 svc_ wrappers', (
+  select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public' and p.proname like 'svc\_%'
+    and has_function_privilege('service_role', p.oid, 'execute')
+    and not has_function_privilege('authenticated', p.oid, 'execute')
+    and not has_function_privilege('anon', p.oid, 'execute')) = 6
+  and (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+       where n.nspname = 'public' and p.proname like 'svc\_%') = 6);
+select pg_temp.expect('anon cannot execute svc_calendar_secret',
+  not has_function_privilege('anon', 'public.svc_calendar_secret(uuid)', 'execute'));
+select pg_temp.expect('PUBLIC cannot execute any calendar function', not exists (
+  select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+  where n.nspname in ('public', 'private') and (p.proname like '%calendar%' or p.proname like 'svc\_%')
+    and a.grantee = 0 and a.privilege_type = 'EXECUTE'));
+select pg_temp.expect('only authenticated can execute set_calendar_selection and disconnect_calendar',
+  has_function_privilege('authenticated', 'public.set_calendar_selection(uuid, boolean, uuid, uuid)', 'execute')
+  and has_function_privilege('authenticated', 'public.disconnect_calendar(uuid)', 'execute')
+  and not has_function_privilege('anon', 'public.set_calendar_selection(uuid, boolean, uuid, uuid)', 'execute')
+  and not has_function_privilege('anon', 'public.disconnect_calendar(uuid)', 'execute'));
+-- Privilege checks rather than calls: on this Supabase Postgres image a function-execute permission error raised
+-- inside a pg_temp helper crashes the backend (see the note above [26]). The REST-level check is in anon_api_check.sh.
+select pg_temp.expect('authenticated cannot execute svc_calendar_secret, svc_create_calendar_connection or private.calendar_secret',
+  not has_function_privilege('authenticated', 'public.svc_calendar_secret(uuid)', 'execute')
+  and not has_function_privilege('authenticated', 'public.svc_create_calendar_connection(uuid, uuid, text, text, text)', 'execute')
+  and not has_function_privilege('authenticated', 'private.calendar_secret(uuid)', 'execute'));
+
+\echo '[87] set_calendar_selection: full sign-in adult, own calendars only, same-household assignee, audited'
+set local role authenticated;
+select set_config('request.jwt.claims', :'J', true);
+select pg_temp.expect_error('a display (no full sign-in) sets a selection',
+  $q$select public.set_calendar_selection(pg_temp.v('sel_f1'), true, pg_temp.v('membership_f'), null)$q$, '42501');
+select set_config('request.jwt.claims', :'I', true);
+select pg_temp.expect_error('another adult of the household sets F''s selection',
+  $q$select public.set_calendar_selection(pg_temp.v('sel_f1'), true, pg_temp.v('membership_i'), null)$q$, '42501');
+select set_config('request.jwt.claims', :'A', true);
+select pg_temp.expect_error('another household''s owner sets F''s selection',
+  $q$select public.set_calendar_selection(pg_temp.v('sel_f1'), true, pg_temp.v('membership_a2'), null)$q$, '42501');
+select set_config('request.jwt.claims', :'F', true);
+select pg_temp.expect_error('assign to another household''s member',
+  $q$select public.set_calendar_selection(pg_temp.v('sel_f1'), true, pg_temp.v('membership_a2'), null)$q$, '42501');
+select pg_temp.expect_error('assign to another household''s child',
+  $q$select public.set_calendar_selection(pg_temp.v('sel_f1'), true, null, pg_temp.v('kid_a2'))$q$, '42501');
+select pg_temp.expect_error('assign to a former member',
+  $q$select public.set_calendar_selection(pg_temp.v('sel_f1'), true, pg_temp.v('membership_h'), null)$q$, '42501');
+select pg_temp.expect_error('visible without an assignee',
+  $q$select public.set_calendar_selection(pg_temp.v('sel_f1'), true, null, null)$q$, '22023');
+select pg_temp.expect_error('two assignees',
+  $q$select public.set_calendar_selection(pg_temp.v('sel_f1'), false, pg_temp.v('membership_f'), pg_temp.v('kid_f'))$q$, '22023');
+select pg_temp.expect_error('visible null',
+  $q$select public.set_calendar_selection(pg_temp.v('sel_f1'), null, pg_temp.v('membership_f'), null)$q$, '22023');
+select pg_temp.expect_error('an unknown selection',
+  $q$select public.set_calendar_selection(gen_random_uuid(), false, null, null)$q$, '42501');
+select pg_temp.expect_error('F sets I''s selection',
+  $q$select public.set_calendar_selection(pg_temp.v('sel_i1'), true, pg_temp.v('membership_f'), null)$q$, '42501');
+reset role;
+select pg_temp.expect('rejected calls changed nothing', (
+  select not visible and assigned_membership_id is null and assigned_child_id is null
+  from public.calendar_selections where id = pg_temp.v('sel_f1')));
+set local role authenticated;
+select public.set_calendar_selection(:'sel_f1', true, :'membership_i', null);
+select pg_temp.expect('F shows its calendar as Indy''s', (
+  select visible and assigned_membership_id = pg_temp.v('membership_i') and assigned_child_id is null
+  from public.calendar_selections where id = pg_temp.v('sel_f1')));
+select pg_temp.expect('set_calendar_selection audited', pg_temp.audited(pg_temp.v('household_f'), pg_temp.v('membership_f'), 'calendars', 'selection', pg_temp.v('sel_f1')));
+select public.set_calendar_selection(:'sel_f1', true, null, :'kid_pip');
+select pg_temp.expect('reassigned to a child', (
+  select visible and assigned_membership_id is null and assigned_child_id = pg_temp.v('kid_pip')
+  from public.calendar_selections where id = pg_temp.v('sel_f1')));
+select public.set_calendar_selection(:'sel_f1', false, null, null);
+select pg_temp.expect('hidden and unassigned is allowed', (
+  select not visible and assigned_child_id is null from public.calendar_selections where id = pg_temp.v('sel_f1')));
+select public.set_calendar_selection(:'sel_f1', true, :'membership_i', null);
+reset role;
+
+\echo '[88] Service helpers: read and rotate secrets, record status, gone calendars and re-discovered calendars'
+set local role service_role;
+select pg_temp.expect('svc_calendar_secret returns the decrypted secret',
+  public.svc_calendar_secret(:'conn_f') = 'https://calendar.test/f.ics');
+select pg_temp.expect('svc_calendar_secret of an unknown connection is null', public.svc_calendar_secret(gen_random_uuid()) is null);
+select public.svc_update_calendar_secret(:'conn_i', 'refresh-i-2');
+select pg_temp.expect('svc_update_calendar_secret rotates the secret', public.svc_calendar_secret(:'conn_i') = 'refresh-i-2');
+select pg_temp.expect_error('rotate to a blank secret',
+  $q$select public.svc_update_calendar_secret(pg_temp.v('conn_i'), '  ')$q$, '22023');
+select pg_temp.expect_error('rotate an unknown connection''s secret',
+  $q$select public.svc_update_calendar_secret(gen_random_uuid(), 'x')$q$, '42501');
+reset role;
+update public.calendar_connections set status_changed_at = '2026-01-01T00:00:00Z' where id = :'conn_i';
+select count(*) as vault_mid from vault.secrets \gset
+set local role service_role;
+select public.svc_set_calendar_status(:'conn_i', 'auth_expired');
+select pg_temp.expect('status recorded with the time it changed', (
+  select status = 'auth_expired' and status_changed_at = now() from public.calendar_connections where id = pg_temp.v('conn_i')));
+reset role;
+update public.calendar_connections set status_changed_at = '2026-01-01T00:00:00Z' where id = :'conn_i';
+set local role service_role;
+select public.svc_set_calendar_status(:'conn_i', 'auth_expired');
+select pg_temp.expect('the same status again keeps its time', (
+  select status_changed_at = '2026-01-01T00:00:00Z'::timestamptz from public.calendar_connections where id = pg_temp.v('conn_i')));
+select pg_temp.expect_error('an unknown status', $q$select public.svc_set_calendar_status(pg_temp.v('conn_i'), 'broken')$q$, '22023');
+select pg_temp.expect_error('status of an unknown connection', $q$select public.svc_set_calendar_status(gen_random_uuid(), 'ok')$q$, '42501');
+select public.svc_set_calendar_selection_gone(:'sel_f1', true);
+select pg_temp.expect('one calendar marked gone, the connection still ok', (
+  select gone from public.calendar_selections where id = pg_temp.v('sel_f1'))
+  and (select status = 'ok' from public.calendar_connections where id = pg_temp.v('conn_f')));
+select pg_temp.expect_error('gone of an unknown selection', $q$select public.svc_set_calendar_selection_gone(gen_random_uuid(), true)$q$, '42501');
+select pg_temp.expect('re-recording a calendar returns the same selection',
+  public.svc_add_calendar_selection(:'conn_f', 'f-cal-1', '  Family (renamed)  ', false, null, null) = :'sel_f1'::uuid);
+select pg_temp.expect('re-recording renames it, clears gone, and keeps the adult''s choices', (
+  select name = 'Family (renamed)' and not gone and visible and assigned_membership_id = pg_temp.v('membership_i')
+  from public.calendar_selections where id = pg_temp.v('sel_f1')));
+select public.svc_add_calendar_selection(:'conn_f', 'f-cal-3', '   ', null, null, null) as sel_f3 \gset
+select pg_temp.expect('a blank calendar name becomes Calendar', (
+  select name = 'Calendar' and not visible from public.calendar_selections where id = :'sel_f3'));
+select pg_temp.expect_error('add a visible calendar without an assignee',
+  $q$select public.svc_add_calendar_selection(pg_temp.v('conn_f'), 'f-cal-4', 'X', true, null, null)$q$, '22023');
+select pg_temp.expect_error('add a calendar assigned to another household''s child',
+  $q$select public.svc_add_calendar_selection(pg_temp.v('conn_f'), 'f-cal-4', 'X', true, null, pg_temp.v('kid_a2'))$q$, '42501');
+select pg_temp.expect_error('add a calendar to an unknown connection',
+  $q$select public.svc_add_calendar_selection(gen_random_uuid(), 'f-cal-4', 'X', false, null, null)$q$, '42501');
+select pg_temp.expect_error('connect for a caregiver',
+  $q$select public.svc_create_calendar_connection(pg_temp.v('household_f'), pg_temp.v('membership_g'), 'ics', 'X', 'https://x.test/g.ics')$q$, '42501');
+select pg_temp.expect_error('connect for a former member',
+  $q$select public.svc_create_calendar_connection(pg_temp.v('household_f'), pg_temp.v('membership_h'), 'ics', 'X', 'https://x.test/h.ics')$q$, '42501');
+select pg_temp.expect_error('connect for another household''s member',
+  $q$select public.svc_create_calendar_connection(pg_temp.v('household_f'), pg_temp.v('membership_a2'), 'ics', 'X', 'https://x.test/a.ics')$q$, '42501');
+select pg_temp.expect_error('connect an unknown provider',
+  $q$select public.svc_create_calendar_connection(pg_temp.v('household_f'), pg_temp.v('membership_f'), 'yahoo', 'X', 'https://x.test/f.ics')$q$, '22023');
+select pg_temp.expect_error('connect with a blank secret',
+  $q$select public.svc_create_calendar_connection(pg_temp.v('household_f'), pg_temp.v('membership_f'), 'ics', 'X', '  ')$q$, '22023');
+select pg_temp.expect_error('connect with a blank label',
+  $q$select public.svc_create_calendar_connection(pg_temp.v('household_f'), pg_temp.v('membership_f'), 'ics', ' ', 'https://x.test/f.ics')$q$, '22023');
+reset role;
+select pg_temp.expect('rejected connects and rotations left no Vault secrets behind', (select count(*) from vault.secrets) = :vault_mid);
+select pg_temp.expect('connect audited with the provider only', (
+  select change -> 'fields' = '{"provider": "google"}'::jsonb and membership_id = pg_temp.v('membership_i')
+  from public.settings_audit where change ->> 'section' = 'calendars' and change ->> 'action' = 'connect'
+    and change ->> 'target_id' = pg_temp.v('conn_i')::text)
+  and not exists (select 1 from public.settings_audit where change::text like '%refresh-i%' or change::text like '%calendar.test%'));
+
+\echo '[89] disconnect_calendar: full sign-in adult, own connection only; removes the connection, its selections and its Vault secret'
+select vault_secret_id as secret_f from public.calendar_connections where id = :'conn_f' \gset
+set local role authenticated;
+select set_config('request.jwt.claims', :'J', true);
+select pg_temp.expect_error('a display disconnects a calendar',
+  $q$select public.disconnect_calendar(pg_temp.v('conn_f'))$q$, '42501');
+select set_config('request.jwt.claims', :'I', true);
+select pg_temp.expect_error('another adult of the household disconnects F''s calendar',
+  $q$select public.disconnect_calendar(pg_temp.v('conn_f'))$q$, '42501');
+select set_config('request.jwt.claims', :'A', true);
+select pg_temp.expect_error('another household''s owner disconnects F''s calendar',
+  $q$select public.disconnect_calendar(pg_temp.v('conn_f'))$q$, '42501');
+select set_config('request.jwt.claims', :'F', true);
+select pg_temp.expect_error('an unknown connection',
+  $q$select public.disconnect_calendar(gen_random_uuid())$q$, '42501');
+reset role;
+select pg_temp.expect('F''s secret still exists before disconnecting', exists (select 1 from vault.secrets where id = :'secret_f'));
+set local role authenticated;
+select public.disconnect_calendar(:'conn_f');
+select pg_temp.expect('disconnect audited', pg_temp.audited(pg_temp.v('household_f'), pg_temp.v('membership_f'), 'calendars', 'disconnect', pg_temp.v('conn_f')));
+select pg_temp.expect_error('disconnecting again reads as not found',
+  $q$select public.disconnect_calendar(pg_temp.v('conn_f'))$q$, '42501');
+reset role;
+select pg_temp.expect('connection, selections and Vault secret gone', not exists (select 1 from public.calendar_connections where id = pg_temp.v('conn_f'))
+  and not exists (select 1 from public.calendar_selections where connection_id = pg_temp.v('conn_f'))
+  and not exists (select 1 from vault.secrets where id = :'secret_f'));
+select pg_temp.expect('I''s connection and secret untouched', pg_temp.vault_secret_exists(pg_temp.v('conn_i')));
+
+\echo '[90] Leaving, removal and deletions: the member''s calendars and secrets go; calendars assigned to them become hidden and unassigned'
+set local role service_role;
+select public.svc_create_calendar_connection(:'household_f', :'membership_f', 'ics', 'Family 2', 'https://calendar.test/f2.ics') as conn_f2 \gset
+select public.svc_add_calendar_selection(:'conn_f2', 'f2-indy', 'For Indy', true, :'membership_i', null) as sel_f_indy \gset
+select public.svc_add_calendar_selection(:'conn_f2', 'f2-pip', 'For Pip', true, null, :'kid_pip') as sel_f_pip \gset
+select public.svc_add_calendar_selection(:'conn_f2', 'f2-frankie', 'For Frankie', true, :'membership_f', null) as sel_f_frankie \gset
+reset role;
+select vault_secret_id as secret_i from public.calendar_connections where id = :'conn_i' \gset
+set local role authenticated;
+select set_config('request.jwt.claims', :'F', true);
+select public.remove_member(:'membership_i');
+reset role;
+select pg_temp.expect('remove_member removes the member''s connections, selections and Vault secrets',
+  not exists (select 1 from public.calendar_connections where membership_id = pg_temp.v('membership_i'))
+  and not exists (select 1 from public.calendar_selections where id = pg_temp.v('sel_i1'))
+  and not exists (select 1 from vault.secrets where id = :'secret_i'));
+select pg_temp.expect('a calendar assigned to the removed member is hidden and unassigned', (
+  select not visible and assigned_membership_id is null and assigned_child_id is null
+  from public.calendar_selections where id = :'sel_f_indy'));
+select pg_temp.expect('other calendars keep their assignment', (
+  select visible and assigned_membership_id = pg_temp.v('membership_f') from public.calendar_selections where id = :'sel_f_frankie'));
+delete from public.children where id = :'kid_pip';
+select pg_temp.expect('a calendar assigned to a deleted child is hidden and unassigned', (
+  select not visible and assigned_child_id is null and assigned_membership_id is null
+  from public.calendar_selections where id = :'sel_f_pip'));
+-- I rejoins F (on the same membership) with the unused owner invite from [83], connects, then leaves.
+set local role authenticated;
+select set_config('request.jwt.claims', :'I', true);
+select public.accept_member_invite(:'invite_keep', 'Indy', '#2F86A6', '9999');
+reset role;
+set local role service_role;
+select public.svc_create_calendar_connection(:'household_f', :'membership_i', 'microsoft', 'Indy', 'refresh-i-3') as conn_i2 \gset
+reset role;
+select vault_secret_id as secret_i2 from public.calendar_connections where id = :'conn_i2' \gset
+set local role authenticated;
+select public.leave_household(:'household_f');
+reset role;
+select pg_temp.expect('leave_household removes the member''s connection and its Vault secret',
+  not exists (select 1 from public.calendar_connections where id = :'conn_i2')
+  and not exists (select 1 from vault.secrets where id = :'secret_i2'));
+-- Deleting an account deletes its memberships; the foreign keys take the connections, and the trigger their secrets.
+insert into auth.users (id, instance_id, aud, role, email, raw_app_meta_data, raw_user_meta_data, is_anonymous, created_at, updated_at)
+values ('00000000-0000-0000-0000-000000000014', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'q@roost.test', '{}', '{}', false, now(), now());
+insert into public.memberships (user_id, household_id, role, display_name, color)
+values ('00000000-0000-0000-0000-000000000014', :'household_f', 'adult', 'Quinn', '#2F86A6') returning id as membership_q \gset
+select private.create_calendar_connection(:'household_f', :'membership_q', 'google', 'Quinn', 'refresh-q') as conn_q \gset
+select public.svc_add_calendar_selection(:'conn_f2', 'f2-quinn', 'For Quinn', true, :'membership_q', null) as sel_f_quinn \gset
+select vault_secret_id as secret_q from public.calendar_connections where id = :'conn_q' \gset
+delete from auth.users where id = '00000000-0000-0000-0000-000000000014';
+select pg_temp.expect('deleting an account removes its connections and Vault secrets',
+  not exists (select 1 from public.calendar_connections where id = :'conn_q')
+  and not exists (select 1 from vault.secrets where id = :'secret_q'));
+select pg_temp.expect('a calendar assigned to a deleted membership is hidden and unassigned', (
+  select not visible and assigned_membership_id is null from public.calendar_selections where id = :'sel_f_quinn'));
+
+\echo '[91] Household deletion disconnects calendars at once, and the purge removes any remaining Vault secrets'
+select vault_secret_id as secret_a2 from public.calendar_connections where id = :'conn_a2' \gset
+set local role authenticated;
+select set_config('request.jwt.claims', :'A', true);
+select public.delete_household(:'household_a2', 'A2');
+reset role;
+select pg_temp.expect('delete_household removes the household''s connections, selections and Vault secrets at once',
+  not exists (select 1 from public.calendar_connections where household_id = pg_temp.v('household_a2'))
+  and not exists (select 1 from public.calendar_selections where household_id = pg_temp.v('household_a2'))
+  and not exists (select 1 from vault.secrets where id = :'secret_a2'));
+select pg_temp.expect('F''s calendars untouched by A2''s deletion', exists (select 1 from public.calendar_connections where id = :'conn_f2')
+  and pg_temp.vault_secret_exists(:'conn_f2'));
+-- A connection left in a deleted household (e.g. written by an Edge Function mid-deletion) is caught by the purge.
+insert into public.calendar_connections (household_id, membership_id, provider, label, vault_secret_id)
+values (:'household_a2', :'membership_a2', 'ics', 'Late', private.store_calendar_secret('https://calendar.test/late.ics', 'roost_calendar_ics'))
+returning id as conn_late, vault_secret_id as secret_late \gset
+select pg_temp.expect('the secret of a deleted household''s connection is not handed out', public.svc_calendar_secret(:'conn_late') is null);
+update public.households set deleted_at = now() - interval '31 days' where id = :'household_a2';
+select private.purge_deleted_households() as purged \gset
+select pg_temp.expect('the purge removes the household', :purged >= 1
+  and not exists (select 1 from public.households where id = pg_temp.v('household_a2')));
+select pg_temp.expect('the purge removes the household''s calendar Vault secrets',
+  not exists (select 1 from public.calendar_connections where id = :'conn_late')
+  and not exists (select 1 from vault.secrets where id = :'secret_late'));
+select pg_temp.expect('no calendar Vault secret is left without a connection', not exists (
+  select 1 from vault.secrets s where s.name like 'roost_calendar_%'
+    and not exists (select 1 from public.calendar_connections c where c.vault_secret_id = s.id)));
+
+\echo '[92] Calendar tables: RLS on, select policies only, realtime published with full replica identity'
+select pg_temp.expect('RLS on and one SELECT policy each', (
+  select bool_and(relrowsecurity) from pg_class where oid in ('public.calendar_connections'::regclass, 'public.calendar_selections'::regclass))
+  and (select array_agg(cmd) from pg_policies where schemaname = 'public' and tablename = 'calendar_connections') = array['SELECT']
+  and (select array_agg(cmd) from pg_policies where schemaname = 'public' and tablename = 'calendar_selections') = array['SELECT']);
+select pg_temp.expect('both published to realtime with full replica identity', (
+  select count(*) from pg_publication_tables where pubname = 'supabase_realtime' and tablename in ('calendar_connections', 'calendar_selections')) = 2
+  and (select bool_and(relreplident = 'f') from pg_class where oid in ('public.calendar_connections'::regclass, 'public.calendar_selections'::regclass)));
+select pg_temp.expect('composite household foreign keys on every reference', (
+  select count(*) from pg_constraint c
+  where c.contype = 'f' and array_length(c.conkey, 1) = 2
+    and c.conrelid in ('public.calendar_connections'::regclass, 'public.calendar_selections'::regclass)) = 4);
+
 \o
 \echo 'ALL RLS SMOKE CHECKS PASSED'
 rollback;

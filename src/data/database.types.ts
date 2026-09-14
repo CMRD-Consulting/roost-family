@@ -49,6 +49,125 @@ export type Database = {
         }
         Relationships: []
       }
+      calendar_connections: {
+        Row: {
+          created_at: string
+          household_id: string
+          id: string
+          label: string
+          membership_id: string
+          provider: string
+          status: string
+          status_changed_at: string
+          vault_secret_id: string
+        }
+        Insert: {
+          created_at?: string
+          household_id: string
+          id?: string
+          label: string
+          membership_id: string
+          provider: string
+          status?: string
+          status_changed_at?: string
+          vault_secret_id: string
+        }
+        Update: {
+          created_at?: string
+          household_id?: string
+          id?: string
+          label?: string
+          membership_id?: string
+          provider?: string
+          status?: string
+          status_changed_at?: string
+          vault_secret_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "calendar_connections_household_id_fkey"
+            columns: ["household_id"]
+            isOneToOne: false
+            referencedRelation: "households"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "calendar_connections_membership_id_household_id_fkey"
+            columns: ["membership_id", "household_id"]
+            isOneToOne: false
+            referencedRelation: "memberships"
+            referencedColumns: ["id", "household_id"]
+          },
+        ]
+      }
+      calendar_selections: {
+        Row: {
+          assigned_child_id: string | null
+          assigned_membership_id: string | null
+          connection_id: string
+          created_at: string
+          external_calendar_id: string
+          gone: boolean
+          household_id: string
+          id: string
+          name: string
+          visible: boolean
+        }
+        Insert: {
+          assigned_child_id?: string | null
+          assigned_membership_id?: string | null
+          connection_id: string
+          created_at?: string
+          external_calendar_id: string
+          gone?: boolean
+          household_id: string
+          id?: string
+          name: string
+          visible?: boolean
+        }
+        Update: {
+          assigned_child_id?: string | null
+          assigned_membership_id?: string | null
+          connection_id?: string
+          created_at?: string
+          external_calendar_id?: string
+          gone?: boolean
+          household_id?: string
+          id?: string
+          name?: string
+          visible?: boolean
+        }
+        Relationships: [
+          {
+            foreignKeyName: "calendar_selections_assigned_child_id_household_id_fkey"
+            columns: ["assigned_child_id", "household_id"]
+            isOneToOne: false
+            referencedRelation: "child_households"
+            referencedColumns: ["child_id", "household_id"]
+          },
+          {
+            foreignKeyName: "calendar_selections_assigned_membership_id_household_id_fkey"
+            columns: ["assigned_membership_id", "household_id"]
+            isOneToOne: false
+            referencedRelation: "memberships"
+            referencedColumns: ["id", "household_id"]
+          },
+          {
+            foreignKeyName: "calendar_selections_connection_id_household_id_fkey"
+            columns: ["connection_id", "household_id"]
+            isOneToOne: false
+            referencedRelation: "calendar_connections"
+            referencedColumns: ["id", "household_id"]
+          },
+          {
+            foreignKeyName: "calendar_selections_household_id_fkey"
+            columns: ["household_id"]
+            isOneToOne: false
+            referencedRelation: "households"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       child_households: {
         Row: {
           child_id: string
@@ -1542,6 +1661,10 @@ export type Database = {
         Args: { p_membership_id: string; p_pin: string; p_routine_id: string }
         Returns: undefined
       }
+      disconnect_calendar: {
+        Args: { p_connection_id: string }
+        Returns: undefined
+      }
       display_heartbeat: { Args: never; Returns: boolean }
       end_sitter_session: {
         Args: { p_membership_id: string; p_pin: string; p_session_id: string }
@@ -1585,6 +1708,15 @@ export type Database = {
       }
       revoke_take_list_link: {
         Args: { p_household_id: string }
+        Returns: undefined
+      }
+      set_calendar_selection: {
+        Args: {
+          p_assigned_child_id: string
+          p_assigned_membership_id: string
+          p_selection_id: string
+          p_visible: boolean
+        }
         Returns: undefined
       }
       set_dinner_tonight: {
@@ -1674,6 +1806,43 @@ export type Database = {
           p_sitter_name?: string
         }
         Returns: string
+      }
+      svc_add_calendar_selection: {
+        Args: {
+          p_assigned_child_id: string
+          p_assigned_membership_id: string
+          p_connection_id: string
+          p_external_calendar_id: string
+          p_name: string
+          p_visible: boolean
+        }
+        Returns: string
+      }
+      svc_calendar_secret: {
+        Args: { p_connection_id: string }
+        Returns: string
+      }
+      svc_create_calendar_connection: {
+        Args: {
+          p_household_id: string
+          p_label: string
+          p_membership_id: string
+          p_provider: string
+          p_secret: string
+        }
+        Returns: string
+      }
+      svc_set_calendar_selection_gone: {
+        Args: { p_gone: boolean; p_selection_id: string }
+        Returns: undefined
+      }
+      svc_set_calendar_status: {
+        Args: { p_connection_id: string; p_status: string }
+        Returns: undefined
+      }
+      svc_update_calendar_secret: {
+        Args: { p_connection_id: string; p_secret: string }
+        Returns: undefined
       }
       take_list_done: { Args: { p_token: string }; Returns: undefined }
       take_list_items: {
