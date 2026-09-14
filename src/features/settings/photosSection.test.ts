@@ -4,6 +4,7 @@ import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import { buildDemoSnapshot } from '@/data/demo/demoFixture'
 import { SettingsError, type SettingsApi } from '@/data/settingsApi'
 import type { HouseholdPhoto } from '@/data/snapshot'
+import { clearReloadHolds, hasReloadHold } from '@/app/reloadHolds'
 import { useHouseholdStore } from '@/stores/householdStore'
 import { useSettingsSessionStore } from '@/stores/settingsSession'
 import PhotosSection from './sections/PhotosSection.vue'
@@ -159,6 +160,20 @@ describe('Settings > Photos', () => {
       expect.stringMatching(/park\.png.*Added/),
     ])
     w.unmount()
+  })
+
+  it('holds app-update reloads while photos are being added (spec §5.8)', async () => {
+    let finishUpload: (id: string) => void = () => {}
+    settingsApi.uploadPhoto.mockImplementationOnce(() => new Promise<string>((resolve) => (finishUpload = resolve)))
+    const w = await mountSection([])
+    expect(hasReloadHold('photoUpload')).toBe(false)
+    await chooseFiles(w, [new File(['a'], 'one.jpg')])
+    expect(hasReloadHold('photoUpload')).toBe(true)
+    finishUpload('eeeeeeee-0000-0000-0000-000000000009')
+    await settle()
+    expect(hasReloadHold('photoUpload')).toBe(false)
+    w.unmount()
+    clearReloadHolds()
   })
 
   it('stops at 200 slideshow photos', async () => {

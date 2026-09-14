@@ -77,6 +77,8 @@ export const useModesStore = defineStore('modes', () => {
 
   /** Open sheets, dialogs and PIN pads that keep Night Mode from taking over (it never interrupts one). */
   const nightHolds = ref(new Set<string>())
+  /** True while any sheet, dialog, PIN pad or sign-in holds Night Mode off (a critical app update waits for it too). */
+  const nightHeld = computed<boolean>(() => nightHolds.value.size > 0)
 
   /** Inside the household's night window, whether or not a peek is showing the main screen. */
   const nightWindow = computed<boolean>(() => {
@@ -136,5 +138,5 @@ export const useModesStore = defineStore('modes', () => {
   // microtask — a chime triggered right after toggling nap must never slip through unmuted.
   watch(() => napActive.value || nightWindow.value, (muted) => setMuted(muted), { immediate: true, flush: 'sync' })
 
-  return { now, nightPeekUntil, nightActive, peeking, nap, napActive, peek, extendPeek, holdNight, releaseNight, toggleNap, endNap }
+  return { now, nightPeekUntil, nightActive, nightHeld, peeking, nap, napActive, peek, extendPeek, holdNight, releaseNight, toggleNap, endNap }
 })

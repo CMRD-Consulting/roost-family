@@ -11,6 +11,7 @@ import { validateCode, validateEmail } from '@/features/setup/validation'
 import type { AdultSession } from '@/session/adultSession'
 import RButton from '@/ui/RButton.vue'
 import RInput from '@/ui/RInput.vue'
+import { useReloadHold } from '@/app/reloadHolds'
 import { useNightHold } from './useNightHold'
 
 const props = withDefaults(
@@ -42,6 +43,8 @@ const busy = ref(false)
 const error = ref<string | null>(null)
 const isDev = import.meta.env.DEV
 if (props.holdNight) useNightHold()
+// Waiting for an emailed code can take minutes without a touch; even a critical app update waits (spec §5.8).
+useReloadHold('signIn')
 const headingEl = useTemplateRef<HTMLElement>('titleHeading')
 
 // A new step (email → code, or back): focus its heading so a screen reader announces where the adult is.

@@ -6,6 +6,7 @@
  * short-lived signed URLs.
  */
 import { computed, reactive, ref, watch } from 'vue'
+import { useReloadHold } from '@/app/reloadHolds'
 import {
   loadPhotoUrlApi, MAX_SLIDESHOW_PHOTOS, PHOTO_URL_SECONDS, PhotoDecodeError, prepareImage,
 } from '@/data/photosApi'
@@ -69,6 +70,8 @@ const fileInput = ref<HTMLInputElement | null>(null)
 const uploads = ref<Upload[]>([])
 const adding = ref(false)
 let nextKey = 0
+// No app update reloads the tablet while photos are being added (spec §5.8).
+useReloadHold('photoUpload', () => adding.value)
 
 function chooseFiles(): void {
   fileInput.value?.click()

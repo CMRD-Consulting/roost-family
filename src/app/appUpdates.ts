@@ -3,11 +3,15 @@ import { ref } from 'vue'
 import type { Router } from 'vue-router'
 import { useHouseholdStore } from '@/stores/householdStore'
 import { useModesStore } from '@/stores/modesStore'
+import { useSettingsSessionStore } from '@/stores/settingsSession'
+import { hasReloadHold } from './reloadHolds'
 
 /** How often an always-on display asks the server for a new app version (spec §5.8). */
 export const UPDATE_CHECK_MS = 30 * 60_000
 /** How long the screen must go untouched before a waiting update may reload it. */
 export const IDLE_BEFORE_RELOAD_MS = 5 * 60_000
+/** A critical update still waits this long after the last touch or key press, so it never reloads during input. */
+export const CRITICAL_IDLE_MS = 60_000
 /** How often a waiting update re-checks whether now is a safe moment. */
 const SAFE_MOMENT_POLL_MS = 30_000
 /** A second chunk failure within this window doesn't reload again (no reload loops). */
@@ -18,30 +22,62 @@ const VERSION_URL = '/version.json'
 
 export interface ReloadMomentInput {
   nightActive: boolean
+  /** Since the last pointer or keyboard activity. */
   msSinceLastTouch: number
   timerRunning: boolean
   route: string
   /** The route is a public page (Manage household, the Take list): any browser, maybe mid-task with a temporary
    *  sign-in. It never reloads on its own; a waiting version applies on the next visit. */
   publicRoute?: boolean
-  /** Set from a critical `version.json` (spec §5.8): reload as soon as no timer is running,
-   *  ignoring Night Mode, idle time and Kids' Corner — a critical fix can't wait for those. */
+  /** Set from a critical `version.json` (spec §5.8): reload sooner than the normal rules allow. */
   critical?: boolean
+  /** A sheet, dialog or PIN pad is open. */
+  dialogOpen?: boolean
+  /** A Settings PIN session is open. */
+  settingsSessionOpen?: boolean
+  /** An adult sign-in is open (waiting for an email code, or signed in). */
+  adultSignInActive?: boolean
+  /** Photos are being prepared or uploaded. */
+  photoUploading?: boolean
 }
 
 /**
- * Pure: may a waiting app update reload the display now? (spec §5.8) Yes while Night Mode is active, or
- * after 5 minutes without a touch outside Kids' Corner, or at once when the deploy is flagged critical.
- * Never while a visual timer is running: losing a child's countdown is worse than running the old
- * version a little longer — even a critical fix waits that long. Never on a public page (a phone or laptop, not
- * a display): the update applies on its next visit.
+ * Pure: may a waiting app update reload the display now? (spec §5.8)
+ *
+ * Never on a public page (a phone or laptop, not a display: the update applies on its next visit), never while a
+ * visual timer runs (losing a child's countdown is worse than running the old version a little longer) and never
+ * while photos upload. Otherwise yes while Night Mode is active, or after 5 minutes without a touch outside Kids'
+ * Corner. A critical deploy doesn't wait for those: a minute without a touch or key press is enough, even in Kids'
+ * Corner, once no sheet or dialog, Settings PIN session or adult sign-in is open — a critical fix still never
+ * reloads under someone's hands.
  */
 export function isSafeReloadMoment(input: ReloadMomentInput): boolean {
   if (input.publicRoute) return false
   if (input.timerRunning) return false
-  if (input.critical) return true
+  if (input.photoUploading) return false
   if (input.nightActive) return true
-  return input.msSinceLastTouch >= IDLE_BEFORE_RELOAD_MS && input.route !== '/corner'
+  if (input.msSinceLastTouch >= IDLE_BEFORE_RELOAD_MS && input.route !== '/corner') return true
+  if (!input.critical) return false
+  return (
+    input.msSinceLastTouch >= CRITICAL_IDLE_MS &&
+    !input.dialogOpen &&
+    !input.settingsSessionOpen &&
+    !input.adultSignInActive
+  )
+}
+
+/** True while a modal sheet or dialog is in the page. */
+export function isDialogOpen(doc: Pick<Document, 'querySelector'>): boolean {
+  return doc.querySelector('[aria-modal="true"], dialog[open]') !== null
+}
+
+/** Whether `pathname` is one of the router's public routes (the Take list, Manage household). */
+export function isPublicPath(router: Pick<Router, 'resolve'>, pathname: string): boolean {
+  try {
+    return router.resolve(pathname).meta.public === true
+  } catch {
+    return false
+  }
 }
 
 export const useAppUpdatesStore = defineStore('appUpdates', () => {
@@ -57,8 +93,16 @@ export const useAppUpdatesStore = defineStore('appUpdates', () => {
     timerRunning.value = running
   }
 
-  function canReload(input: Omit<ReloadMomentInput, 'timerRunning' | 'critical'>): boolean {
-    return isSafeReloadMoment({ ...input, timerRunning: timerRunning.value, critical: critical.value })
+  function canReload(
+    input: Omit<ReloadMomentInput, 'timerRunning' | 'critical' | 'adultSignInActive' | 'photoUploading'>,
+  ): boolean {
+    return isSafeReloadMoment({
+      ...input,
+      timerRunning: timerRunning.value,
+      critical: critical.value,
+      adultSignInActive: hasReloadHold('signIn'),
+      photoUploading: hasReloadHold('photoUpload'),
+    })
   }
 
   return { waiting, timerRunning, critical, setTimerRunning, canReload }
@@ -139,13 +183,18 @@ export function recoverFromChunkError(
  * every 30 minutes and, once one is waiting, reloads only when `isSafeReloadMoment` allows it. The same
  * 30-minute cadence (and every `online` event) also fetches `version.json` — the only source of the
  * critical-reload flag — and reconnects Realtime if it had dropped (spec §13).
+ *
+ * Not on a public page opened directly (`pathname`, the page the app booted on): a shopper's phone on the Take list
+ * or a laptop on Manage household should not precache the whole app. Resolves whether it started.
  */
-export async function startAppUpdates(router: Router): Promise<void> {
-  if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return
+export async function startAppUpdates(router: Router, pathname: string = window.location.pathname): Promise<boolean> {
+  if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return false
+  if (isPublicPath(router, pathname)) return false
   const { registerSW } = await import('virtual:pwa-register')
   const store = useAppUpdatesStore()
   const modes = useModesStore()
   const householdStore = useHouseholdStore()
+  const settingsSession = useSettingsSessionStore()
 
   let lastTouchAt = Date.now()
   for (const activity of ['pointerdown', 'keydown'] as const) {
@@ -161,6 +210,8 @@ export async function startAppUpdates(router: Router): Promise<void> {
         msSinceLastTouch: Date.now() - lastTouchAt,
         route: router.currentRoute.value.path,
         publicRoute: router.currentRoute.value.meta.public === true,
+        dialogOpen: isDialogOpen(document) || modes.nightHeld,
+        settingsSessionOpen: settingsSession.info !== null,
       })
       if (safe) void updateSW(true)
     }, SAFE_MOMENT_POLL_MS)
@@ -200,4 +251,5 @@ export async function startAppUpdates(router: Router): Promise<void> {
     )
   setInterval(() => void checkVersion(), UPDATE_CHECK_MS)
   window.addEventListener('online', () => void checkVersion())
+  return true
 }

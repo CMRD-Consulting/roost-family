@@ -1,4 +1,5 @@
 import { onScopeDispose, watch } from 'vue'
+import { useReloadHold } from '@/app/reloadHolds'
 import type { AdultSession } from './adultSession'
 import { ADULT_SESSION_IDLE_MS, startIdleTimer } from './idleTimer'
 
@@ -25,6 +26,8 @@ export function useAdultSessionIdle(options: AdultSessionIdleOptions): void {
   let current: AdultSession | null = null
   let stopTimer: (() => void) | null = null
   let deferredWhileBusy = false
+  // A signed-in adult is mid-task: even a critical app update waits (spec §5.8).
+  useReloadHold('signIn', () => options.session() !== null)
 
   function clearTimer() {
     stopTimer?.()

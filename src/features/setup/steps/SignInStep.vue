@@ -3,6 +3,7 @@ import { onBeforeUnmount, ref } from 'vue'
 import WizardFrame from '../WizardFrame.vue'
 import RButton from '@/ui/RButton.vue'
 import RInput from '@/ui/RInput.vue'
+import { useReloadHold } from '@/app/reloadHolds'
 import { disposeAdultClient, newAdultClient, sendEmailCode, verifyEmailCode } from '@/session/adultSession'
 import { validateCode, validateEmail } from '../validation'
 import type { WizardState } from '../wizardState'
@@ -19,6 +20,8 @@ let producedSession = false
 const phase = ref<'email' | 'code'>('email')
 const code = ref('')
 const isDev = import.meta.env.DEV
+// Waiting for an emailed code can take minutes without a touch; even a critical app update waits (spec §5.8).
+useReloadHold('signIn')
 
 async function sendCode() {
   props.state.error = validateEmail(props.state.email)

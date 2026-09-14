@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
+import { clearReloadHolds, holdReload } from './reloadHolds'
 import {
+  CRITICAL_IDLE_MS,
   IDLE_BEFORE_RELOAD_MS,
+  isDialogOpen,
+  isPublicPath,
+  startAppUpdates,
   checkForUpdate,
   createVersionFetcher,
   isSafeReloadMoment,
@@ -37,9 +42,34 @@ describe('isSafeReloadMoment', () => {
     expect(isSafeReloadMoment({ ...idle, nightActive: true, timerRunning: true })).toBe(false)
   })
 
-  it('a critical update reloads at once, even just after a touch or in Kids\' Corner', () => {
-    expect(isSafeReloadMoment({ ...idle, critical: true, msSinceLastTouch: 0 })).toBe(true)
-    expect(isSafeReloadMoment({ ...idle, critical: true, msSinceLastTouch: 0, route: '/corner' })).toBe(true)
+  it('a critical update needs only a minute without a touch, even in Kids\' Corner (not 5 minutes, not Night Mode)', () => {
+    const critical = { ...idle, critical: true }
+    expect(isSafeReloadMoment({ ...critical, msSinceLastTouch: CRITICAL_IDLE_MS })).toBe(true)
+    expect(isSafeReloadMoment({ ...critical, msSinceLastTouch: CRITICAL_IDLE_MS, route: '/corner' })).toBe(true)
+    expect(isSafeReloadMoment({ ...idle, msSinceLastTouch: CRITICAL_IDLE_MS })).toBe(false)
+  })
+
+  it('a critical update never reloads during input: within a minute of a touch or key press', () => {
+    expect(isSafeReloadMoment({ ...idle, critical: true, msSinceLastTouch: 0 })).toBe(false)
+    expect(isSafeReloadMoment({ ...idle, critical: true, msSinceLastTouch: CRITICAL_IDLE_MS - 1 })).toBe(false)
+  })
+
+  it('a critical update waits for an open sheet or dialog, a Settings PIN session and an adult sign-in', () => {
+    const critical = { ...idle, critical: true, msSinceLastTouch: CRITICAL_IDLE_MS }
+    expect(isSafeReloadMoment({ ...critical, dialogOpen: true })).toBe(false)
+    expect(isSafeReloadMoment({ ...critical, settingsSessionOpen: true })).toBe(false)
+    expect(isSafeReloadMoment({ ...critical, adultSignInActive: true })).toBe(false)
+  })
+
+  it('a critical update is never less eager than the normal rules', () => {
+    expect(isSafeReloadMoment({ ...idle, critical: true, dialogOpen: true })).toBe(true)
+    expect(isSafeReloadMoment({ ...idle, critical: true, nightActive: true, msSinceLastTouch: 0 })).toBe(true)
+  })
+
+  it('never reloads while a photo upload is in flight, critical, in Night Mode or idle', () => {
+    expect(isSafeReloadMoment({ ...idle, photoUploading: true })).toBe(false)
+    expect(isSafeReloadMoment({ ...idle, nightActive: true, photoUploading: true })).toBe(false)
+    expect(isSafeReloadMoment({ ...idle, critical: true, msSinceLastTouch: 60 * 60_000, photoUploading: true })).toBe(false)
   })
 
   it('never reloads a public page (Manage household, the Take list) on its own, even in Night Mode or when critical', () => {
@@ -50,6 +80,7 @@ describe('isSafeReloadMoment', () => {
 
   it('never lets a critical update interrupt a running visual timer', () => {
     expect(isSafeReloadMoment({ ...idle, critical: true, timerRunning: true })).toBe(false)
+    expect(isSafeReloadMoment({ ...idle, critical: true, msSinceLastTouch: 60 * 60_000, timerRunning: true })).toBe(false)
   })
 })
 
@@ -70,20 +101,80 @@ describe('useAppUpdatesStore', () => {
     expect(store.canReload({ nightActive: false, msSinceLastTouch: IDLE_BEFORE_RELOAD_MS, route: '/home' })).toBe(true)
   })
 
-  it('starts with critical false, and canReload ignores Night/idle/Kids\' Corner once critical is set', () => {
+  afterEach(() => clearReloadHolds())
+
+  it('starts with critical false; once critical, canReload needs only a minute idle, even in Kids\' Corner', () => {
     const store = useAppUpdatesStore()
     expect(store.critical).toBe(false)
-    expect(store.canReload({ nightActive: false, msSinceLastTouch: 0, route: '/corner' })).toBe(false)
+    expect(store.canReload({ nightActive: false, msSinceLastTouch: CRITICAL_IDLE_MS, route: '/corner' })).toBe(false)
 
     store.critical = true
-    expect(store.canReload({ nightActive: false, msSinceLastTouch: 0, route: '/corner' })).toBe(true)
+    expect(store.canReload({ nightActive: false, msSinceLastTouch: 0, route: '/corner' })).toBe(false)
+    expect(store.canReload({ nightActive: false, msSinceLastTouch: CRITICAL_IDLE_MS, route: '/corner' })).toBe(true)
   })
 
   it('a critical flag still can\'t reload while a screen reports a running timer', () => {
     const store = useAppUpdatesStore()
     store.critical = true
     store.setTimerRunning(true)
-    expect(store.canReload({ nightActive: false, msSinceLastTouch: 0, route: '/corner' })).toBe(false)
+    expect(store.canReload({ nightActive: false, msSinceLastTouch: CRITICAL_IDLE_MS, route: '/corner' })).toBe(false)
+  })
+
+  it('canReload reads sign-in and photo-upload holds', () => {
+    const store = useAppUpdatesStore()
+    store.critical = true
+    const input = { nightActive: false, msSinceLastTouch: CRITICAL_IDLE_MS, route: '/settings/photos' }
+    holdReload('sign-in', 'signIn')
+    expect(store.canReload(input)).toBe(false)
+    clearReloadHolds()
+    holdReload('upload', 'photoUpload')
+    expect(store.canReload({ ...input, nightActive: true })).toBe(false)
+    clearReloadHolds()
+    expect(store.canReload(input)).toBe(true)
+  })
+})
+
+describe('isDialogOpen', () => {
+  afterEach(() => (document.body.innerHTML = ''))
+
+  it('is true while a modal sheet, dialog or open <dialog> is in the page', () => {
+    expect(isDialogOpen(document)).toBe(false)
+    document.body.innerHTML = '<div role="dialog" aria-modal="true"></div>'
+    expect(isDialogOpen(document)).toBe(true)
+    document.body.innerHTML = '<dialog open></dialog>'
+    expect(isDialogOpen(document)).toBe(true)
+    document.body.innerHTML = '<dialog></dialog>'
+    expect(isDialogOpen(document)).toBe(false)
+  })
+})
+
+describe('service worker on public routes', () => {
+  const routes: Record<string, boolean> = {
+    '/home': false,
+    '/settings/photos': false,
+    '/list/q3Z9_xYv-4LmN0pQrStUvWxYz12345678AbCdEfGhIj': true,
+    '/manage': true,
+    '/manage/export/6f1c2b8e-3d4a-4e5f-9a0b-1c2d3e4f5a6b': true,
+  }
+  const fakeRouter = {
+    resolve: (path: string) => ({ meta: { public: routes[path] === true } }),
+  }
+
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('isPublicPath resolves the path against the router\'s public meta', async () => {
+    const { router } = await import('@/router')
+    for (const [path, isPublic] of Object.entries(routes)) expect(isPublicPath(router, path), path).toBe(isPublic)
+  })
+
+  it('startAppUpdates registers no service worker on the Take list or Manage household', async () => {
+    const register = vi.fn()
+    vi.stubGlobal('navigator', { serviceWorker: { register }, onLine: true })
+    for (const path of ['/list/q3Z9_xYv-4LmN0pQrStUvWxYz12345678AbCdEfGhIj', '/manage', '/manage/export/6f1c2b8e-3d4a-4e5f-9a0b-1c2d3e4f5a6b']) {
+      setActivePinia(createPinia())
+      await expect(startAppUpdates(fakeRouter as never, path)).resolves.toBe(false)
+    }
+    expect(register).not.toHaveBeenCalled()
   })
 })
 

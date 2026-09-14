@@ -2,8 +2,12 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { effectScope, ref, shallowRef } from 'vue'
 import { useAdultSessionIdle } from './useAdultSessionIdle'
 import type { AdultSession } from './adultSession'
+import { clearReloadHolds, hasReloadHold } from '@/app/reloadHolds'
 
-afterEach(() => vi.useRealTimers())
+afterEach(() => {
+  vi.useRealTimers()
+  clearReloadHolds()
+})
 
 function session(id: string, end = vi.fn(async () => {})): AdultSession & { end: typeof end } {
   return { client: {} as never, userId: id, email: `${id}@roost.test`, end }
@@ -92,5 +96,17 @@ describe('useAdultSessionIdle', () => {
     vi.advanceTimersByTime(5000)
     expect(t.onExpired).not.toHaveBeenCalled()
     await Promise.resolve()
+  })
+
+  it('holds app-update reloads while a session is signed in (spec §5.8)', () => {
+    const t = setup()
+    expect(hasReloadHold('signIn')).toBe(false)
+    t.current.value = session('a')
+    expect(hasReloadHold('signIn')).toBe(true)
+    t.current.value = null
+    expect(hasReloadHold('signIn')).toBe(false)
+    t.current.value = session('b')
+    t.scope.stop()
+    expect(hasReloadHold('signIn')).toBe(false)
   })
 })
