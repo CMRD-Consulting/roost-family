@@ -24,6 +24,10 @@ interface LastAction {
   queueKey: number | null
 }
 
+function offlineError(): LogWriteError {
+  return new LogWriteError("You're offline. Try again when connected.", true, null)
+}
+
 function markDoseLoggedOffline(cmd: LogCommand & { kind: 'dose.add' }): LogCommand {
   return { ...cmd, entry: { ...cmd.entry, loggedOffline: true } }
 }
@@ -69,9 +73,7 @@ export const useLogStore = defineStore('log', () => {
     const { writer, queue } = requireWriterAndQueue()
     const offline = householdStore.online === false
 
-    if (requiresOnline(cmd) && offline) {
-      throw new LogWriteError("You're offline. Try again when connected.", true, null)
-    }
+    if (requiresOnline(cmd) && offline) throw offlineError()
 
     let working = cmd
     if (working.kind === 'dose.add' && offline) {
@@ -88,6 +90,11 @@ export const useLogStore = defineStore('log', () => {
         setLastAction(working, null)
         return 'saved'
       } catch (e) {
+        if (e instanceof LogWriteError && e.network && requiresOnline(working)) {
+          // PIN commands are checked on the server and can't be queued.
+          householdStore.removeOverlay(working)
+          throw offlineError()
+        }
         if (e instanceof LogWriteError && e.network) {
           let toQueue = working
           if (toQueue.kind === 'dose.add') {

@@ -238,6 +238,26 @@ describe('useLogStore', () => {
       await expect(logStore.submit(cmd)).rejects.toBeInstanceOf(LogWriteError)
       expect(writer.calls).toEqual([])
     })
+
+    it('a PIN command that hits a network failure removes its overlay and throws the offline error, never queueing', async () => {
+      const { householdStore, logStore, writer, queue } = await setup()
+      await logStore.init(writer, queue)
+      const enqueue = vi.spyOn(queue, 'enqueue')
+      writer.failNextWith = new LogWriteError('fetch failed', true, null)
+      const doseId = householdStore.view!.doses[0]!.id
+
+      const cmd: LogCommand = { kind: 'dose.void', householdId: HOUSEHOLD_ID, doseId, membershipId: 'm1', pin: '1234', reason: 'oops' }
+      const err = await logStore.submit(cmd).catch((e: unknown) => e)
+
+      expect(err).toBeInstanceOf(LogWriteError)
+      expect((err as LogWriteError).message).toBe("You're offline. Try again when connected.")
+      expect((err as LogWriteError).network).toBe(true)
+      expect((err as LogWriteError).code).toBeNull()
+      expect(householdStore.overlay).toHaveLength(0)
+      expect(householdStore.view!.doses.find((d) => d.id === doseId)?.voidedAt).toBeNull()
+      expect(enqueue).not.toHaveBeenCalled()
+      expect(logStore.pendingCount).toBe(0)
+    })
   })
 
   describe('replay', () => {
