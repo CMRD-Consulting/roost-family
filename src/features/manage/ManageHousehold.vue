@@ -52,14 +52,21 @@ defineSlots<{ calendars?: (props: CalendarsSlotProps) => unknown }>()
 const route = useRoute()
 const router = useRouter()
 const manage = useManageHousehold({ api: props.api })
+const root = useTemplateRef<HTMLElement>('root')
 const { phase, adult, memberships, selected, notice, error, signInKey, offline, ownerHost, accountHost } = manage
 
 // ─── Calendar connection status (from the connection callback) ─────────────
 const calendarStatus = ref(calendarStatusFromQuery(route.query))
 
-function dismissCalendarStatus(): void {
+function clearCalendarStatus(): void {
   calendarStatus.value = null
-  void router.replace({ query: withoutCalendarStatus(route.query) })
+  if (calendarStatusFromQuery(route.query)) void router.replace({ query: withoutCalendarStatus(route.query) })
+}
+
+async function dismissCalendarStatus(): Promise<void> {
+  clearCalendarStatus()
+  await nextTick()
+  root.value?.querySelector<HTMLElement>('[data-manage-heading]')?.focus()
 }
 
 const calendarsSlotProps = computed<CalendarsSlotProps | null>(() => {
@@ -86,6 +93,14 @@ async function requestExport(): Promise<void> {
   }
 }
 
+// A status or error belongs to the sign-in (and household) it happened in.
+watch(adult, (session) => {
+  if (session) return
+  clearCalendarStatus()
+  exportError.value = null
+})
+watch(() => selected.value?.membershipId, () => (exportError.value = null))
+
 // ─── Demo sign-in ────────────────────────────────────────────────────────
 const demoAdults = ref<MemberRow[]>([])
 onMounted(async () => {
@@ -93,7 +108,6 @@ onMounted(async () => {
 })
 
 // ─── Focus: each step's heading ──────────────────────────────────────────
-const root = useTemplateRef<HTMLElement>('root')
 watch([phase, () => selected.value?.membershipId], async () => {
   await nextTick()
   root.value?.querySelector<HTMLElement>('[data-manage-heading], [data-step-heading]')?.focus()
@@ -214,6 +228,9 @@ watch([phase, () => selected.value?.membershipId], async () => {
           <p v-if="notice" role="status" class="-mt-6 text-[18px] font-medium text-green-deep">{{ notice }}</p>
 
           <template v-if="ownerHost">
+            <p class="-mt-6 text-[18px] text-ink-3">
+              Owners can’t leave from here. To leave, make another adult an owner and ask them to make you an adult.
+            </p>
             <slot v-if="calendarsSlotProps" name="calendars" v-bind="calendarsSlotProps" />
             <DisplaysSection :host="ownerHost" />
             <MembersSection :host="ownerHost" />

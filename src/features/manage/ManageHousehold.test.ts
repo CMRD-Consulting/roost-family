@@ -37,6 +37,9 @@ const RIVERA_OWNER: AdultMembershipRow = {
 const LAKE_ADULT: AdultMembershipRow = {
   membershipId: SAM_LAKE, householdId: LAKE, householdName: 'Lake house', timeZone: 'America/Chicago', role: 'adult', displayName: 'Sammy', color: '#2C7F8C',
 }
+const BEACH_OWNER: AdultMembershipRow = {
+  membershipId: 'bbbbbbbb-0000-0000-0000-000000000004', householdId: 'aaaaaaaa-0000-0000-0000-000000000003', householdName: 'Beach', timeZone: 'UTC', role: 'owner', displayName: 'Sam', color: '#653437',
+}
 const MEMBERS = [
   { membershipId: SAM, displayName: 'Sam', color: '#653437', role: 'owner', joinedAt: '2026-01-02T15:00:00Z' },
   { membershipId: ALEX, displayName: 'Alex', color: '#2C7F8C', role: 'adult', joinedAt: '2026-03-10T15:00:00Z' },
@@ -111,6 +114,12 @@ async function signIn(w: VueWrapper, email = 'sam@example.com') {
 }
 
 const sectionTitles = (w: VueWrapper) => w.findAll('h2').map((x) => x.text())
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((r) => (resolve = r))
+  return { promise, resolve }
+}
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
@@ -414,6 +423,216 @@ describe('calendar status from the connection callback', () => {
     const banner = w.find('[data-testid="calendar-status"]')
     expect(banner.attributes('role')).toBe('alert')
     expect(banner.text()).toContain('The calendar wasn’t connected: access wasn’t allowed.')
+    w.unmount()
+  })
+})
+
+describe('review fixes', () => {
+  it('re-renders for the new role when an owner was made an adult elsewhere', async () => {
+    const w = await mountPage()
+    await signIn(w)
+    api.revokeDisplay.mockRejectedValue(new SettingsError('only an owner can remove a display', 'auth'))
+    api.myMemberships.mockResolvedValue([{ ...RIVERA_OWNER, role: 'adult' }])
+    await buttonByText(w.find('[data-testid="display-display-kitchen"]'), 'Remove').trigger('click')
+    await buttonByText(w, 'Remove Kitchen').trigger('click')
+    await settle()
+
+    expect(api.myMemberships).toHaveBeenCalledTimes(2)
+    expect(w.text()).toContain('Your access to Rivera changed.')
+    expect(w.find('header').text()).toContain('Signed in as Sam · Adult')
+    expect(sectionTitles(w)).toEqual(['My account'])
+    expect(ended).toEqual([])
+    w.unmount()
+  })
+
+  it('goes back to the picker, or to No households, when the membership was removed elsewhere', async () => {
+    api.myMemberships.mockResolvedValue([RIVERA_OWNER, LAKE_ADULT, BEACH_OWNER])
+    const w = await mountPage()
+    await signIn(w)
+    await buttonByText(w, 'Rivera Owner').trigger('click')
+    await settle()
+    api.removeMember.mockRejectedValue(new SettingsError('only an owner can remove a member', 'auth'))
+    api.myMemberships.mockResolvedValue([LAKE_ADULT, BEACH_OWNER])
+    await buttonByText(w.find(`[data-testid="member-${ALEX}"]`), 'Remove').trigger('click')
+    await buttonByText(w, 'Remove Alex').trigger('click')
+    await settle()
+    expect(w.find('h1').text()).toBe('Which household?')
+    expect(w.text()).toContain('Your access to Rivera changed.')
+    w.unmount()
+
+    api.myMemberships.mockResolvedValue([RIVERA_OWNER])
+    const alone = await mountPage()
+    await signIn(alone)
+    api.myMemberships.mockResolvedValue([])
+    await buttonByText(alone.find(`[data-testid="member-${ALEX}"]`), 'Remove').trigger('click')
+    await buttonByText(alone, 'Remove Alex').trigger('click')
+    await settle()
+    expect(alone.find('h1').text()).toBe('No households')
+    alone.unmount()
+  })
+
+  it('keeps a plain refusal in its section when the role has not changed', async () => {
+    const w = await mountPage()
+    await signIn(w)
+    api.removeMember.mockRejectedValue(new SettingsError('a household must keep at least one owner', 'auth'))
+    await buttonByText(w.find(`[data-testid="member-${ALEX}"]`), 'Remove').trigger('click')
+    await buttonByText(w, 'Remove Alex').trigger('click')
+    await settle()
+    expect(api.myMemberships).toHaveBeenCalledTimes(2)
+    expect(w.find('[role="alert"]').text()).toBe('Roost Family didn’t accept that sign-in. Sign in again.')
+    expect(w.text()).not.toContain('Your access to Rivera changed.')
+    w.unmount()
+  })
+
+  it('treats a client with no session left as expired', async () => {
+    adult.newAdultClient.mockImplementationOnce(() => ({ name: 'client-1', auth: { getSession: async () => ({ data: { session: null } }) } }) as never)
+    const w = await mountPage()
+    await signIn(w)
+    api.revokeDisplay.mockRejectedValue(new SettingsError('fetch failed', 'network'))
+    await buttonByText(w.find('[data-testid="display-display-kitchen"]'), 'Remove').trigger('click')
+    await buttonByText(w, 'Remove Kitchen').trigger('click')
+    await settle()
+    expect(w.text()).toContain('Your sign-in ended. Sign in again.')
+    expect(w.find('[data-testid="adult-sign-in"]').exists()).toBe(true)
+    w.unmount()
+  })
+
+  it('treats a 401 on loading the households as expired, not as the network', async () => {
+    api.myMemberships.mockRejectedValueOnce(new SettingsError('Unauthorized', 'network', 401))
+    const w = await mountPage()
+    await signIn(w)
+    expect(w.text()).toContain('Your sign-in ended. Sign in again.')
+    expect(hasButton(w, 'Try again')).toBe(false)
+    w.unmount()
+  })
+
+  it('routes an expired sign-in while leaving back to sign-in', async () => {
+    api.myMemberships.mockResolvedValue([LAKE_ADULT])
+    api.leaveHousehold.mockRejectedValue(new SettingsError('adult sign-in required', 'auth'))
+    const w = await mountPage()
+    await signIn(w)
+    await buttonByText(w, 'Leave household').trigger('click')
+    await settle()
+    await buttonByText(w, 'Leave Lake house').trigger('click')
+    await settle()
+    expect(ended).toEqual(['client-1'])
+    expect(w.text()).toContain('Your sign-in ended. Sign in again.')
+    w.unmount()
+  })
+
+  it('stays busy until every running load or action is done', async () => {
+    const displays = deferred<typeof DISPLAYS>()
+    api.listDisplays.mockReturnValue(displays.promise)
+    const w = await mountPage()
+    await signIn(w)
+    const removeAlex = () => buttonByText(w.find(`[data-testid="member-${ALEX}"]`), 'Remove')
+    expect(removeAlex().attributes('disabled')).toBeDefined()
+    displays.resolve(DISPLAYS)
+    await settle()
+    expect(removeAlex().attributes('disabled')).toBeUndefined()
+    w.unmount()
+  })
+
+  it('stops listening to the client’s sign-in events when the page goes away', async () => {
+    const unsubscribe = vi.fn()
+    adult.newAdultClient.mockImplementationOnce(() => ({
+      name: 'client-1',
+      auth: { onAuthStateChange: vi.fn(() => ({ data: { subscription: { unsubscribe } } })) },
+    }) as never)
+    const w = await mountPage()
+    await signIn(w)
+    expect(unsubscribe).not.toHaveBeenCalled()
+    w.unmount()
+    expect(unsubscribe).toHaveBeenCalled()
+  })
+
+  it('forgets the calendar status on sign-out, and an export error on sign-out and household switch', async () => {
+    api.myMemberships.mockResolvedValue([RIVERA_OWNER, BEACH_OWNER])
+    const onRequestExport = vi.fn().mockRejectedValue(new SettingsError('fetch failed', 'network'))
+    const w = await mountPage('/manage?calendar=connected', { onRequestExport })
+    await signIn(w)
+    await buttonByText(w, 'Rivera Owner').trigger('click')
+    await settle()
+    expect(w.find('[data-testid="calendar-status"]').exists()).toBe(true)
+    await buttonByText(w, 'Export household data').trigger('click')
+    await settle()
+    const exportAlert = 'Couldn’t reach Roost Family. Check the connection and try again.'
+    expect(w.text()).toContain(exportAlert)
+
+    await buttonByText(w.find('header'), 'Switch household').trigger('click')
+    await settle()
+    await buttonByText(w, 'Rivera Owner').trigger('click')
+    await settle()
+    expect(w.text()).not.toContain(exportAlert)
+
+    await buttonByText(w, 'Export household data').trigger('click')
+    await settle()
+    expect(w.text()).toContain(exportAlert)
+    await buttonByText(w.find('header'), 'Sign out').trigger('click')
+    await settle()
+    await signIn(w)
+    await buttonByText(w, 'Rivera Owner').trigger('click')
+    await settle()
+    expect(w.find('[data-testid="calendar-status"]').exists()).toBe(false)
+    expect(w.text()).not.toContain(exportAlert)
+    w.unmount()
+  })
+
+  it('moves focus to the page heading when the calendar banner is dismissed', async () => {
+    const w = await mountPage('/manage?calendar=connected')
+    await signIn(w)
+    await buttonByText(w.find('[data-testid="calendar-status"]'), 'Dismiss').trigger('click')
+    await settle()
+    expect(document.activeElement).toBe(w.find('header h1').element)
+    w.unmount()
+  })
+
+  it('switching between two owned households never shows the first one’s displays in the second', async () => {
+    api.myMemberships.mockResolvedValue([RIVERA_OWNER, BEACH_OWNER])
+    const beachDisplays = deferred<Array<{ displayId: string; name: string; lastSeenAt: string | null }>>()
+    api.listDisplays.mockImplementation((_client: unknown, householdId: string) =>
+      householdId === RIVERA ? Promise.resolve(DISPLAYS) : beachDisplays.promise)
+    const w = await mountPage()
+    await signIn(w)
+    await buttonByText(w, 'Rivera Owner').trigger('click')
+    await settle()
+    expect(w.find('[data-testid="display-display-kitchen"]').exists()).toBe(true)
+
+    await buttonByText(w.find('header'), 'Switch household').trigger('click')
+    await settle()
+    await buttonByText(w, 'Beach Owner').trigger('click')
+    await settle()
+    expect(w.find('header h1').text()).toBe('Beach')
+    expect(w.find('[data-testid="display-display-kitchen"]').exists()).toBe(false)
+    beachDisplays.resolve([{ displayId: 'display-porch', name: 'Porch', lastSeenAt: null }])
+    await settle()
+    expect(w.find('[data-testid="display-display-porch"]').exists()).toBe(true)
+    expect(w.find('[data-testid="display-display-kitchen"]').exists()).toBe(false)
+    w.unmount()
+  })
+
+  it('leaving one of several households goes back to the picker', async () => {
+    api.myMemberships.mockResolvedValue([LAKE_ADULT, RIVERA_OWNER, BEACH_OWNER])
+    const w = await mountPage()
+    await signIn(w)
+    await buttonByText(w, 'Lake house Adult').trigger('click')
+    await settle()
+    await buttonByText(w, 'Leave household').trigger('click')
+    await settle()
+    api.myMemberships.mockResolvedValue([RIVERA_OWNER, BEACH_OWNER])
+    await buttonByText(w, 'Leave Lake house').trigger('click')
+    await settle()
+    expect(api.leaveHousehold).toHaveBeenCalledWith(CLIENT, LAKE)
+    expect(w.find('h1').text()).toBe('Which household?')
+    expect(w.text()).toContain('You left Lake house.')
+    expect(hasButton(w, 'Lake house Adult')).toBe(false)
+    w.unmount()
+  })
+
+  it('tells an owner how to leave', async () => {
+    const w = await mountPage()
+    await signIn(w)
+    expect(w.text()).toContain('Owners can’t leave from here.')
     w.unmount()
   })
 })

@@ -158,6 +158,7 @@ async function confirmLeave(): Promise<void> {
   } catch (e) {
     error.value = actionErrorMessage(e)
     busy.value = false
+    host.onActionError?.(e)
     return
   }
   endAdult()

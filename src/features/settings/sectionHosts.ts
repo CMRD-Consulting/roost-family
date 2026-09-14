@@ -68,6 +68,9 @@ export interface AccountSectionHost extends SectionHostBase {
   /** Holds Night Mode off while a sign-in or its action is open (display only). */
   holdsNight: boolean
   afterLeft: () => void
+  /** A leave or PIN change failed (after the section shows the error): lets a browser end a sign-in that expired.
+   *  Absent on a display. */
+  onActionError?: (error: unknown) => void
 }
 
 /** Settings on a display: the owner signs in within the section. */

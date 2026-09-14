@@ -1,6 +1,6 @@
 /** Pure rules for Manage household (spec §7.10). */
 import type { LocationQuery } from 'vue-router'
-import type { AdultMembershipRow } from '@/data/settingsApi'
+import { SettingsError, type AdultMembershipRow } from '@/data/settingsApi'
 
 export interface CalendarStatus {
   kind: 'connected' | 'error'
@@ -46,8 +46,17 @@ export function initialSelection(memberships: AdultMembershipRow[], keepMembersh
   return kept ?? (memberships.length === 1 ? memberships[0]! : null)
 }
 
-/** True when a failure means the adult's sign-in itself has ended (an expired or missing token), not a refusal. */
+/**
+ * True when a failure means the adult's sign-in itself has ended (an expired, missing or rejected token), not a
+ * refusal of the action: a 401, the server's "adult sign-in required", or the auth client's own messages.
+ */
 export function isExpiredSession(error: unknown): boolean {
+  if (error instanceof SettingsError && error.status === 401) return true
   if (!(error instanceof Error)) return false
-  return /\bjwt\b|auth session missing|refresh token/i.test(error.message)
+  return /\bjwt\b|auth session missing|refresh token|adult sign-in required/i.test(error.message)
+}
+
+/** The refusal an owner or member action gets when the signed-in adult's role or membership may have changed. */
+export function isPermissionRefusal(error: unknown): boolean {
+  return error instanceof SettingsError && error.code === 'auth'
 }

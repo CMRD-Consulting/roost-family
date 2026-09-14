@@ -24,7 +24,7 @@ export interface OwnerSignIn {
   phase: Ref<OwnerSignInPhase>
   owner: ShallowRef<SignedInOwner | null>
   /** True while an owner action runs; the idle sign-out waits for it. */
-  busy: Ref<boolean>
+  busy: Readonly<Ref<boolean>>
   error: Ref<string | null>
   notice: Ref<string | null>
   signInKey: Ref<number>
@@ -161,12 +161,18 @@ function runAs(owner: ShallowRef<SignedInOwner | null>, busy: Ref<boolean>): Own
 
 /**
  * An owner who has already signed in somewhere else (Manage household's own sign-in, spec §7.10), as the owner
- * sections expect it: always ready, with no sign-in form of its own. `busy` is shared with whoever owns the
- * session's idle sign-out; `signOut` hands the end of the sign-in back to that owner.
+ * sections expect it: always ready, with no sign-in form of its own. `busy` and `run` come from whoever owns the
+ * session (which tracks work in flight for its idle sign-out and handles a failed action's sign-in); `signOut`
+ * hands the end of the sign-in back to that owner.
  */
 export function signedInOwner(
   signedIn: SignedInOwner,
-  options: { demo: boolean; busy: Ref<boolean>; signOut: (message: string | null) => void },
+  options: {
+    demo: boolean
+    busy: Readonly<Ref<boolean>>
+    run: <T>(action: () => Promise<T>) => Promise<T>
+    signOut: (message: string | null) => void
+  },
 ): OwnerSignIn {
   const owner = shallowRef<SignedInOwner | null>(signedIn)
   const nothing = () => {}
@@ -182,6 +188,6 @@ export function signedInOwner(
     cancelSignIn: nothing,
     onSignedIn: async () => {},
     signOut: (message = null) => options.signOut(message),
-    run: runAs(owner, options.busy),
+    run: (action) => options.run(() => action(signedIn)),
   }
 }

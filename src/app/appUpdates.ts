@@ -21,6 +21,9 @@ export interface ReloadMomentInput {
   msSinceLastTouch: number
   timerRunning: boolean
   route: string
+  /** The route is a public page (Manage household, the Take list): any browser, maybe mid-task with a temporary
+   *  sign-in. It never reloads on its own; a waiting version applies on the next visit. */
+  publicRoute?: boolean
   /** Set from a critical `version.json` (spec §5.8): reload as soon as no timer is running,
    *  ignoring Night Mode, idle time and Kids' Corner — a critical fix can't wait for those. */
   critical?: boolean
@@ -30,9 +33,11 @@ export interface ReloadMomentInput {
  * Pure: may a waiting app update reload the display now? (spec §5.8) Yes while Night Mode is active, or
  * after 5 minutes without a touch outside Kids' Corner, or at once when the deploy is flagged critical.
  * Never while a visual timer is running: losing a child's countdown is worse than running the old
- * version a little longer — even a critical fix waits that long.
+ * version a little longer — even a critical fix waits that long. Never on a public page (a phone or laptop, not
+ * a display): the update applies on its next visit.
  */
 export function isSafeReloadMoment(input: ReloadMomentInput): boolean {
+  if (input.publicRoute) return false
   if (input.timerRunning) return false
   if (input.critical) return true
   if (input.nightActive) return true
@@ -143,7 +148,9 @@ export async function startAppUpdates(router: Router): Promise<void> {
   const householdStore = useHouseholdStore()
 
   let lastTouchAt = Date.now()
-  window.addEventListener('pointerdown', () => (lastTouchAt = Date.now()), { capture: true, passive: true })
+  for (const activity of ['pointerdown', 'keydown'] as const) {
+    window.addEventListener(activity, () => (lastTouchAt = Date.now()), { capture: true, passive: true })
+  }
 
   let registration: ServiceWorkerRegistration | undefined
   let pollTimer: ReturnType<typeof setInterval> | undefined
@@ -153,6 +160,7 @@ export async function startAppUpdates(router: Router): Promise<void> {
         nightActive: modes.nightActive,
         msSinceLastTouch: Date.now() - lastTouchAt,
         route: router.currentRoute.value.path,
+        publicRoute: router.currentRoute.value.meta.public === true,
       })
       if (safe) void updateSW(true)
     }, SAFE_MOMENT_POLL_MS)

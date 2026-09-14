@@ -59,11 +59,14 @@ describe('isExpiredSession', () => {
     expect(isExpiredSession(new SettingsError('JWT expired', 'network'))).toBe(true)
     expect(isExpiredSession(new SettingsError('invalid JWT', 'other'))).toBe(true)
     expect(isExpiredSession(new SettingsError('Auth session missing!', 'other'))).toBe(true)
+    expect(isExpiredSession(new SettingsError('adult sign-in required', 'auth'))).toBe(true)
+    expect(isExpiredSession(new SettingsError('Unauthorized', 'network', 401))).toBe(true)
   })
 
   it('leaves refusals and network trouble alone', () => {
     expect(isExpiredSession(new SettingsError('only an owner can do that', 'auth'))).toBe(false)
     expect(isExpiredSession(new SettingsError('fetch failed', 'network'))).toBe(false)
+    expect(isExpiredSession(new SettingsError('permission denied', 'auth', 403))).toBe(false)
     expect(isExpiredSession(new Error('JWT expired'))).toBe(true)
     expect(isExpiredSession('nope')).toBe(false)
   })

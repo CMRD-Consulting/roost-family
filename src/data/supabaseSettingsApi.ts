@@ -94,7 +94,7 @@ async function run<T>(op: () => PromiseLike<OpResult>): Promise<T> {
   if (result.error) {
     const code = result.error.code || null
     const status = result.status || null
-    throw new SettingsError(result.error.message, classify(status, code))
+    throw new SettingsError(result.error.message, classify(status, code), status)
   }
   return result.data as T
 }

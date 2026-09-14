@@ -613,6 +613,12 @@ describe('createSupabaseSettingsApi', () => {
       expect((err as SettingsError).code).toBe('network')
     })
 
+    it('keeps the HTTP status on the error, so a browser sign-in can tell an expired token from the network', async () => {
+      const { client } = createFakeClient({ rpc: { set_my_color: { error: { message: 'JWT expired', code: 'PGRST301' }, status: 401 } } })
+      const err = await createSupabaseSettingsApi(client).setMyColor(auth, '#653437').catch((e) => e)
+      expect((err as SettingsError).status).toBe(401)
+    })
+
     it('a 500 maps to network', async () => {
       const { client } = createFakeClient({ rpc: { set_my_color: { error: { message: 'server error' }, status: 500 } } })
       const err = await createSupabaseSettingsApi(client).setMyColor(auth, '#000000').catch((e: unknown) => e)

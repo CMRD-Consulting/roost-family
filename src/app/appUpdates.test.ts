@@ -42,6 +42,12 @@ describe('isSafeReloadMoment', () => {
     expect(isSafeReloadMoment({ ...idle, critical: true, msSinceLastTouch: 0, route: '/corner' })).toBe(true)
   })
 
+  it('never reloads a public page (Manage household, the Take list) on its own, even in Night Mode or when critical', () => {
+    expect(isSafeReloadMoment({ ...idle, route: '/manage', publicRoute: true })).toBe(false)
+    expect(isSafeReloadMoment({ ...idle, route: '/manage', publicRoute: true, nightActive: true })).toBe(false)
+    expect(isSafeReloadMoment({ ...idle, route: '/list/abc', publicRoute: true, critical: true, msSinceLastTouch: 0 })).toBe(false)
+  })
+
   it('never lets a critical update interrupt a running visual timer', () => {
     expect(isSafeReloadMoment({ ...idle, critical: true, timerRunning: true })).toBe(false)
   })

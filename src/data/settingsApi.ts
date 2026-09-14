@@ -16,6 +16,9 @@ export class SettingsError extends Error {
   constructor(
     message: string,
     readonly code: SettingsErrorCode,
+    /** The HTTP status, when the server answered. A 401 stays 'network' for a display (worth retrying), but on a
+     *  temporary adult sign-in it means the sign-in ended. */
+    readonly status: number | null = null,
   ) {
     super(message)
   }
