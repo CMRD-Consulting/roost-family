@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { buildDemoSnapshot } from '@/data/demo/demoFixture'
 import type { HouseholdSnapshot, SnapshotChild } from '@/data/snapshot'
-import { ageLabel, buildMainScreenModel } from './mainScreenModel'
+import { ageLabel, buildMainScreenModel, savedInfoLabel } from './mainScreenModel'
 
 const now = new Date('2026-09-14T19:00:00Z') // 3:00 PM EDT, Monday
 
@@ -185,6 +185,44 @@ describe('buildMainScreenModel', () => {
         nextAfter: '7:00 PM',
         nextAllowed: false,
       })
+      expect(model.medicineStale).toBe(false)
+    })
+
+    it('shows the green "allowed" state once the next dose is due', () => {
+      const later = new Date('2026-09-14T23:30:00Z') // 7:30 PM, after the 7:00 PM next dose
+      const model = buildMainScreenModel(buildDemoSnapshot(now), later)
+      expect(model.medicine[0]!.nextAllowed).toBe(true)
+    })
+
+    it('never shows a dose as allowed while the medicine data may be stale', () => {
+      const later = new Date('2026-09-14T23:30:00Z')
+      const model = buildMainScreenModel(buildDemoSnapshot(now), later, { medicineStale: true })
+      expect(model.medicineStale).toBe(true)
+      expect(model.medicine[0]!.nextAllowed).toBe(false)
+      expect(model.medicine[0]!.nextAfter).toBe('7:00 PM')
+    })
+  })
+
+  describe('savedInfoLabel', () => {
+    const tz = 'America/New_York'
+    const at = (iso: string) => new Date(iso)
+
+    it('shows only the time for a snapshot from today (household time zone)', () => {
+      expect(savedInfoLabel(at('2026-09-14T13:42:00Z'), now, tz)).toBe('Showing saved info from 9:42 AM')
+    })
+
+    it('uses the household day, not UTC: 11 PM yesterday local is not today', () => {
+      // 03:00Z on the 14th is 11:00 PM on Sunday the 13th in New York.
+      expect(savedInfoLabel(at('2026-09-14T03:00:00Z'), now, tz)).toBe('Showing saved info from Sun 11:00 PM')
+    })
+
+    it('adds the weekday for a snapshot from earlier this week', () => {
+      expect(savedInfoLabel(at('2026-09-09T13:42:00Z'), now, tz)).toBe('Showing saved info from Wed 9:42 AM')
+      expect(savedInfoLabel(at('2026-09-08T13:42:00Z'), now, tz)).toBe('Showing saved info from Tue 9:42 AM')
+    })
+
+    it('uses the month and day once the snapshot is more than 6 days old', () => {
+      expect(savedInfoLabel(at('2026-09-07T13:42:00Z'), now, tz)).toBe('Showing saved info from Sep 7, 9:42 AM')
     })
   })
 

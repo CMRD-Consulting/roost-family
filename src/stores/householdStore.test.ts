@@ -270,6 +270,48 @@ describe('useHouseholdStore', () => {
     })
   })
 
+  describe('realtimeDownMs', () => {
+    beforeEach(() => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-09-14T19:00:00Z'))
+    })
+    afterEach(() => vi.useRealTimers())
+
+    it('is 0 while realtime is connected', async () => {
+      const { source, triggerStatus } = fakeSource()
+      const store = newStore()
+      await store.start('h1', source)
+      triggerStatus('connected')
+
+      expect(store.realtimeDownMs(new Date(Date.now() + 60 * 60_000))).toBe(0)
+    })
+
+    it('counts from start while realtime has never connected', async () => {
+      const { source } = fakeSource()
+      const store = newStore()
+      await store.start('h1', source)
+
+      expect(store.realtimeDownMs(new Date(Date.now() + 6 * 60_000))).toBe(6 * 60_000)
+    })
+
+    it('counts from the moment the connection dropped, and resets on reconnect', async () => {
+      const { source, triggerStatus } = fakeSource()
+      const store = newStore()
+      await store.start('h1', source)
+      triggerStatus('connected')
+
+      vi.setSystemTime(new Date('2026-09-14T19:10:00Z'))
+      triggerStatus('disconnected')
+      // A repeated "disconnected" report doesn't restart the count.
+      vi.setSystemTime(new Date('2026-09-14T19:12:00Z'))
+      triggerStatus('disconnected')
+      expect(store.realtimeDownMs(new Date('2026-09-14T19:16:00Z'))).toBe(6 * 60_000)
+
+      triggerStatus('connected')
+      expect(store.realtimeDownMs(new Date('2026-09-14T19:16:00Z'))).toBe(0)
+    })
+  })
+
   describe('midnight reload', () => {
     beforeEach(() => {
       vi.useFakeTimers()

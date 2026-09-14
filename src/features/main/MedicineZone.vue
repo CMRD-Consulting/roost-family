@@ -2,7 +2,8 @@
 import RAvatar from '@/ui/RAvatar.vue'
 import type { MedicineLineModel } from './mainScreenModel'
 
-defineProps<{ lines: MedicineLineModel[] }>()
+/** `stale`: the doses may be out of date, so no line shows as allowed and the zone says so. */
+defineProps<{ lines: MedicineLineModel[]; stale?: boolean }>()
 </script>
 
 <template>
@@ -40,5 +41,6 @@ defineProps<{ lines: MedicineLineModel[] }>()
         </p>
       </div>
     </div>
+    <p v-if="stale" data-testid="medicine-stale" role="status" class="text-[18px] font-medium leading-snug text-warn-ink">Can’t check recent doses — confirm before giving medicine.</p>
   </section>
 </template>

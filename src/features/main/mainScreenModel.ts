@@ -42,8 +42,16 @@ export interface MainScreenModel {
   conflicts: ConflictModel[]
   dinner: string | null
   logButtons: LogKind[]
+  /** The doses shown may be out of date (saved info, or realtime down for a while): no line reads as allowed. */
+  medicineStale: boolean
 }
 
+export interface MainScreenModelOptions {
+  /** See `MainScreenModel.medicineStale`. */
+  medicineStale?: boolean
+}
+
+const DAY_MS = 24 * 3_600_000
 const SLEEP_LINE_LOOKBACK_MS = 18 * 3_600_000
 const FEEDING_LOOKBACK_MS = 24 * 3_600_000
 const dateFormatters = new Map<string, Intl.DateTimeFormat>()
@@ -58,6 +66,36 @@ export function formatDateLabel(now: Date, timeZone: string): string {
   return f.format(now)
 }
 
+const shortFormatters = new Map<string, Intl.DateTimeFormat>()
+function shortFormatter(key: 'weekday' | 'monthDay', timeZone: string): Intl.DateTimeFormat {
+  const id = `${key}|${timeZone}`
+  let f = shortFormatters.get(id)
+  if (!f) {
+    f = new Intl.DateTimeFormat('en-US', key === 'weekday' ? { weekday: 'short', timeZone } : { month: 'short', day: 'numeric', timeZone })
+    shortFormatters.set(id, f)
+  }
+  return f
+}
+
+/** Whole household-calendar days from `from` to `to` (0 on the same local day). */
+function householdDaysBetween(from: Date, to: Date, timeZone: string): number {
+  return Math.round((Date.parse(householdDate(to, timeZone)) - Date.parse(householdDate(from, timeZone))) / DAY_MS)
+}
+
+/**
+ * The header badge while the view is the device cache's saved copy: "Showing saved info from 9:42 AM" when
+ * it's from today (household time zone), "… from Mon 9:42 AM" within the last 6 days, else "… from Sep 8, 9:42 AM".
+ */
+export function savedInfoLabel(loadedAt: Date, now: Date, timeZone: string): string {
+  const time = formatClock(loadedAt, timeZone)
+  const days = householdDaysBetween(loadedAt, now, timeZone)
+  const when =
+    days <= 0 ? time
+    : days <= 6 ? `${shortFormatter('weekday', timeZone).format(loadedAt)} ${time}`
+    : `${shortFormatter('monthDay', timeZone).format(loadedAt)}, ${time}`
+  return `Showing saved info from ${when}`
+}
+
 export function ageLabel(months: number): string {
   if (months < 12) return `${Math.max(0, months)} mo`
   if (months < 24) return '1 yr'
@@ -66,7 +104,8 @@ export function ageLabel(months: number): string {
 
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 
-export function buildMainScreenModel(s: HouseholdSnapshot, now: Date): MainScreenModel {
+export function buildMainScreenModel(s: HouseholdSnapshot, now: Date, options: MainScreenModelOptions = {}): MainScreenModel {
+  const medicineStale = options.medicineStale ?? false
   const tz = s.household.timeZone
   const today = householdDate(now, tz)
   const enabled = (child: SnapshotChild, feature: Feature) =>
@@ -148,7 +187,8 @@ export function buildMainScreenModel(s: HouseholdSnapshot, now: Date): MainScree
       givenAt: formatClock(d.givenAt, tz),
       givenBy: d.givenBy,
       nextAfter: formatClock(d.nextAfter, tz),
-      nextAllowed: d.nextAllowed,
+      // Another adult may have given a dose we can't see yet: never show "allowed" on stale data.
+      nextAllowed: d.nextAllowed && !medicineStale,
     }
   })
 
@@ -176,5 +216,6 @@ export function buildMainScreenModel(s: HouseholdSnapshot, now: Date): MainScree
     conflicts,
     dinner: s.household.dinnerTonight?.trim() || null,
     logButtons,
+    medicineStale,
   }
 }

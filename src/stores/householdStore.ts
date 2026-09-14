@@ -33,6 +33,8 @@ export const useHouseholdStore = defineStore('household', () => {
   const realtime = ref<RealtimeStatus | 'unknown'>('unknown')
   /** ISO timestamp of the last successful load; used by `staleMinutes` while disconnected. */
   const freshAt = ref<string | null>(null)
+  /** ISO time realtime was last seen not connected (since start, or since it dropped); null while connected. */
+  const realtimeDownSince = ref<string | null>(null)
   /** True while `snapshot` is the device cache's last-known copy, not yet confirmed by a real load. */
   const fromCache = ref(false)
   /** Locally-applied log commands not yet reflected in `snapshot`, newest last. */
@@ -126,6 +128,7 @@ export const useHouseholdStore = defineStore('household', () => {
     snapshot.value = null
     error.value = null
     realtime.value = 'unknown'
+    realtimeDownSince.value = new Date().toISOString()
     freshAt.value = null
     fromCache.value = false
     if (overlayHouseholdId !== householdId) overlay.value = []
@@ -150,6 +153,8 @@ export const useHouseholdStore = defineStore('household', () => {
       },
       (s) => {
         realtime.value = s
+        if (s === 'connected') realtimeDownSince.value = null
+        else realtimeDownSince.value ??= new Date().toISOString()
       },
     )
     window.addEventListener('online', handleOnline)
@@ -177,8 +182,14 @@ export const useHouseholdStore = defineStore('household', () => {
     return Math.floor((now.getTime() - Date.parse(freshAt.value)) / 60_000)
   }
 
+  /** How long realtime has not been connected (0 while connected). Counts from start() until the first connect. */
+  function realtimeDownMs(now: Date): number {
+    if (realtime.value === 'connected' || realtimeDownSince.value === null) return 0
+    return Math.max(0, now.getTime() - Date.parse(realtimeDownSince.value))
+  }
+
   return {
-    snapshot, status, error, online, realtime, start, reload, stop, staleMinutes,
+    snapshot, status, error, online, realtime, realtimeDownSince, realtimeDownMs, start, reload, stop, staleMinutes,
     overlay, view, addOverlay, markSaved, removeOverlay, fromCache,
   }
 })

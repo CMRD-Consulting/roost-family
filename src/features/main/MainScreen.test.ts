@@ -127,6 +127,34 @@ describe('MainScreen (demo source)', () => {
     wrapper.unmount()
   })
 
+  it('warns that recent doses can\'t be checked while showing saved info', async () => {
+    const wrapper = await mountMain()
+    expect(wrapper.find('[data-testid="medicine-stale"]').exists()).toBe(false)
+
+    useHouseholdStore().fromCache = true
+    await flushPromises()
+
+    const warning = wrapper.get('[data-testid="medicine-stale"]')
+    expect(warning.text()).toBe('Can’t check recent doses — confirm before giving medicine.')
+    expect(warning.classes()).toEqual(expect.arrayContaining(['text-[18px]', 'text-warn-ink']))
+    wrapper.unmount()
+  })
+
+  it('warns that recent doses can\'t be checked once realtime has been down for more than 5 minutes', async () => {
+    const wrapper = await mountMain()
+    const store = useHouseholdStore()
+    store.realtime = 'disconnected'
+    store.realtimeDownSince = new Date(Date.now()).toISOString()
+    await vi.advanceTimersByTimeAsync(5 * 60_000)
+    await flushPromises()
+    expect(wrapper.find('[data-testid="medicine-stale"]').exists()).toBe(false)
+
+    await vi.advanceTimersByTimeAsync(30_000)
+    await flushPromises()
+    expect(wrapper.find('[data-testid="medicine-stale"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
   it('switches to compact cards with many kids', async () => {
     window.history.replaceState({}, '', '/home?manyKids')
     const wrapper = await mountMain()

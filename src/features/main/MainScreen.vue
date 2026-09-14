@@ -2,7 +2,6 @@
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useNow } from '@/composables/useNow'
-import { formatClock } from '@/domain/time'
 import DiaperSheet from '@/features/logs/DiaperSheet.vue'
 import DinnerSheet from '@/features/logs/DinnerSheet.vue'
 import DosePinDialog from '@/features/logs/DosePinDialog.vue'
@@ -28,10 +27,12 @@ import KidCard from './KidCard.vue'
 import KidCardCompact from './KidCardCompact.vue'
 import LogRow from './LogRow.vue'
 import MedicineZone from './MedicineZone.vue'
-import { buildMainScreenModel, type LogKind } from './mainScreenModel'
+import { buildMainScreenModel, savedInfoLabel, type LogKind } from './mainScreenModel'
 import { useHouseholdSession } from './useHouseholdSession'
 
 const STALE_AFTER_MIN = 5
+/** Realtime down this long means another display's dose may not have reached us (spec §13). */
+const MEDICINE_STALE_AFTER_MS = 5 * 60_000
 
 const router = useRouter()
 const store = useHouseholdStore()
@@ -47,7 +48,10 @@ const { unreachable } = useHouseholdSession()
 // logged "now" from being treated as in the future until the next tick.
 const model = computed(() => {
   const tick = now.value.getTime()
-  return store.view ? buildMainScreenModel(store.view, new Date(Math.max(tick, Date.now()))) : null
+  if (!store.view) return null
+  const at = new Date(Math.max(tick, Date.now()))
+  const medicineStale = store.fromCache || store.realtimeDownMs(at) > MEDICINE_STALE_AFTER_MS
+  return buildMainScreenModel(store.view, at, { medicineStale })
 })
 
 /** "3:00 PM" → big "3:00" + small "PM". */
@@ -68,8 +72,7 @@ const staleMinutes = computed(() => store.staleMinutes(now.value))
 /** "Showing saved info from 9:42 AM" while the view is still the device cache's last-known snapshot. */
 const cacheBadge = computed(() => {
   if (!store.fromCache || !store.snapshot) return null
-  const at = formatClock(new Date(store.snapshot.loadedAt), store.snapshot.household.timeZone)
-  return `Showing saved info from ${at}`
+  return savedInfoLabel(new Date(store.snapshot.loadedAt), now.value, store.snapshot.household.timeZone)
 })
 
 /** True while it's within the household's night window but a tap has suppressed the Night screen for the
@@ -236,7 +239,7 @@ const MODE_BUTTONS = [
           <!-- Safety-critical zones (dose conflict alert, medicine) come first in every layout, so they are
                visible without scrolling even on a 1024x768 tablet; the kid cards below scroll if needed. -->
           <ConflictBanner :conflicts="model.conflicts" @acknowledge="acknowledgingDoseId = $event" />
-          <MedicineZone :lines="model.medicine" />
+          <MedicineZone :lines="model.medicine" :stale="model.medicineStale" />
           <!-- 3 columns only when wide enough for a 24 px status line without truncation. -->
           <div v-if="model.layout === 'compact'" class="grid shrink-0 grid-cols-2 gap-2.5 min-[1300px]:grid-cols-3">
             <KidCardCompact v-for="card in model.kidCards" :key="card.childId" :card="card" @fix-sleep="fixingSleepChildId = $event" />
