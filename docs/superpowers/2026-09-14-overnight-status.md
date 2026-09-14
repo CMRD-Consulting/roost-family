@@ -64,9 +64,15 @@
   - Stored in a private bucket; adding and deleting take a PIN.
   - The app shrinks photos and strips their metadata before upload.
   - Managed in Settings; shown as a slideshow in Night Mode.
+  - Each upload also stores a 320 px thumbnail for Settings.
+  - Limits: 20 unrecorded uploads an hour and 300 photos per household.
+  - Signed links last 15 minutes.
   - The `storage-sweep` function erases the files of deleted and orphaned photos.
-- **Error tracking:** optional Sentry that scrubs personal data. Vue component props are never attached, and query strings are removed from breadcrumbs.
-- **Critical updates:** a `critical` flag in `version.json` forces a reload, and version checks also reconnect realtime.
+- **Error tracking:** optional Sentry that scrubs personal data.
+  - Vue component props are never attached, and console arguments aren't sent.
+  - Query strings are removed, and tokens in page paths such as `/list/:token` are replaced with placeholders.
+- **Critical updates:** a `critical` flag in `version.json` reloads the app after 60 quiet seconds with nothing open, and version checks also reconnect realtime.
+  - Public pages never register the service worker.
 
 **Phase 4b: Calendars, Manage household, Export**
 - **Calendar links (ICS):**
@@ -154,18 +160,19 @@ Earlier decisions (palette, `orange-deep`, the 18 h wake window, stale sleep, ro
 | **Public pages (`/manage`, `/list/:token`) never reload for updates, and key presses count as activity** | A laptop user typing a code never touches the screen | `appUpdates.ts` |
 | **Owners can't leave a household from `/manage`** | They must hand ownership to another adult first; the page says so | `ManageHousehold.vue` |
 | **Adults can see the Members and Displays lists on `/manage`; only owners can change them** | Members already see these on the tablet; the server enforces changes | settings RPCs |
+| **Photos per household are capped at 300 (200 slideshow + 100 child and routine-step photos)** | The spec only limits the slideshow to 200 | migration 13 |
 | **Photo deletion keeps the file record until the sweep erases the bytes; the files become unreadable at once** | SQL can't erase Storage files, so deleting the record would lose track of them | migration 7 |
 
 ## Verification
 
 - **Automated checks at HEAD:**
-  - `pnpm test`: 1,820 tests in 126 files, all passing.
+  - `pnpm test`: 1,860 tests in 127 files, all passing.
   - `pnpm typecheck` and `pnpm build`: clean.
   - `deno check` on every Edge Function: clean.
 - **Database checks on local Supabase:**
-  - `rls_smoke.sql`: `ALL RLS SMOKE CHECKS PASSED` (114 labelled sections).
+  - `rls_smoke.sql`: `ALL RLS SMOKE CHECKS PASSED` (119 labelled sections).
   - `anon_api_check.sh`: every check OK.
-- **Independent reviews** after every phase and feature: calendar parsing, calendar schema, calendar functions, Today and calendar UI, Manage household, export and Phase 3c. Every finding was fixed and re-verified. The Phase 4a review is running at the time of writing.
+- **Independent reviews** after every phase and feature: calendar parsing, calendar schema, calendar functions, Today and calendar UI, Manage household, export, Phase 3c and Phase 4a. Every finding was fixed and re-verified.
 - **Browser runs on local Supabase, controlled by me:**
   - **Phase 1–3a:** setup, join, revoke, realtime, logging, undo, offline queue, offline restart, Night, Nap, Kids' Corner (details in git history of this file).
   - **Sitter Mode on two displays:**
@@ -188,7 +195,6 @@ Earlier decisions (palette, `orange-deep`, the 18 h wake window, stale sleep, ro
 
 ## Open follow-ups
 
-- **Phase 4a review:** in progress; its findings will be fixed like the others.
 - **DNS rebinding for calendar links:** accepted. Links must be https on the default port, and certificate checks fail a rebind to an internal IP.
 - **Kids' Corner timer and updates:** a running timer also blocks app updates during Night Mode. This is deliberate and easy to change.
 - **Flaky test:** "long-pressing tonight's dinner edits it" fails when run alone and passes in the full suite.
