@@ -229,8 +229,10 @@ describe('createSupabaseSource load', () => {
     expect(calls.find((c) => c.table === 'memberships')?.ops).toEqual([
       'select:id, display_name, color, role', 'eq:household_id=h1', 'is:left_at=null',
     ])
-    expect(calls.find((c) => c.table === 'children')?.ops).toEqual(['select:*', 'order:sort_order:asc'])
-    expect(calls.find((c) => c.table === 'feature_overrides')?.ops).toEqual(['select:*'])
+    expect(calls.find((c) => c.table === 'children')?.ops).toEqual([
+      'select:*, child_households!inner(household_id)', 'eq:child_households.household_id=h1', 'order:sort_order:asc',
+    ])
+    expect(calls.find((c) => c.table === 'feature_overrides')?.ops).toEqual(['select:*', 'in:child_id=c1'])
     expect(calls.find((c) => c.table === 'medicines')?.ops).toEqual([
       'select:*', 'eq:household_id=h1', 'is:archived_at=null',
     ])
@@ -288,6 +290,40 @@ describe('createSupabaseSource load', () => {
     })
     const source = createSupabaseSource(client)
     await expect(source.load('h1', now)).rejects.toThrow('household not found')
+  })
+
+  describe('children scoped to the household', () => {
+    it('filters children by child_households.household_id and scopes feature_overrides to their ids', async () => {
+      const childRow = {
+        id: 'c1', name: 'Ivy', birthday: '2023-04-10', color: '#C2477A', photo_id: null,
+        allergies: '', food_rules: '', night_sleep_start: null, night_sleep_end: null,
+        sort_order: 0, created_at: '2026-01-01T00:00:00Z',
+      }
+      const { client, calls } = createFakeClient({
+        ...baseTableData(),
+        children: { data: [childRow], error: null },
+        feature_overrides: { data: [{ id: 'o1', child_id: 'c1', feature: 'feeding', enabled: false }], error: null },
+      })
+      const source = createSupabaseSource(client)
+      const snapshot = await source.load('h1', now)
+
+      expect(snapshot.children).toEqual([
+        { id: 'c1', name: 'Ivy', birthday: '2023-04-10', color: '#C2477A', nightSleep: null, sortOrder: 0, overrides: { feeding: false } },
+      ])
+      expect(calls.find((c) => c.table === 'children')?.ops).toEqual([
+        'select:*, child_households!inner(household_id)', 'eq:child_households.household_id=h1', 'order:sort_order:asc',
+      ])
+      expect(calls.find((c) => c.table === 'feature_overrides')?.ops).toEqual(['select:*', 'in:child_id=c1'])
+    })
+
+    it('skips the feature_overrides query entirely when there are no children', async () => {
+      const { client, calls } = createFakeClient(baseTableData())
+      const source = createSupabaseSource(client)
+      const snapshot = await source.load('h1', now)
+
+      expect(snapshot.children).toEqual([])
+      expect(calls.find((c) => c.table === 'feature_overrides')).toBeUndefined()
+    })
   })
 
   describe("today and tomorrow's routine progress/overrides", () => {

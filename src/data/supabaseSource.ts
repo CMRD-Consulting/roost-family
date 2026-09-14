@@ -78,6 +78,43 @@ async function loadDoseRows(
 }
 
 /**
+ * Children who belong to this household (via `child_households`), plus their feature
+ * overrides, grouped by child id. `feature_overrides` has no household_id of its own,
+ * so it's filtered to just the ids of the children we actually loaded — and skipped
+ * entirely when there are none.
+ */
+async function loadChildrenAndOverrides(
+  client: RoostClient,
+  householdId: string,
+): Promise<{
+  childRows: Tables<'children'>[]
+  overridesByChild: Map<string, { feature: string; enabled: boolean }[]>
+}> {
+  const childRows = unwrap<Tables<'children'>[]>(
+    await client
+      .from('children')
+      .select('*, child_households!inner(household_id)')
+      .eq('child_households.household_id', householdId)
+      .order('sort_order'),
+  )
+
+  const overridesByChild = new Map<string, { feature: string; enabled: boolean }[]>()
+  const childIds = childRows.map((c) => c.id)
+  if (childIds.length > 0) {
+    const overrideRows = unwrap<{ child_id: string; feature: string; enabled: boolean }[]>(
+      await client.from('feature_overrides').select('*').in('child_id', childIds),
+    )
+    for (const o of overrideRows) {
+      const list = overridesByChild.get(o.child_id) ?? []
+      list.push({ feature: o.feature, enabled: o.enabled })
+      overridesByChild.set(o.child_id, list)
+    }
+  }
+
+  return { childRows, overridesByChild }
+}
+
+/**
  * Non-archived medicines, plus any archived medicine referenced by `doseRows` (a dose
  * for an archived medicine must still be able to show its name and check its limits).
  */
@@ -112,13 +149,12 @@ export function createSupabaseSource(client: RoostClient): HouseholdSource {
     const cutoff24h = new Date(now.getTime() - DAY_MS).toISOString()
 
     const [
-      membershipResult, childResult, overrideResult, medicineResult, doseRows, sleepResult,
+      membershipResult, childrenAndOverrides, medicineResult, doseRows, sleepResult,
       feedingResult, diaperResult, stickerCategoryResult, stickerResult, routineResult,
       routineProgressResult, routineOverrideResult, jotResult, groceryResult, sitterSessionResult,
     ] = await Promise.all([
       client.from('memberships').select('id, display_name, color, role').eq('household_id', householdId).is('left_at', null),
-      client.from('children').select('*').order('sort_order'),
-      client.from('feature_overrides').select('*'),
+      loadChildrenAndOverrides(client, householdId),
       client.from('medicines').select('*').eq('household_id', householdId).is('archived_at', null),
       loadDoseRows(client, householdId, cutoff48h),
       client.from('sleep_entries').select('*').eq('household_id', householdId).or(`start_at.gte.${cutoff48h},end_at.is.null`),
@@ -141,21 +177,15 @@ export function createSupabaseSource(client: RoostClient): HouseholdSource {
         .maybeSingle(),
     ])
 
-    const overridesByChild = new Map<string, { feature: string; enabled: boolean }[]>()
-    for (const o of unwrap(overrideResult)) {
-      const list = overridesByChild.get(o.child_id) ?? []
-      list.push({ feature: o.feature, enabled: o.enabled })
-      overridesByChild.set(o.child_id, list)
-    }
-
     if (sitterSessionResult.error) throw new Error(sitterSessionResult.error.message)
 
     const medicineRows = await loadMedicineRows(client, householdId, unwrap(medicineResult), doseRows)
+    const { childRows, overridesByChild } = childrenAndOverrides
 
     return {
       household,
       members: unwrap(membershipResult).map(toMember),
-      children: unwrap(childResult).map((row) => toChild(row, overridesByChild.get(row.id) ?? [])),
+      children: childRows.map((row) => toChild(row, overridesByChild.get(row.id) ?? [])),
       medicines: medicineRows.map(toMedicine),
       doses: doseRows.map(toDose),
       sleeps: unwrap(sleepResult).map(toSleep),
