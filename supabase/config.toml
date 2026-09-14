@@ -387,6 +387,10 @@ deno_version = 2
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 
+# Weather cache refresh (spec §5.6). Callers must send a valid JWT; the function also checks membership.
+[functions.weather]
+verify_jwt = true
+
 [analytics]
 enabled = true
 port = 55327

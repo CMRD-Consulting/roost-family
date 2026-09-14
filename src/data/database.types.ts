@@ -565,6 +565,59 @@ export type Database = {
           },
         ]
       }
+      household_weather: {
+        Row: {
+          current_temp_f: number | null
+          error: string | null
+          fetched_at: string | null
+          high_f: number | null
+          household_id: string
+          icon: string | null
+          low_f: number | null
+          points_forecast_url: string | null
+          points_hourly_url: string | null
+          precip_chance: number | null
+          summary: string | null
+          updated_at: string
+        }
+        Insert: {
+          current_temp_f?: number | null
+          error?: string | null
+          fetched_at?: string | null
+          high_f?: number | null
+          household_id: string
+          icon?: string | null
+          low_f?: number | null
+          points_forecast_url?: string | null
+          points_hourly_url?: string | null
+          precip_chance?: number | null
+          summary?: string | null
+          updated_at?: string
+        }
+        Update: {
+          current_temp_f?: number | null
+          error?: string | null
+          fetched_at?: string | null
+          high_f?: number | null
+          household_id?: string
+          icon?: string | null
+          low_f?: number | null
+          points_forecast_url?: string | null
+          points_hourly_url?: string | null
+          precip_chance?: number | null
+          summary?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "household_weather_household_id_fkey"
+            columns: ["household_id"]
+            isOneToOne: true
+            referencedRelation: "households"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       households: {
         Row: {
           created_at: string
@@ -1472,6 +1525,7 @@ export type Database = {
         Args: { p_membership_id: string; p_pin: string; p_session_id: string }
         Returns: string
       }
+      is_my_household: { Args: { p_household_id: string }; Returns: boolean }
       leave_household: { Args: { p_household_id: string }; Returns: undefined }
       mark_sitter_summary_shown: {
         Args: { p_session_id: string }

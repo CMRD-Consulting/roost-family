@@ -1379,6 +1379,82 @@ select pg_temp.expect('take_list_links: no client privileges and no policies',
   and not has_table_privilege('anon', 'public.take_list_links', 'select, insert, update, delete, truncate, references, trigger')
   and not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'take_list_links'));
 
+-- ─── Weather (spec §5.6) ─────────────────────────────────────────────────
+\echo '[70] household_weather: members and displays read their own household''s row only'
+reset role;
+insert into public.household_weather (household_id, fetched_at, current_temp_f, high_f, low_f, precip_chance, summary, icon)
+values (:'household_f', now(), 74, 78, 61, 20, 'Partly Sunny', 'partly'),
+       (:'household_k', now(), 50, 55, 40, 0, 'Cloudy', 'cloud');
+select set_config('smoke.household_k', :'household_k', true);
+set local role authenticated;
+select set_config('request.jwt.claims', :'F', true);
+select pg_temp.expect('member reads own household''s weather', (
+  select array_agg(household_id) from public.household_weather) = array[pg_temp.v('household_f')]);
+select set_config('request.jwt.claims', :'J', true);
+select pg_temp.expect('display reads own household''s weather', (
+  select current_temp_f from public.household_weather where household_id = pg_temp.v('household_f')) = 74);
+select set_config('request.jwt.claims', :'A', true);
+select pg_temp.expect('other household sees no weather', not exists (select 1 from public.household_weather));
+select set_config('request.jwt.claims', :'NO_CLAIMS', true);
+select pg_temp.expect('signed-out caller sees no weather', not exists (select 1 from public.household_weather));
+set local role anon;
+select pg_temp.expect_error('anon cannot read weather', $q$select * from public.household_weather$q$, '42501');
+set local role authenticated;
+
+\echo '[71] household_weather: clients cannot write'
+select set_config('request.jwt.claims', :'F', true);
+select pg_temp.expect_error('member cannot insert weather',
+  $q$insert into public.household_weather (household_id, current_temp_f) values (pg_temp.v('household_k'), 1)$q$, '42501');
+select pg_temp.expect_error('member cannot update weather',
+  $q$update public.household_weather set current_temp_f = 1 where household_id = pg_temp.v('household_f')$q$, '42501');
+select pg_temp.expect_error('member cannot delete weather',
+  $q$delete from public.household_weather where household_id = pg_temp.v('household_f')$q$, '42501');
+select set_config('request.jwt.claims', :'J', true);
+select pg_temp.expect_error('display cannot upsert weather',
+  $q$insert into public.household_weather (household_id, current_temp_f) values (pg_temp.v('household_f'), 1)
+     on conflict (household_id) do update set current_temp_f = 1$q$, '42501');
+reset role;
+select pg_temp.expect('weather untouched', (
+  select current_temp_f from public.household_weather where household_id = pg_temp.v('household_f')) = 74);
+
+\echo '[72] is_my_household, location changes clear the cache, and weather privileges'
+set local role authenticated;
+select set_config('request.jwt.claims', :'F', true);
+select pg_temp.expect('member: is_my_household true', public.is_my_household(:'household_f'));
+select pg_temp.expect('member: another household is not mine', not public.is_my_household(:'household_k'));
+select pg_temp.expect('null household is not mine', not public.is_my_household(null));
+select set_config('request.jwt.claims', :'J', true);
+select pg_temp.expect('display: is_my_household true', public.is_my_household(:'household_f'));
+select set_config('request.jwt.claims', :'A', true);
+select pg_temp.expect('non-member: is_my_household false', not public.is_my_household(:'household_f'));
+reset role;
+update public.households set name = name where id = :'household_f';
+select pg_temp.expect('non-location household update keeps the cache', exists (
+  select 1 from public.household_weather where household_id = pg_temp.v('household_f')));
+update public.households set lat = 35.23, lon = -80.84 where id = :'household_f';
+select pg_temp.expect('changing the location deletes the cached row', not exists (
+  select 1 from public.household_weather where household_id = pg_temp.v('household_f')));
+select pg_temp.expect('other household''s cache untouched', exists (
+  select 1 from public.household_weather where household_id = pg_temp.v('household_k')));
+select pg_temp.expect('only authenticated can execute is_my_household',
+  has_function_privilege('authenticated', 'public.is_my_household(uuid)', 'execute')
+  and not has_function_privilege('anon', 'public.is_my_household(uuid)', 'execute'));
+select pg_temp.expect('PUBLIC cannot execute is_my_household', not exists (
+  select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+  where n.nspname = 'public' and p.proname = 'is_my_household' and a.grantee = 0 and a.privilege_type = 'EXECUTE'));
+select pg_temp.expect('no client role can execute the weather trigger function', not exists (
+  select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'private' and p.proname = 'clear_weather_on_location_change'
+    and (has_function_privilege('authenticated', p.oid, 'execute') or has_function_privilege('anon', p.oid, 'execute'))));
+select pg_temp.expect('household_weather: authenticated select only, anon nothing',
+  has_table_privilege('authenticated', 'public.household_weather', 'select')
+  and not has_table_privilege('authenticated', 'public.household_weather', 'insert, update, delete, truncate, references, trigger')
+  and not has_table_privilege('anon', 'public.household_weather', 'select, insert, update, delete, truncate, references, trigger'));
+select pg_temp.expect('household_weather: RLS on, one select policy, realtime published', (
+  select relrowsecurity from pg_class where oid = 'public.household_weather'::regclass)
+  and (select array_agg(cmd) from pg_policies where schemaname = 'public' and tablename = 'household_weather') = array['SELECT']
+  and exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and tablename = 'household_weather'));
+
 \o
 \echo 'ALL RLS SMOKE CHECKS PASSED'
 rollback;
