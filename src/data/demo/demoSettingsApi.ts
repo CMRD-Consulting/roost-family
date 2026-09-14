@@ -1,0 +1,321 @@
+import type { Feature } from '@/domain/types'
+import type { EntryTable } from '../logCommands'
+import {
+  SettingsError,
+  type AddChildInput,
+  type AdultClient,
+  type HouseholdSettingsInput,
+  type ListEntriesQuery,
+  type LogEntryRow,
+  type LogTable,
+  type MedicineInput,
+  type RoutineInput,
+  type SettingsApi,
+  type SettingsAuth,
+  type StickerCategoryInput,
+  type UpdateChildInput,
+} from '../settingsApi'
+import type { HouseholdSnapshot, SitterInfo, StickerCategory } from '../snapshot'
+import { getDemoSnapshot, mutateDemo } from './demoHousehold'
+
+/** Membership id -> PIN, for the two demo adults (same as `createDemoLogWriter`). */
+const DEMO_PINS: Record<string, string> = {
+  'bbbbbbbb-0000-0000-0000-000000000001': '1234', // Sam
+  'bbbbbbbb-0000-0000-0000-000000000002': '5678', // Alex
+}
+
+function pinOk(membershipId: string, pin: string): boolean {
+  return DEMO_PINS[membershipId] === pin
+}
+
+function requirePin(auth: SettingsAuth): void {
+  if (!pinOk(auth.membershipId, auth.pin)) throw new SettingsError('Incorrect PIN', 'auth')
+}
+
+function updateById<T extends { id: string }>(list: T[], id: string, fn: (x: T) => T): T[] {
+  const index = list.findIndex((x) => x.id === id)
+  if (index === -1) throw new SettingsError('Not found', 'other')
+  const copy = list.slice()
+  copy[index] = fn(list[index]!)
+  return copy
+}
+
+const TIME_COLUMN: Record<LogTable, string> = {
+  sleep_entries: 'startAt',
+  feeding_entries: 'at',
+  sticker_entries: 'at',
+  diaper_entries: 'at',
+  dose_entries: 'at',
+  jots: 'createdAt',
+}
+
+/** The snapshot array each `listEntries`/`deleteOldEntries` table reads from. Cast to a generic row shape
+ *  (rather than each entry's own interface) since the caller picks fields out by a table-dependent key. */
+function entriesFor(snapshot: HouseholdSnapshot, table: LogTable): Array<Record<string, unknown>> {
+  const list = (() => {
+    switch (table) {
+      case 'sleep_entries':
+        return snapshot.sleeps
+      case 'feeding_entries':
+        return snapshot.feedings
+      case 'sticker_entries':
+        return snapshot.stickers
+      case 'diaper_entries':
+        return snapshot.diapers
+      case 'dose_entries':
+        return snapshot.doses
+      case 'jots':
+        return snapshot.jots
+    }
+  })()
+  return list as unknown as Array<Record<string, unknown>>
+}
+
+/** Renaming "this display" isn't part of the demo household (there is exactly one, fixed, display); a
+ *  module-local name stands in so the My devices/Displays screens have something to show and change. */
+let demoDisplayName = 'Kitchen'
+
+/** Test-only: resets the demo display name changed by `renameDisplay`. */
+export function resetDemoSettingsApiForTests(): void {
+  demoDisplayName = 'Kitchen'
+}
+
+/** Test-only: the current demo display name, as changed by `renameDisplay`. */
+export function getDemoDisplayName(): string {
+  return demoDisplayName
+}
+
+/**
+ * Demo-mode `SettingsApi`: every PIN-checked method mutates the shared in-memory demo household (spec §7.9),
+ * so the whole Settings UI can be exercised without a server. The full-sign-in-only methods (members, most of
+ * displays, deletion) have no demo backing and refuse; `setMemberRole` and `renameDisplay` are the exceptions
+ * called out in the plan, and mutate.
+ */
+export function createDemoSettingsApi(): SettingsApi {
+  async function settingsVerify(auth: SettingsAuth) {
+    requirePin(auth)
+    const member = getDemoSnapshot(new Date()).members.find((m) => m.id === auth.membershipId)
+    if (!member) throw new SettingsError('Incorrect PIN', 'auth')
+    return { role: member.role, displayName: member.displayName }
+  }
+
+  async function updateHouseholdSettings(auth: SettingsAuth, input: HouseholdSettingsInput): Promise<void> {
+    requirePin(auth)
+    mutateDemo((s) => ({
+      ...s,
+      household: {
+        ...s.household,
+        name: input.name,
+        timeZone: input.timeZone,
+        leaveByBufferMin: input.leaveByBufferMin,
+        defaultNightSleep: input.defaultNightSleep,
+        nightMode: input.nightMode,
+        diaperLogEnabled: input.diaperLogEnabled,
+      },
+    }))
+  }
+
+  async function updateSitterInfo(auth: SettingsAuth, info: SitterInfo): Promise<void> {
+    requirePin(auth)
+    mutateDemo((s) => ({ ...s, household: { ...s.household, sitterInfo: info } }))
+  }
+
+  async function addChild(auth: SettingsAuth, input: AddChildInput): Promise<string> {
+    requirePin(auth)
+    const id = crypto.randomUUID()
+    mutateDemo((s) => {
+      if (s.children.length >= 8) throw new SettingsError('A household can have at most 8 children', 'invalid')
+      const sortOrder = s.children.reduce((max, c) => Math.max(max, c.sortOrder), -1) + 1
+      const child = { id, name: input.name, birthday: input.birthday, color: input.color, nightSleep: null, sortOrder, overrides: {} }
+      return { ...s, children: [...s.children, child] }
+    })
+    return id
+  }
+
+  async function updateChild(auth: SettingsAuth, input: UpdateChildInput): Promise<void> {
+    requirePin(auth)
+    mutateDemo((s) => ({
+      ...s,
+      children: updateById(s.children, input.childId, (c) => ({
+        ...c,
+        name: input.name,
+        birthday: input.birthday,
+        color: input.color,
+        allergies: input.allergies,
+        foodRules: input.foodRules,
+        nightSleep: input.nightSleep,
+      })),
+    }))
+  }
+
+  async function setFeatureOverride(auth: SettingsAuth, childId: string, feature: Feature, enabled: boolean | null): Promise<void> {
+    requirePin(auth)
+    mutateDemo((s) => ({
+      ...s,
+      children: updateById(s.children, childId, (c) => {
+        const overrides = { ...c.overrides }
+        if (enabled === null) delete overrides[feature]
+        else overrides[feature] = enabled
+        return { ...c, overrides }
+      }),
+    }))
+  }
+
+  async function upsertRoutine(auth: SettingsAuth, input: RoutineInput): Promise<string> {
+    requirePin(auth)
+    const id = input.routineId ?? crypto.randomUUID()
+    mutateDemo((s) => {
+      const routine = { id, childId: input.childId, name: input.name, weekdays: input.weekdays, steps: input.steps }
+      if (input.routineId === null) return { ...s, routines: [...s.routines, routine] }
+      return { ...s, routines: updateById(s.routines, input.routineId, () => routine) }
+    })
+    return id
+  }
+
+  async function deleteRoutine(auth: SettingsAuth, routineId: string): Promise<void> {
+    requirePin(auth)
+    mutateDemo((s) => ({
+      ...s,
+      routines: s.routines.filter((r) => r.id !== routineId),
+      routineProgress: s.routineProgress.filter((p) => p.routineId !== routineId),
+      routineOverrides: s.routineOverrides.filter((o) => o.routineId !== routineId),
+    }))
+  }
+
+  async function setRoutineDayOverride(auth: SettingsAuth, childId: string, day: string, routineId: string | null): Promise<void> {
+    requirePin(auth)
+    mutateDemo((s) => {
+      const without = s.routineOverrides.filter((o) => !(o.childId === childId && o.day === day))
+      if (routineId === null) return { ...s, routineOverrides: without }
+      return { ...s, routineOverrides: [...without, { childId, day, routineId }] }
+    })
+  }
+
+  async function upsertMedicine(auth: SettingsAuth, input: MedicineInput): Promise<string> {
+    requirePin(auth)
+    const id = input.medicineId ?? crypto.randomUUID()
+    mutateDemo((s) => {
+      const medicine = {
+        id, childId: input.childId, name: input.name, minIntervalHours: input.minIntervalHours, maxDosesPer24h: input.maxDosesPer24h,
+      }
+      if (input.medicineId === null) return { ...s, medicines: [...s.medicines, medicine] }
+      return { ...s, medicines: updateById(s.medicines, input.medicineId, () => medicine) }
+    })
+    return id
+  }
+
+  // Archiving is invisible in the loaded snapshot in the real system too (supabaseSource only loads
+  // medicines/categories with archived_at null), so archiving here just removes it.
+  async function archiveMedicine(auth: SettingsAuth, medicineId: string): Promise<void> {
+    requirePin(auth)
+    mutateDemo((s) => ({ ...s, medicines: s.medicines.filter((m) => m.id !== medicineId) }))
+  }
+
+  async function upsertStickerCategory(auth: SettingsAuth, input: StickerCategoryInput): Promise<string> {
+    requirePin(auth)
+    const id = input.categoryId ?? crypto.randomUUID()
+    mutateDemo((s) => {
+      const existing = s.stickerCategories.find((c) => c.id === input.categoryId)
+      const sortOrder = input.sortOrder ?? existing?.sortOrder ??
+        s.stickerCategories.reduce((max, c) => Math.max(max, c.sortOrder), -1) + 1
+      const category: StickerCategory = { id, name: input.name, iconKey: input.iconKey, sortOrder }
+      if (input.categoryId === null) return { ...s, stickerCategories: [...s.stickerCategories, category] }
+      return { ...s, stickerCategories: updateById(s.stickerCategories, input.categoryId, () => category) }
+    })
+    return id
+  }
+
+  async function archiveStickerCategory(auth: SettingsAuth, categoryId: string): Promise<void> {
+    requirePin(auth)
+    mutateDemo((s) => ({ ...s, stickerCategories: s.stickerCategories.filter((c) => c.id !== categoryId) }))
+  }
+
+  async function setMyColor(auth: SettingsAuth, color: string): Promise<void> {
+    requirePin(auth)
+    mutateDemo((s) => ({
+      ...s,
+      members: s.members.map((m) => (m.id === auth.membershipId ? { ...m, color } : m)),
+    }))
+  }
+
+  async function deleteOldEntries(auth: SettingsAuth, table: EntryTable, before: string): Promise<number> {
+    requirePin(auth)
+    let removed = 0
+    mutateDemo((s) => {
+      const timeKey = TIME_COLUMN[table]
+      const kept = entriesFor(s, table).filter((row) => {
+        const keep = (row[timeKey] as string) >= before
+        if (!keep) removed++
+        return keep
+      })
+      switch (table) {
+        case 'sleep_entries':
+          return { ...s, sleeps: kept as unknown as HouseholdSnapshot['sleeps'] }
+        case 'feeding_entries':
+          return { ...s, feedings: kept as unknown as HouseholdSnapshot['feedings'] }
+        case 'sticker_entries':
+          return { ...s, stickers: kept as unknown as HouseholdSnapshot['stickers'] }
+        case 'diaper_entries':
+          return { ...s, diapers: kept as unknown as HouseholdSnapshot['diapers'] }
+        case 'jots':
+          return { ...s, jots: kept as unknown as HouseholdSnapshot['jots'] }
+      }
+    })
+    return removed
+  }
+
+  async function listEntries(query: ListEntriesQuery): Promise<LogEntryRow[]> {
+    const snapshot = getDemoSnapshot(new Date())
+    const timeKey = TIME_COLUMN[query.table]
+    let rows = entriesFor(snapshot, query.table)
+    if (query.childId) rows = rows.filter((r) => r.childId === query.childId)
+    if (query.before) rows = rows.filter((r) => (r[timeKey] as string) < query.before!)
+    rows = rows.slice().sort((a, b) => (b[timeKey] as string).localeCompare(a[timeKey] as string)).slice(0, query.limit)
+    return rows.map((row) => ({
+      id: row.id as string,
+      childId: row.childId as string,
+      at: row[timeKey] as string,
+      loggedByName: (row.loggedByName as string | null | undefined) ?? null,
+      row,
+    }))
+  }
+
+  // ─── Full sign-in only: no demo backing except role changes and display rename ───────────────────────
+  async function notAvailable(): Promise<never> {
+    throw new SettingsError('Not available in demo', 'other')
+  }
+
+  async function setMemberRole(_client: AdultClient, membershipId: string, role: 'owner' | 'adult'): Promise<void> {
+    mutateDemo((s) => ({ ...s, members: s.members.map((m) => (m.id === membershipId ? { ...m, role } : m)) }))
+  }
+
+  async function renameDisplay(_client: AdultClient, _displayId: string, name: string): Promise<void> {
+    demoDisplayName = name
+  }
+
+  return {
+    settingsVerify,
+    updateHouseholdSettings,
+    updateSitterInfo,
+    addChild,
+    updateChild,
+    setFeatureOverride,
+    upsertRoutine,
+    deleteRoutine,
+    setRoutineDayOverride,
+    upsertMedicine,
+    archiveMedicine,
+    upsertStickerCategory,
+    archiveStickerCategory,
+    setMyColor,
+    deleteOldEntries,
+    listEntries,
+    createMemberInvite: notAvailable,
+    acceptMemberInvite: notAvailable,
+    setMemberRole,
+    removeMember: notAvailable,
+    leaveHousehold: notAvailable,
+    renameDisplay,
+    deleteHousehold: notAvailable,
+  }
+}
