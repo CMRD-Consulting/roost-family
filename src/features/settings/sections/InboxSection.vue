@@ -135,6 +135,7 @@ async function confirmDelete(jot: Jot): Promise<void> {
               <RButton variant="secondary" :disabled="deleting" @click="deletingId = null">Cancel</RButton>
               <RButton variant="danger" :disabled="deleting || offline" @click="confirmDelete(jot)">Delete jot</RButton>
             </div>
+            <p v-if="deleteError" role="alert" class="text-[18px] text-warn-ink">{{ deleteError }}</p>
           </div>
         </li>
       </ul>

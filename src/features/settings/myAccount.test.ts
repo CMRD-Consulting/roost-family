@@ -117,6 +117,25 @@ describe('AdultSignIn', () => {
     expect(adult.disposeAdultClient).not.toHaveBeenCalled()
   })
 
+  it('moves focus to its heading when the step changes', async () => {
+    const w = mount(AdultSignIn, { props: { title: 'Sign in as an owner' }, attachTo: document.body })
+    const heading = w.find('[data-step-heading]')
+    expect(heading.text()).toBe('Sign in as an owner')
+    expect(heading.attributes('tabindex')).toBe('-1')
+
+    await inputByLabel(w, 'Email').setValue('sam@example.com')
+    await buttonByText(w, 'Email me a 6-digit code').trigger('click')
+    await settle()
+    expect(w.text()).toContain('We sent a code to')
+    expect(document.activeElement).toBe(heading.element)
+
+    ;(document.activeElement as HTMLElement).blur()
+    await buttonByText(w, 'Use a different email').trigger('click')
+    await settle()
+    expect(document.activeElement).toBe(w.find('[data-step-heading]').element)
+    w.unmount()
+  })
+
   it('shows a failed code and disposes of the unused client when it goes away', async () => {
     adult.verifyEmailCode.mockRejectedValue(new Error('Token has expired or is invalid'))
     const w = mount(AdultSignIn)

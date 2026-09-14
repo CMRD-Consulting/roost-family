@@ -5,7 +5,7 @@
  * component owns the client and disposes of it when it goes away. The session module (and so the Supabase
  * client) loads only when a sign-in actually starts.
  */
-import { onBeforeUnmount, ref } from 'vue'
+import { nextTick, onBeforeUnmount, ref, useTemplateRef, watch } from 'vue'
 import type { RoostClient } from '@/data/supabase'
 import { validateCode, validateEmail } from '@/features/setup/validation'
 import type { AdultSession } from '@/session/adultSession'
@@ -31,6 +31,13 @@ const code = ref('')
 const busy = ref(false)
 const error = ref<string | null>(null)
 const isDev = import.meta.env.DEV
+const headingEl = useTemplateRef<HTMLElement>('titleHeading')
+
+// A new step (email → code, or back): focus its heading so a screen reader announces where the adult is.
+watch(phase, async () => {
+  await nextTick()
+  headingEl.value?.focus()
+})
 
 async function ensureClient(): Promise<{ mod: SessionModule; client: RoostClient }> {
   sessionModule ??= await import('@/session/adultSession')
@@ -91,7 +98,14 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="flex flex-col gap-4 rounded-[var(--radius-card)] bg-surface px-6 py-5" data-testid="adult-sign-in">
-    <component :is="heading" class="font-semibold text-ink" :class="heading === 'h1' ? 'text-[32px]' : 'text-[22px]'">{{ title }}</component>
+    <component
+      :is="heading"
+      ref="titleHeading"
+      tabindex="-1"
+      data-step-heading
+      class="font-semibold text-ink outline-none"
+      :class="heading === 'h1' ? 'text-[32px]' : 'text-[22px]'"
+    >{{ title }}</component>
     <p v-if="hint" class="text-[18px] text-ink-3">{{ hint }}</p>
 
     <template v-if="phase === 'email'">

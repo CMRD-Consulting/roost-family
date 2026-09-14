@@ -173,6 +173,23 @@ describe('owner sign-in', () => {
     w.unmount()
   })
 
+  it('moves focus to each sign-in step as it changes, then to the section once signed in', async () => {
+    settingsApi.adultMembership.mockResolvedValueOnce({ membershipId: ALEX, role: 'adult' })
+    const w = await mountSection(MembersSection)
+    await signIn(w, 'alex@example.com')
+    expect(document.activeElement?.textContent).toBe('Only an owner can manage this.')
+
+    await buttonByText(w, 'Sign in as a different adult').trigger('click')
+    await settle()
+    expect(document.activeElement?.textContent).toBe('Sign in as an owner')
+
+    await signIn(w)
+    expect(document.activeElement).toBe(w.find('h2').element)
+    expect(w.find('h2').text()).toBe('Members')
+    expect(w.find('h2').attributes('tabindex')).toBe('-1')
+    w.unmount()
+  })
+
   it('signs the owner out after 5 minutes without a touch, and when the section closes', async () => {
     const w = await mountSection(MembersSection)
     await signIn(w)

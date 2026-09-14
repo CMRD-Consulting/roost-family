@@ -116,6 +116,11 @@ const items = computed<LogItem[]>(() => {
 const visible = computed(() => itemsOnDay(items.value, day.value, timeZone.value))
 const otherDays = computed(() => loadedDays(items.value, timeZone.value).filter((d) => d !== today.value && d !== yesterday.value))
 
+/** A row's buttons name their entry, e.g. "Edit Milk at 3:10 PM", since every row has the same buttons. */
+function rowName(item: LogItem): string {
+  return `${item.title} at ${formatClock(new Date(item.at), timeZone.value)}`
+}
+
 function childName(id: string): string {
   return children.value.find((c) => c.id === id)?.name ?? ''
 }
@@ -288,10 +293,10 @@ function typeId(): LogTypeId {
             </div>
             <div v-if="panel?.id !== item.id" class="flex gap-2">
               <template v-if="item.editable">
-                <RButton variant="secondary" @click="open(item, 'edit')">Edit</RButton>
-                <RButton variant="ghost" @click="open(item, 'delete')">Delete</RButton>
+                <RButton variant="secondary" :aria-label="`Edit ${rowName(item)}`" @click="open(item, 'edit')">Edit</RButton>
+                <RButton variant="ghost" :aria-label="`Delete ${rowName(item)}`" @click="open(item, 'delete')">Delete</RButton>
               </template>
-              <RButton v-else-if="!item.voided" variant="secondary" @click="open(item, 'void')">Void</RButton>
+              <RButton v-else-if="!item.voided" variant="secondary" :aria-label="`Void ${rowName(item)}`" @click="open(item, 'void')">Void</RButton>
             </div>
           </div>
 

@@ -5,7 +5,7 @@
  * settings session; when that session ends (5 min idle, Night Mode) the tablet goes back to the main screen,
  * and leaving Settings ends the session. Offline, a banner explains that nothing can be saved.
  */
-import { computed, onBeforeUnmount, watch, type Component } from 'vue'
+import { computed, nextTick, onBeforeUnmount, useTemplateRef, watch, type Component } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useHouseholdSession } from '@/features/main/useHouseholdSession'
 import { useNightPeekTaps } from '@/features/modes/useNightPeekTaps'
@@ -68,6 +68,19 @@ const adult = computed(() => {
 })
 
 let leaving = false
+
+// Switching sections moves focus to the new section's heading (made focusable here), not left on the nav link.
+const content = useTemplateRef<HTMLElement>('content')
+watch(
+  () => section.value.id,
+  async () => {
+    await nextTick()
+    const heading = content.value?.querySelector<HTMLElement>('h2')
+    if (!heading) return
+    if (!heading.hasAttribute('tabindex')) heading.setAttribute('tabindex', '-1')
+    heading.focus()
+  },
+)
 
 // Idle expiry or Night Mode ended the session: back to the main screen. (A section that ends the session as it
 // navigates elsewhere, like adding an adult, has already left Settings.)
@@ -140,7 +153,7 @@ onBeforeUnmount(() => {
         </ul>
       </nav>
 
-      <div class="overflow-y-auto px-10 py-8">
+      <div ref="content" class="overflow-y-auto px-10 py-8">
         <div class="mx-auto flex max-w-[820px] flex-col gap-6">
           <p
             v-if="offline"

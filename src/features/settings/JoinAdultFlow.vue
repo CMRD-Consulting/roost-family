@@ -6,7 +6,7 @@
  * chooses a name, color and PIN. Joining or cancelling signs them out and returns the tablet to the main screen,
  * as does 5 minutes without a touch. The invite is held in memory only (see pendingInvite).
  */
-import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, useTemplateRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useHouseholdSession } from '@/features/main/useHouseholdSession'
 import ConsentChecks from '@/features/setup/ConsentChecks.vue'
@@ -50,6 +50,15 @@ const pin = ref('')
 const pinAgain = ref('')
 
 let finished = false
+
+// Each step (and the hand-off on arrival) moves focus to its heading, so a screen reader follows the flow.
+const root = useTemplateRef<HTMLElement>('root')
+async function focusStepHeading(): Promise<void> {
+  await nextTick()
+  root.value?.querySelector<HTMLElement>('[data-step-heading]')?.focus()
+}
+onMounted(focusStepHeading)
+watch(step, focusStepHeading)
 
 /** Signs the new adult out (if signed in) and returns the tablet to the main screen. */
 function finish(): void {
@@ -140,9 +149,9 @@ async function join(): Promise<void> {
 
 <template>
   <main class="flex min-h-dvh justify-center overflow-y-auto bg-app px-10 py-12 text-ink" data-testid="join-adult-flow">
-    <div v-if="invite" class="flex w-full max-w-[720px] flex-col gap-5">
+    <div v-if="invite" ref="root" class="flex w-full max-w-[720px] flex-col gap-5">
       <template v-if="step === 'handoff'">
-        <h1 class="text-[32px] font-semibold text-ink">Hand the tablet to the new adult</h1>
+        <h1 tabindex="-1" data-step-heading class="text-[32px] font-semibold text-ink outline-none">Hand the tablet to the new adult</h1>
         <p class="text-[20px] text-ink-2">
           They’ll sign in with their own email, agree to the terms, and choose a name, color and PIN to join
           {{ householdName }} as {{ invite.role === 'owner' ? 'an owner' : 'an adult' }}. The invite works for 10 minutes.
@@ -163,7 +172,7 @@ async function join(): Promise<void> {
       />
 
       <template v-else-if="step === 'consent'">
-        <h1 class="text-[32px] font-semibold text-ink">Your family’s information</h1>
+        <h1 tabindex="-1" data-step-heading class="text-[32px] font-semibold text-ink outline-none">Your family’s information</h1>
         <ConsentChecks v-model:terms="agreeTerms" v-model:health="agreeHealth" />
         <div class="flex flex-wrap gap-3">
           <RButton variant="secondary" :disabled="busy" @click="finish">Cancel</RButton>
@@ -172,7 +181,7 @@ async function join(): Promise<void> {
       </template>
 
       <template v-else>
-        <h1 class="text-[32px] font-semibold text-ink">About you</h1>
+        <h1 tabindex="-1" data-step-heading class="text-[32px] font-semibold text-ink outline-none">About you</h1>
         <RInput v-model="name" label="Your name" autocomplete="off" :maxlength="40" />
         <ColorPicker v-model="color" label="Your color" />
         <RInput v-model="pin" label="Choose a 4-digit PIN" inputmode="numeric" autocomplete="off" :maxlength="4" masked />

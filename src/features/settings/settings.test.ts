@@ -251,6 +251,19 @@ describe('SettingsShell', () => {
     w.unmount()
   })
 
+  it('switching sections moves focus to the new section’s heading', async () => {
+    const w = await openShell(fakeApi())
+    await w.findAll('nav[aria-label="Settings sections"] a').find((a) => a.text() === 'Stickers')!.trigger('click')
+    await settle()
+
+    expect(router.currentRoute.value.path).toBe('/settings/stickers')
+    const heading = w.find('h2')
+    expect(heading.text()).toBe('Stickers')
+    expect(heading.attributes('tabindex')).toBe('-1')
+    expect(document.activeElement).toBe(heading.element)
+    w.unmount()
+  })
+
   it('Done returns to /home and ends the session', async () => {
     const w = await openShell(fakeApi())
     await buttonByText(w, 'Done').trigger('click')
@@ -848,6 +861,16 @@ describe('SettingsShell', () => {
       w.unmount()
     })
 
+    it('names the entry and its time on each row’s buttons', async () => {
+      const w = await openShell(await demoApi(), 'logs')
+      expect(rows(w)[0]!.findAll('button').map((b) => b.attributes('aria-label'))).toEqual(['Edit Nap at 11:00 AM', 'Delete Nap at 11:00 AM'])
+
+      await radio(w, 'Type', 'Medicine').trigger('click')
+      await settle()
+      expect(rows(w)[0]!.find('button').attributes('aria-label')).toBe('Void Infant ibuprofen at 1:00 PM')
+      w.unmount()
+    })
+
     it('filters by child and type and shows who logged it', async () => {
       const w = await openShell(await demoApi(), 'logs')
 
@@ -1053,6 +1076,21 @@ describe('SettingsShell', () => {
 
       expect(settingsApi.deleteEntry).toHaveBeenCalledWith(SAM_AUTH, 'jots', 'jot-new')
       expect(w.text()).not.toContain('Buy birthday card')
+      w.unmount()
+    })
+
+    it('shows a failed delete from the done list', async () => {
+      const settingsApi = await demoApi()
+      vi.mocked(settingsApi.deleteEntry).mockRejectedValue(new SettingsError('That entry no longer exists.', 'invalid'))
+      const w = await openShell(settingsApi, 'inbox')
+
+      await buttonByText(w, 'Done in the last 7 days (1)').trigger('click')
+      await w.find('button[aria-label="Delete: Book dentist"]').trigger('click')
+      await buttonByText(w, 'Delete jot').trigger('click')
+      await settle()
+
+      expect(settingsApi.deleteEntry).toHaveBeenCalledWith(SAM_AUTH, 'jots', 'jot-done')
+      expect(w.find('[role="alert"]').text()).toBe('That entry no longer exists.')
       w.unmount()
     })
   })

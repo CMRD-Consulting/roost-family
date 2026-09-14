@@ -130,6 +130,23 @@ describe('JoinAdultFlow', () => {
     w.unmount()
   })
 
+  it('moves focus to each step’s heading', async () => {
+    const w = await mountFlow()
+    const focusedHeading = () => (document.activeElement?.matches('h1[tabindex="-1"]') ? document.activeElement.textContent : null)
+    expect(focusedHeading()).toBe('Hand the tablet to the new adult')
+
+    await buttonByText(w, 'I’m the new adult').trigger('click')
+    await settle()
+    expect(focusedHeading()).toBe('Sign in to join Rivera')
+
+    await signIn(w)
+    expect(focusedHeading()).toBe('Your family’s information')
+
+    await consent(w)
+    expect(focusedHeading()).toBe('About you')
+    w.unmount()
+  })
+
   it('without a pending invite, goes back to the main screen', async () => {
     takePendingInvite()
     const w = await mountFlow()
