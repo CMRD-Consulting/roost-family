@@ -468,19 +468,23 @@ additional_redirect_urls = []
 max_frequency = "1m0s"
 
 # Custom SMTP: required before the code email templates can be pushed, and to mail anyone outside the Supabase
-# organization. Host, user and password come from the shell that runs `supabase config push`, so no credential
-# is committed and the provider can change without touching this file:
-#   ROOST_SMTP_HOST  sandbox.smtp.mailtrap.io (Mailtrap Email Testing: every message lands in the Mailtrap
-#                    inbox, none reaches a real mailbox) or live.smtp.mailtrap.io (Email Sending: real delivery,
-#                    needs the sender's domain verified; the user is then `api` and the password an API token)
-#   ROOST_SMTP_USER, ROOST_SMTP_PASS  from that Mailtrap inbox's or sending domain's SMTP credentials
+# organization. Host, user, password and sender come from the shell that runs `supabase config push`, so no
+# credential is committed and the provider can change without touching this file. For a Mailgun sandbox domain
+# (Sending > Domains > sandbox….mailgun.org > SMTP credentials):
+#   ROOST_SMTP_HOST  smtp.mailgun.org (smtp.eu.mailgun.org for an EU account)
+#   ROOST_SMTP_USER  postmaster@sandbox….mailgun.org
+#   ROOST_SMTP_PASS  that SMTP user's password
+#   ROOST_SMTP_FROM  the same postmaster@sandbox….mailgun.org address: mail through a sandbox domain must come
+#                    from it, or the recipient's SPF/DKIM checks fail. With a verified domain of our own this
+#                    becomes no-reply@roost.cmrd.dev.
+# A sandbox domain delivers only to its Authorized Recipients (at most 5, each confirms by email).
 [remotes.production.auth.email.smtp]
 enabled = true
 host = "env(ROOST_SMTP_HOST)"
 port = 587
 user = "env(ROOST_SMTP_USER)"
 pass = "env(ROOST_SMTP_PASS)"
-admin_email = "no-reply@roost.cmrd.dev"
+admin_email = "env(ROOST_SMTP_FROM)"
 sender_name = "Roost Family"
 
 [remotes.production.auth.rate_limit]

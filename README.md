@@ -94,15 +94,16 @@ The hosted project is `roost-family` (ref `njhwxoybuxwwtdvebdou`, us-east-1, fre
   (a display's identity), 6-digit codes (hosted default: 8) and the code email templates.
 - **Email (custom SMTP):** Supabase refuses template changes on the free plan with its own sender, and that sender
   mails a link (not the code) and only to the Supabase organization's own addresses. `[remotes.production.auth.email.smtp]`
-  takes the host, user and password from the shell, so no credential is committed:
+  takes the host, user, password and sender from the shell, so no credential is committed:
   ```bash
-  export ROOST_SMTP_HOST=sandbox.smtp.mailtrap.io ROOST_SMTP_USER=… ROOST_SMTP_PASS=…
+  export ROOST_SMTP_HOST=smtp.mailgun.org ROOST_SMTP_USER=postmaster@sandbox….mailgun.org \
+    ROOST_SMTP_FROM=postmaster@sandbox….mailgun.org ROOST_SMTP_PASS=…
   supabase config push --project-ref njhwxoybuxwwtdvebdou
   ```
-  With Mailtrap Email Testing (`sandbox.smtp.mailtrap.io`) every code lands in the Mailtrap inbox whatever address was
-  typed, and nothing reaches a real mailbox: right while the only users are us. For real delivery switch to Mailtrap
-  Email Sending (`live.smtp.mailtrap.io`, user `api`, an API token as the password, `roost.cmrd.dev` verified) or any
-  other provider, and push again. Every push needs the three variables set, or it would blank the SMTP settings.
+  Today that is a Mailgun sandbox domain: it delivers for real, but only to its Authorized Recipients (at most 5, each
+  confirms by email), and the sender must be on the sandbox domain. For other families, verify `roost.cmrd.dev` with
+  Mailgun (or any provider), change the four values (sender `no-reply@roost.cmrd.dev`) and push again. Every push
+  needs the four variables set, or it would blank the SMTP settings.
 - **Functions:** `supabase functions deploy --use-api` (bundles on Supabase, so no Docker). Secrets are set with
   `supabase secrets set`: `APP_URL`, `CALENDAR_FINGERPRINT_KEY` (never rotate casually: it stops duplicate-link
   detection for existing connections), and later `SMTP_*`, `NWS_CONTACT` and the calendar providers' credentials.
