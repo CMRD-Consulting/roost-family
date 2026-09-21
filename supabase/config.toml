@@ -466,3 +466,23 @@ additional_redirect_urls = []
 [remotes.production.auth.email]
 # Local development resends freely; production keeps Supabase's one-per-minute per address.
 max_frequency = "1m0s"
+
+# Custom SMTP: required before the code email templates can be pushed, and to mail anyone outside the Supabase
+# organization. Host, user and password come from the shell that runs `supabase config push`, so no credential
+# is committed and the provider can change without touching this file:
+#   ROOST_SMTP_HOST  sandbox.smtp.mailtrap.io (Mailtrap Email Testing: every message lands in the Mailtrap
+#                    inbox, none reaches a real mailbox) or live.smtp.mailtrap.io (Email Sending: real delivery,
+#                    needs the sender's domain verified; the user is then `api` and the password an API token)
+#   ROOST_SMTP_USER, ROOST_SMTP_PASS  from that Mailtrap inbox's or sending domain's SMTP credentials
+[remotes.production.auth.email.smtp]
+enabled = true
+host = "env(ROOST_SMTP_HOST)"
+port = 587
+user = "env(ROOST_SMTP_USER)"
+pass = "env(ROOST_SMTP_PASS)"
+admin_email = "no-reply@roost.cmrd.dev"
+sender_name = "Roost Family"
+
+[remotes.production.auth.rate_limit]
+# The base value (2) is the cap of Supabase's own sender; with custom SMTP each sign-in is one email.
+email_sent = 30

@@ -92,9 +92,17 @@ The hosted project is `roost-family` (ref `njhwxoybuxwwtdvebdou`, us-east-1, fre
 - **Auth settings:** `supabase config push --project-ref njhwxoybuxwwtdvebdou` applies `config.toml` with the
   `[remotes.production]` overrides. The app depends on three of them, none a hosted default: anonymous sign-ins
   (a display's identity), 6-digit codes (hosted default: 8) and the code email templates.
-- **The email templates can't be pushed until custom SMTP is configured:** Supabase refuses template changes on the
-  free plan with its own sender, and its default template mails a link, not the code. Until then adults can't sign in.
-  Once SMTP is set (Dashboard > Authentication > Emails), run the config push again; the templates are all that differ.
+- **Email (custom SMTP):** Supabase refuses template changes on the free plan with its own sender, and that sender
+  mails a link (not the code) and only to the Supabase organization's own addresses. `[remotes.production.auth.email.smtp]`
+  takes the host, user and password from the shell, so no credential is committed:
+  ```bash
+  export ROOST_SMTP_HOST=sandbox.smtp.mailtrap.io ROOST_SMTP_USER=… ROOST_SMTP_PASS=…
+  supabase config push --project-ref njhwxoybuxwwtdvebdou
+  ```
+  With Mailtrap Email Testing (`sandbox.smtp.mailtrap.io`) every code lands in the Mailtrap inbox whatever address was
+  typed, and nothing reaches a real mailbox: right while the only users are us. For real delivery switch to Mailtrap
+  Email Sending (`live.smtp.mailtrap.io`, user `api`, an API token as the password, `roost.cmrd.dev` verified) or any
+  other provider, and push again. Every push needs the three variables set, or it would blank the SMTP settings.
 - **Functions:** `supabase functions deploy --use-api` (bundles on Supabase, so no Docker). Secrets are set with
   `supabase secrets set`: `APP_URL`, `CALENDAR_FINGERPRINT_KEY` (never rotate casually: it stops duplicate-link
   detection for existing connections), and later `SMTP_*`, `NWS_CONTACT` and the calendar providers' credentials.
