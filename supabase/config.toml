@@ -450,3 +450,19 @@ s3_secret_key = "env(S3_SECRET_KEY)"
 # declarative_schema_path = "./database"
 # JSON string passed through to pg-delta SQL formatting.
 # format_options = "{\"keywordCase\":\"upper\",\"indent\":2,\"maxWidth\":80,\"commaStyle\":\"trailing\"}"
+
+# Production (the hosted project `roost-family`). `supabase config push --project-ref njhwxoybuxwwtdvebdou`
+# applies everything above with these overrides, so the hosted auth settings the app depends on
+# (anonymous sign-ins for displays, 6-digit emailed codes, the code email templates) stay in step with local.
+[remotes.production]
+project_id = "njhwxoybuxwwtdvebdou"
+
+[remotes.production.auth]
+# Change both when roost.cmrd.dev is attached to the Netlify site. Sign-in is by emailed code, so nothing
+# links back here today.
+site_url = "https://roost-family.netlify.app"
+additional_redirect_urls = []
+
+[remotes.production.auth.email]
+# Local development resends freely; production keeps Supabase's one-per-minute per address.
+max_frequency = "1m0s"

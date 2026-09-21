@@ -81,6 +81,29 @@ Error tracking (`VITE_SENTRY_DSN`) replaces path tokens with `/list/[token]` and
 and breadcrumb, names events by route pattern, and sends no console arguments or request bodies
 (`src/app/errorTracking.ts`).
 
+## Supabase (production)
+
+The hosted project is `roost-family` (ref `njhwxoybuxwwtdvebdou`, us-east-1, free plan) in `crishellco's Org`.
+`supabase link --project-ref njhwxoybuxwwtdvebdou` connects a checkout; the database password is asked for then.
+
+- **Schema:** `supabase db push` applies new migrations. Never pass `--include-seed`: `seed.sql` is the local Rivera
+  household with known PINs. After any change to policies or RPCs, run `supabase/manual-checks/rls_smoke.sql` against
+  it too (one transaction, rolled back, so it leaves nothing behind).
+- **Auth settings:** `supabase config push --project-ref njhwxoybuxwwtdvebdou` applies `config.toml` with the
+  `[remotes.production]` overrides. The app depends on three of them, none a hosted default: anonymous sign-ins
+  (a display's identity), 6-digit codes (hosted default: 8) and the code email templates.
+- **The email templates can't be pushed until custom SMTP is configured:** Supabase refuses template changes on the
+  free plan with its own sender, and its default template mails a link, not the code. Until then adults can't sign in.
+  Once SMTP is set (Dashboard > Authentication > Emails), run the config push again; the templates are all that differ.
+- **Functions:** `supabase functions deploy --use-api` (bundles on Supabase, so no Docker). Secrets are set with
+  `supabase secrets set`: `APP_URL`, `CALENDAR_FINGERPRINT_KEY` (never rotate casually: it stops duplicate-link
+  detection for existing connections), and later `SMTP_*`, `NWS_CONTACT` and the calendar providers' credentials.
+- **API keys:** the project issues both legacy JWT keys (`anon`, `service_role`) and the newer `sb_publishable_…` /
+  `sb_secret_…` keys. Edge Functions receive the **new** ones as `SUPABASE_ANON_KEY` and
+  `SUPABASE_SERVICE_ROLE_KEY`. The web app uses the publishable key (`VITE_SUPABASE_ANON_KEY` on Netlify).
+- The free plan pauses a project after a week without requests and has no point-in-time recovery; the launch gate
+  (spec §15) needs a paid plan for that.
+
 ## Weather
 
 The `weather` Edge Function (spec §5.6) refreshes a household's National Weather Service forecast when the cached row
@@ -106,10 +129,13 @@ ended (expired or were revoked) more than 7 days ago.
    ```
 3. Deploy the sweep: `supabase functions deploy storage-sweep`. It accepts only the service role key (the gateway's JWT
    check is off for it in `config.toml`; the function checks the key itself).
-4. Keep the project URL and service role key in Vault and run the sweep hourly:
+4. Keep the project URL and the **secret key** in Vault and run the sweep hourly. The function compares the bearer
+   token with its own `SUPABASE_SERVICE_ROLE_KEY`, which on this project is the `sb_secret_…` key (Dashboard >
+   Project Settings > API Keys), not the legacy `service_role` JWT: with the JWT every run answers 401 while
+   `cron_check.sql` still reports READY.
    ```sql
    select vault.create_secret('https://<project-ref>.supabase.co', 'roost_project_url');
-   select vault.create_secret('<service role key>', 'roost_service_role_key');
+   select vault.create_secret('<sb_secret_… key>', 'roost_service_role_key');
    select cron.schedule('roost-storage-sweep', '41 * * * *', $$
      select net.http_post(
        url := (select decrypted_secret from vault.decrypted_secrets where name = 'roost_project_url') || '/functions/v1/storage-sweep',
