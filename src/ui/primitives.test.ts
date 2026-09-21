@@ -155,6 +155,14 @@ describe('RPinPad', () => {
     { id: 'm2', displayName: 'Alex', color: '#2C7F8C', role: 'adult' },
   ]
 
+  it('centres the chooser on one adult and uses two columns for more', () => {
+    const one = mount(RPinPad, { props: { members: [members[0]!], verify: vi.fn() } })
+    expect(one.get('[aria-label="Choose who you are"]').classes()).toContain('grid-cols-1')
+
+    const two = mount(RPinPad, { props: { members, verify: vi.fn() } })
+    expect(two.get('[aria-label="Choose who you are"]').classes()).toContain('grid-cols-2')
+  })
+
   it('walks the wrong-then-right PIN flow with a fake verify', async () => {
     const verify = vi.fn(async (membershipId: string, pin: string) => membershipId === 'm1' && pin === '1234')
     const w = mount(RPinPad, { props: { members, verify } })

@@ -81,7 +81,12 @@ async function press(key: string): Promise<void> {
   <div class="flex flex-col items-center gap-6">
     <h2 class="text-[24px] font-semibold text-ink">{{ title }}</h2>
 
-    <ul v-if="!selected" aria-label="Choose who you are" class="grid grid-cols-2 gap-6">
+    <ul
+      v-if="!selected"
+      aria-label="Choose who you are"
+      class="grid gap-6"
+      :class="eligibleMembers.length === 1 ? 'grid-cols-1' : 'grid-cols-2'"
+    >
       <li v-for="member in eligibleMembers" :key="member.id">
         <button
           type="button"
