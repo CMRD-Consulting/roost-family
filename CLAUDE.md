@@ -23,7 +23,7 @@
 - Entry ids are client-generated UUIDs (offline replay). Doses are never deleted — void them.
 - Auth email: Supabase's default email sender is rate-limited (about 2 emails per hour). Configure custom SMTP before launch.
 - `[auth.email] enable_confirmations = true` in `supabase/config.toml` is unverified against real Supabase: once Docker works, confirm the email-code sign-in still works for a brand-new email address.
-- Production is the hosted project `njhwxoybuxwwtdvebdou` (README "Supabase (production)"): `supabase db push` for migrations (never `--include-seed`), `supabase config push` for auth settings through `[remotes.production]` in `config.toml`, `supabase functions deploy --use-api` for functions. Its Edge Functions get the `sb_publishable_…`/`sb_secret_…` keys as `SUPABASE_ANON_KEY`/`SUPABASE_SERVICE_ROLE_KEY`, not the legacy JWTs.
+- Production is the hosted project `njhwxoybuxwwtdvebdou` (README "Supabase (production)"): `supabase db push` for migrations (never `--include-seed`), `bash supabase/push-production-config.sh` for auth settings through `[remotes.production]` in `config.toml` (never `supabase config push` by hand: from the wrong folder it pushes CLI defaults over production), `supabase functions deploy --use-api` for functions. Its Edge Functions get the `sb_publishable_…`/`sb_secret_…` keys as `SUPABASE_ANON_KEY`/`SUPABASE_SERVICE_ROLE_KEY`, not the legacy JWTs.
 - Status: local Supabase requires Docker; migrations can be validated without Docker via `supabase/manual-checks/validate-local.sh` (plain Postgres + `local_shim.sql`).
 
 ## UI rules (spec §4)
