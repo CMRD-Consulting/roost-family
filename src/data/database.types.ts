@@ -994,16 +994,22 @@ export type Database = {
       invite_codes: {
         Row: {
           code: string
+          created_at: string
+          note: string | null
           used_at: string | null
           used_by_household_id: string | null
         }
         Insert: {
           code: string
+          created_at?: string
+          note?: string | null
           used_at?: string | null
           used_by_household_id?: string | null
         }
         Update: {
           code?: string
+          created_at?: string
+          note?: string | null
           used_at?: string | null
           used_by_household_id?: string | null
         }
