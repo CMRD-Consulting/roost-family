@@ -417,7 +417,7 @@ export function createDemoSettingsApi(): SettingsApi {
   }
 
   async function listDisplays(): Promise<DisplayRow[]> {
-    return [{ displayId: DEMO_DISPLAY_ID, name: demoDisplayName, lastSeenAt: new Date().toISOString() }]
+    return [{ displayId: DEMO_DISPLAY_ID, name: demoDisplayName, lastSeenAt: new Date().toISOString(), connected: true }]
   }
 
   function changeRole(membershipId: string, role: 'owner' | 'adult'): void {
@@ -481,6 +481,7 @@ export function createDemoSettingsApi(): SettingsApi {
     removeMemberPin: notAvailableWithPin,
     renameDisplayPin,
     revokeDisplayPin: notAvailableWithPin,
+    signOutDisplayPin: notAvailableWithPin,
     deleteHouseholdPin: notAvailableWithPin,
     createMemberInvite: notAvailable,
     acceptMemberInvite: notAvailable,

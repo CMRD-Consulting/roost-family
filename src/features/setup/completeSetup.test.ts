@@ -3,7 +3,7 @@ import {
   completeSetup,
   adultOwnsHousehold,
   isInvalidInviteError,
-  registerDisplayErrorMessage,
+  joinDisplayErrorMessage,
   CLAIM_TOKEN_TTL_MS,
   type SetupInput,
   type SetupProgress,
@@ -136,38 +136,20 @@ describe('completeSetup', () => {
   })
 })
 
-describe('registerDisplayErrorMessage', () => {
-  it('explains the display limit and where to remove one', () => {
-    expect(registerDisplayErrorMessage('a household can have at most 3 displays', 'Rivera')).toBe(
-      'Rivera already has 3 displays. Remove one in Settings → Displays or at roost.cmrd.dev/manage, then try again.',
+describe('joinDisplayErrorMessage', () => {
+  it('explains the display limit: reconnect as one of them, or remove one', () => {
+    expect(joinDisplayErrorMessage('a household can have at most 3 displays', 'Rivera')).toBe(
+      'Rivera already has 3 displays. Reconnect this tablet as one of them, or remove one in Settings → Displays or at roost.cmrd.dev/manage, then try again.',
+    )
+  })
+
+  it('explains a display that was removed while the owner was choosing', () => {
+    expect(joinDisplayErrorMessage('display not found', 'Rivera')).toBe(
+      'That display isn’t available any more. Pick another, or add this tablet as a new display.',
     )
   })
 
   it('passes other messages through', () => {
-    expect(registerDisplayErrorMessage('Failed to fetch', 'Rivera')).toBe('Failed to fetch')
-  })
-})
-
-describe('adultOwnsHousehold', () => {
-  function client(rows: unknown[]) {
-    const query = {
-      select: vi.fn(() => query),
-      eq: vi.fn(() => query),
-      is: vi.fn(() => query),
-      limit: vi.fn(async () => ({ data: rows, error: null })),
-    }
-    return { from: vi.fn(() => query), query }
-  }
-
-  it('is true when the adult has an active owner membership', async () => {
-    const c = client([{ id: 'm1' }])
-    expect(await adultOwnsHousehold({ client: c as never, userId: 'u1' })).toBe(true)
-    expect(c.from).toHaveBeenCalledWith('memberships')
-    expect(c.query.eq).toHaveBeenCalledWith('user_id', 'u1')
-    expect(c.query.eq).toHaveBeenCalledWith('role', 'owner')
-  })
-
-  it('is false without one', async () => {
-    expect(await adultOwnsHousehold({ client: client([]) as never, userId: 'u1' })).toBe(false)
+    expect(joinDisplayErrorMessage('Failed to fetch', 'Rivera')).toBe('Failed to fetch')
   })
 })

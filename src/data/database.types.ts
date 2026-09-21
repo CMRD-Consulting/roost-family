@@ -1933,6 +1933,12 @@ export type Database = {
           status: string
         }[]
       }
+      reconnect_display: {
+        Args: { p_display_id: string }
+        Returns: {
+          out_claim_token: string
+        }[]
+      }
       record_consent: {
         Args: { p_health_data_consent: boolean; p_policy_version: string }
         Returns: undefined
@@ -2088,6 +2094,10 @@ export type Database = {
           p_zip: string
         }
         Returns: string
+      }
+      sign_out_display_pin: {
+        Args: { p_membership_id: string; p_pin: string }
+        Returns: undefined
       }
       start_sitter_session: {
         Args: {

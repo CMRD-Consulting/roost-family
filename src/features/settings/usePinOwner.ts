@@ -73,6 +73,7 @@ export function usePinOwner(household: Readonly<Ref<SectionHousehold | null>>): 
     listDisplays: () => run((api) => api.listHouseholdDisplays(householdId())),
     renameDisplay: (id, name) => run((api, pin) => api.renameDisplayPin(pin, id, name)),
     revokeDisplay: (id) => run((api, pin) => api.revokeDisplayPin(pin, id)),
+    signOutThisDisplay: () => run((api, pin) => api.signOutDisplayPin(pin)),
     deleteHousehold: (confirmName) => run((api, pin) => api.deleteHouseholdPin(pin, confirmName)),
   }
 

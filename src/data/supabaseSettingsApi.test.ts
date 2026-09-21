@@ -477,6 +477,12 @@ describe('createSupabaseSettingsApi', () => {
       ])
     })
 
+    it('signOutDisplayPin -> sign_out_display_pin: the PIN only, the server knows which display is calling', async () => {
+      const { client, calls } = createFakeClient()
+      await createSupabaseSettingsApi(client).signOutDisplayPin(AUTH)
+      expect(calls).toEqual([{ op: 'rpc', name: 'sign_out_display_pin', args: { p_membership_id: 'membership-1', p_pin: '1234' } }])
+    })
+
     it('deleteHouseholdPin -> delete_household_pin: the typed name and the PIN, no household id', async () => {
       const { client, calls } = createFakeClient()
       await createSupabaseSettingsApi(client).deleteHouseholdPin(AUTH, 'Rivera')
@@ -515,7 +521,7 @@ describe('createSupabaseSettingsApi', () => {
         {
           op: 'from', table: 'displays',
           chain: [
-            ['select', 'id, name, last_seen_at'], ['eq', 'household_id', 'household-1'], ['is', 'revoked_at', null],
+            ['select', 'id, name, last_seen_at, auth_user_id'], ['eq', 'household_id', 'household-1'], ['is', 'revoked_at', null],
             ['order', 'created_at', { ascending: true }],
           ],
         },
@@ -604,14 +610,18 @@ describe('createSupabaseSettingsApi', () => {
 
     it("listDisplays reads the household's active displays, oldest first", async () => {
       const { client, calls } = createFakeClient({
-        from: { error: null, data: [{ id: 'd1', name: 'Kitchen', last_seen_at: null }] },
+        from: { error: null, data: [{ id: 'd1', name: 'Kitchen', last_seen_at: null, auth_user_id: 'device-1' }, { id: 'd2', name: 'Hall', last_seen_at: null, auth_user_id: null }] },
       })
       const rows = await createSupabaseSettingsApi(client).listDisplays(client, 'household-1')
-      expect(rows).toEqual([{ displayId: 'd1', name: 'Kitchen', lastSeenAt: null }])
+      // `connected` says whether a tablet holds the display; the device user's id itself goes no further.
+      expect(rows).toEqual([
+        { displayId: 'd1', name: 'Kitchen', lastSeenAt: null, connected: true },
+        { displayId: 'd2', name: 'Hall', lastSeenAt: null, connected: false },
+      ])
       expect(calls).toEqual([{
         op: 'from', table: 'displays',
         chain: [
-          ['select', 'id, name, last_seen_at'], ['eq', 'household_id', 'household-1'], ['is', 'revoked_at', null],
+          ['select', 'id, name, last_seen_at, auth_user_id'], ['eq', 'household_id', 'household-1'], ['is', 'revoked_at', null],
           ['order', 'created_at', { ascending: true }],
         ],
       }])

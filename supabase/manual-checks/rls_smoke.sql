@@ -3520,6 +3520,161 @@ select pg_temp.expect('the status view lists unused codes first', (
 select pg_temp.expect('the status view shows every invite code', (
   select count(*) from private.invite_code_status) = (select count(*) from public.invite_codes));
 
+-- ─── Reconnect and sign out a display (migration 17) ─────────────────────
+-- Fixtures: household R with owner Rio (PIN 6611) and adult Ren (PIN 7722), display "R kitchen" bound to the device
+-- session RDISP; RNEW is the same tablet after it lost that session (a new anonymous user, bound to nothing).
+-- Household S with owner Sol and display "S kitchen" (session SDISP) is the outsider.
+\set RIO '{"sub":"00000000-0000-0000-0000-000000000040","role":"authenticated","is_anonymous":false}'
+\set REN '{"sub":"00000000-0000-0000-0000-000000000041","role":"authenticated","is_anonymous":false}'
+\set RDISP '{"sub":"00000000-0000-0000-0000-000000000042","role":"authenticated","is_anonymous":true}'
+\set RNEW '{"sub":"00000000-0000-0000-0000-000000000043","role":"authenticated","is_anonymous":true}'
+\set SOL '{"sub":"00000000-0000-0000-0000-000000000044","role":"authenticated","is_anonymous":false}'
+\set SDISP '{"sub":"00000000-0000-0000-0000-000000000045","role":"authenticated","is_anonymous":true}'
+reset role;
+insert into auth.users (id, instance_id, aud, role, email, raw_app_meta_data, raw_user_meta_data, is_anonymous, created_at, updated_at)
+select ('00000000-0000-0000-0000-0000000000' || n)::uuid, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
+       case when anon then null else 'r' || n || '@roost.test' end, '{}', '{}', anon, now(), now()
+from (values ('40', false), ('41', false), ('42', true), ('43', true), ('44', false), ('45', true), ('46', true), ('47', true)) as u (n, anon);
+insert into public.households (name, time_zone) values ('R family', 'America/New_York') returning id as household_r \gset
+insert into public.households (name, time_zone) values ('S family', 'America/Denver') returning id as household_s \gset
+insert into public.memberships (user_id, household_id, role, display_name, color) values
+  ('00000000-0000-0000-0000-000000000040', :'household_r', 'owner', 'Rio', '#2F86A6') returning id as membership_rio \gset
+insert into public.memberships (user_id, household_id, role, display_name, color) values
+  ('00000000-0000-0000-0000-000000000041', :'household_r', 'adult', 'Ren', '#2F86A6') returning id as membership_ren \gset
+insert into public.memberships (user_id, household_id, role, display_name, color) values
+  ('00000000-0000-0000-0000-000000000044', :'household_s', 'owner', 'Sol', '#2F86A6') returning id as membership_sol \gset
+insert into public.displays (household_id, name, auth_user_id, last_seen_at) values
+  (:'household_r', 'R kitchen', '00000000-0000-0000-0000-000000000042', now() - interval '3 days') returning id as display_r \gset
+insert into public.displays (household_id, name, auth_user_id) values
+  (:'household_s', 'S kitchen', '00000000-0000-0000-0000-000000000045') returning id as display_s \gset
+insert into public.displays (household_id, name, revoked_at) values
+  (:'household_r', 'R revoked', now()) returning id as display_r_revoked \gset
+insert into public.member_pins (membership_id, pin_hash) values
+  (:'membership_rio', extensions.crypt('6611', extensions.gen_salt('bf', 8))),
+  (:'membership_ren', extensions.crypt('7722', extensions.gen_salt('bf', 8)));
+select set_config('smoke.household_r', :'household_r', true), set_config('smoke.membership_rio', :'membership_rio', true),
+       set_config('smoke.membership_ren', :'membership_ren', true), set_config('smoke.display_r', :'display_r', true),
+       set_config('smoke.display_s', :'display_s', true), set_config('smoke.display_r_revoked', :'display_r_revoked', true);
+
+\echo '[131] reconnect_display and sign_out_display_pin: authenticated only'
+select pg_temp.expect('anon can execute neither', not exists (
+  select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public' and p.proname in ('reconnect_display', 'sign_out_display_pin')
+    and has_function_privilege('anon', p.oid, 'execute')));
+select pg_temp.expect('authenticated can execute both', (
+  select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public' and p.proname in ('reconnect_display', 'sign_out_display_pin')
+    and has_function_privilege('authenticated', p.oid, 'execute')) = 2);
+
+\echo '[132] reconnect_display: an owner of the display''s own household, signed in; everything else reads as not found'
+set local role authenticated;
+select set_config('request.jwt.claims', :'REN', true);
+select pg_temp.expect_error('an adult who is not an owner',
+  $q$select public.reconnect_display(pg_temp.v('display_r'))$q$, '42501');
+select set_config('request.jwt.claims', :'SOL', true);
+select pg_temp.expect_error('another household''s owner',
+  $q$select public.reconnect_display(pg_temp.v('display_r'))$q$, '42501');
+select set_config('request.jwt.claims', :'RNEW', true);
+select pg_temp.expect_error('a device session',
+  $q$select public.reconnect_display(pg_temp.v('display_r'))$q$, '42501');
+select set_config('request.jwt.claims', :'RIO', true);
+select pg_temp.expect_error('a revoked display',
+  $q$select public.reconnect_display(pg_temp.v('display_r_revoked'))$q$, '42501');
+select pg_temp.expect_error('an unknown display', $q$select public.reconnect_display(gen_random_uuid())$q$, '42501');
+select pg_temp.expect_error('a null display', $q$select public.reconnect_display(null)$q$, '42501');
+reset role;
+select pg_temp.expect('refused calls left R kitchen bound and unclaimed', (
+  select auth_user_id = '00000000-0000-0000-0000-000000000042' from public.displays where id = :'display_r')
+  and not exists (select 1 from public.display_claims where display_id = :'display_r'));
+
+\echo '[133] reconnect_display: the same display row moves to the new device; the old device and an older token stop working'
+set local role authenticated;
+select set_config('request.jwt.claims', :'RIO', true);
+select out_claim_token as r_token_1 from public.reconnect_display(:'display_r') \gset
+reset role;
+select pg_temp.expect('the display is unbound, not revoked, with a hashed 10-minute claim', (
+  select d.auth_user_id is null and d.revoked_at is null and c.expires_at = now() + interval '10 minutes'
+     and c.token_hash = encode(extensions.digest(:'r_token_1', 'sha256'), 'hex')
+  from public.displays d join public.display_claims c on c.display_id = d.id where d.id = :'display_r'));
+select pg_temp.expect('reconnect audited', pg_temp.audited(
+  pg_temp.v('household_r'), pg_temp.v('membership_rio'), 'displays', 'reconnect', pg_temp.v('display_r')));
+set local role authenticated;
+select set_config('request.jwt.claims', :'RDISP', true);
+select pg_temp.expect('the old device is no longer a display', not exists (select 1 from public.my_display()));
+select pg_temp.expect('the old device''s heartbeat says so', not public.display_heartbeat());
+select pg_temp.expect('the old device sees none of the household', (select count(*) from public.households) = 0);
+select set_config('request.jwt.claims', :'RIO', true);
+select out_claim_token as r_token_2 from public.reconnect_display(:'display_r') \gset
+select set_config('request.jwt.claims', :'RNEW', true);
+select pg_temp.expect_error('the first token was replaced by the second',
+  format($q$select public.claim_display(%L)$q$, :'r_token_1'), '22023');
+select out_display_id as r_claimed from public.claim_display(:'r_token_2') \gset
+select pg_temp.expect('the new device is the same display', :'r_claimed'::uuid = pg_temp.v('display_r'));
+select pg_temp.expect('with the same name', (select out_name = 'R kitchen' and not out_revoked from public.my_display()));
+select pg_temp.expect('and it sees its household again', (select count(*) from public.households) = 1);
+reset role;
+select pg_temp.expect('one row, now bound to the new device, claim used up', (
+  select auth_user_id = '00000000-0000-0000-0000-000000000043' from public.displays where id = :'display_r')
+  and not exists (select 1 from public.display_claims where display_id = :'display_r')
+  and (select count(*) from public.displays where household_id = :'household_r' and revoked_at is null) = 1);
+
+\echo '[134] reconnect_display keeps the 3-display limit: a display that stopped counting cannot come back as a fourth'
+insert into public.displays (household_id, name, auth_user_id) values
+  (:'household_r', 'R playroom', '00000000-0000-0000-0000-000000000046'),
+  (:'household_r', 'R nursery', '00000000-0000-0000-0000-000000000047');
+insert into public.displays (household_id, name) values (:'household_r', 'R spare') returning id as display_r_spare \gset
+select set_config('smoke.display_r_spare', :'display_r_spare', true);
+set local role authenticated;
+select set_config('request.jwt.claims', :'RIO', true);
+select pg_temp.expect_error('a fourth display',
+  $q$select public.reconnect_display(pg_temp.v('display_r_spare'))$q$, '22023');
+select pg_temp.expect('one of the three reconnects at the limit', (
+  select count(*) from public.reconnect_display(pg_temp.v('display_r'))) = 1);
+reset role;
+-- Put R kitchen back on RNEW for the sign-out checks, and free a slot.
+delete from public.display_claims where display_id = :'display_r';
+update public.displays set auth_user_id = '00000000-0000-0000-0000-000000000043' where id = :'display_r';
+update public.displays set revoked_at = now(), auth_user_id = null where household_id = :'household_r' and name = 'R nursery';
+set local role authenticated;
+select set_config('request.jwt.claims', :'RIO', true);
+select pg_temp.expect('with a free slot the spare reconnects', (
+  select count(*) from public.reconnect_display(pg_temp.v('display_r_spare'))) = 1);
+reset role;
+
+\echo '[135] sign_out_display_pin: an owner''s PIN on the display itself; the row stays, unbound, and can be reconnected'
+set local role authenticated;
+select set_config('request.jwt.claims', :'RNEW', true);
+select pg_temp.expect_error('a wrong PIN',
+  $q$select public.sign_out_display_pin(pg_temp.v('membership_rio'), '0000')$q$, '42501');
+select pg_temp.expect_error('an adult''s PIN (owners only)',
+  $q$select public.sign_out_display_pin(pg_temp.v('membership_ren'), '7722')$q$, '42501');
+select set_config('request.jwt.claims', :'SDISP', true);
+select pg_temp.expect_error('another household''s display, even with the owner''s PIN',
+  $q$select public.sign_out_display_pin(pg_temp.v('membership_rio'), '6611')$q$, '42501');
+select set_config('request.jwt.claims', :'RIO', true);
+select pg_temp.expect_error('the owner''s own sign-in is not a display',
+  $q$select public.sign_out_display_pin(pg_temp.v('membership_rio'), '6611')$q$, '22023');
+select set_config('request.jwt.claims', :'RNEW', true);
+select public.sign_out_display_pin(:'membership_rio', '6611');
+select pg_temp.expect('the signed-out device is no longer a display', not public.display_heartbeat());
+select pg_temp.expect_error('signing out twice',
+  $q$select public.sign_out_display_pin(pg_temp.v('membership_rio'), '6611')$q$, '42501');
+reset role;
+select pg_temp.expect('R kitchen is kept: unbound, not revoked, no claim', (
+  select auth_user_id is null and revoked_at is null from public.displays where id = :'display_r')
+  and not exists (select 1 from public.display_claims where display_id = :'display_r'));
+select pg_temp.expect('sign-out audited', pg_temp.audited(
+  pg_temp.v('household_r'), pg_temp.v('membership_rio'), 'displays', 'sign_out', pg_temp.v('display_r')));
+select pg_temp.expect('S kitchen was never touched', (
+  select auth_user_id = '00000000-0000-0000-0000-000000000045' from public.displays where id = :'display_s'));
+set local role authenticated;
+select set_config('request.jwt.claims', :'RIO', true);
+select out_claim_token as r_token_3 from public.reconnect_display(:'display_r') \gset
+select set_config('request.jwt.claims', :'RNEW', true);
+select pg_temp.expect('the signed-out tablet reconnects as R kitchen', (
+  select out_display_id = pg_temp.v('display_r') from public.claim_display(:'r_token_3')));
+reset role;
+
 \o
 \echo 'ALL RLS SMOKE CHECKS PASSED'
 rollback;

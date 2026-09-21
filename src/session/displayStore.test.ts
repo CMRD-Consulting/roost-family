@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useDisplayStore } from './displayStore'
 
-const { loadDisplayState } = vi.hoisted(() => ({ loadDisplayState: vi.fn() }))
+const { loadDisplayState, resetDisplay } = vi.hoisted(() => ({ loadDisplayState: vi.fn(), resetDisplay: vi.fn() }))
 const deviceCache = vi.hoisted(() => ({
   loadIdentity: vi.fn(),
   saveIdentity: vi.fn(),
@@ -10,7 +10,7 @@ const deviceCache = vi.hoisted(() => ({
 }))
 
 vi.mock('@/data/supabase', () => ({ displayClient: {} }))
-vi.mock('./displaySession', () => ({ loadDisplayState }))
+vi.mock('./displaySession', () => ({ loadDisplayState, resetDisplay }))
 vi.mock('@/data/deviceCache', () => ({ createDeviceCache: () => deviceCache }))
 const offlineQueue = vi.hoisted(() => ({ clear: vi.fn() }))
 vi.mock('@/data/offlineQueue', () => ({ createOfflineQueue: () => offlineQueue }))
@@ -20,6 +20,7 @@ const REGISTERED = { kind: 'registered', identity: { displayId: 'd1', householdI
 beforeEach(() => {
   setActivePinia(createPinia())
   loadDisplayState.mockReset()
+  resetDisplay.mockReset().mockResolvedValue(undefined)
   deviceCache.loadIdentity.mockReset().mockResolvedValue(null)
   deviceCache.saveIdentity.mockReset().mockResolvedValue(undefined)
   deviceCache.clear.mockReset().mockResolvedValue(undefined)
@@ -187,6 +188,37 @@ describe('displayStore', () => {
     expect(deviceCache.clear).toHaveBeenCalled()
     expect(offlineQueue.clear).toHaveBeenCalled()
     expect(loadDisplayState).not.toHaveBeenCalled()
+  })
+
+  it('markSignedOut leaves the tablet unregistered, with nothing of the household or its device session left', async () => {
+    loadDisplayState.mockResolvedValue(REGISTERED)
+    const store = useDisplayStore()
+    await store.refresh()
+    loadDisplayState.mockClear()
+
+    await store.markSignedOut()
+
+    expect(store.state).toEqual({ kind: 'unregistered' })
+    expect(store.lastKnown).toEqual({ kind: 'unregistered' })
+    expect(store.identity).toBeNull()
+    expect(deviceCache.clear).toHaveBeenCalled()
+    expect(offlineQueue.clear).toHaveBeenCalled()
+    expect(resetDisplay).toHaveBeenCalledTimes(1)
+    expect(loadDisplayState).not.toHaveBeenCalled()
+  })
+
+  it('markSignedOut still signs the tablet out when the device session cannot be dropped', async () => {
+    loadDisplayState.mockResolvedValue(REGISTERED)
+    resetDisplay.mockRejectedValue(new Error('storage unavailable'))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const store = useDisplayStore()
+    await store.refresh()
+
+    await expect(store.markSignedOut()).resolves.toBeUndefined()
+
+    expect(store.state).toEqual({ kind: 'unregistered' })
+    expect(deviceCache.clear).toHaveBeenCalled()
+    warn.mockRestore()
   })
 
   it('clears the device cache when the display is revoked', async () => {
