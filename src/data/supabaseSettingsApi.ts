@@ -339,6 +339,62 @@ export function createSupabaseSettingsApi(client: RoostClient): SettingsApi {
     await run(() => client.rpc('delete_photo', { p_membership_id: auth.membershipId, p_pin: auth.pin, p_photo_id: photoId }))
   }
 
+  // ─── Owner actions on a display, authorised by the Settings PIN ───────────
+  async function listHouseholdMembers(householdId: string): Promise<MemberRow[]> {
+    return readMembers(client, householdId)
+  }
+
+  async function listHouseholdDisplays(householdId: string): Promise<DisplayRow[]> {
+    return readDisplays(client, householdId)
+  }
+
+  async function createMemberInvitePin(auth: SettingsAuth, role: 'owner' | 'adult') {
+    const rows = await run<{ out_token: string; out_expires_at: string }[]>(() =>
+      client.rpc('create_member_invite_pin', { p_membership_id: auth.membershipId, p_pin: auth.pin, p_role: role }),
+    )
+    const row = rows[0]
+    if (!row) throw new SettingsError('Invite creation did not return a token', 'other')
+    return { token: row.out_token, expiresAt: row.out_expires_at }
+  }
+
+  async function revokeMemberInvitePin(auth: SettingsAuth, token: string): Promise<void> {
+    await run(() =>
+      client.rpc('revoke_member_invite_pin', { p_membership_id: auth.membershipId, p_pin: auth.pin, p_invite_token: token }),
+    )
+  }
+
+  async function setMemberRolePin(auth: SettingsAuth, membershipId: string, role: 'owner' | 'adult'): Promise<void> {
+    await run(() =>
+      client.rpc('set_member_role_pin', {
+        p_membership_id: auth.membershipId, p_pin: auth.pin, p_target_id: membershipId, p_role: role,
+      }),
+    )
+  }
+
+  async function removeMemberPin(auth: SettingsAuth, membershipId: string): Promise<void> {
+    await run(() =>
+      client.rpc('remove_member_pin', { p_membership_id: auth.membershipId, p_pin: auth.pin, p_target_id: membershipId }),
+    )
+  }
+
+  async function renameDisplayPin(auth: SettingsAuth, displayId: string, name: string): Promise<void> {
+    await run(() =>
+      client.rpc('rename_display_pin', { p_membership_id: auth.membershipId, p_pin: auth.pin, p_display_id: displayId, p_name: name }),
+    )
+  }
+
+  async function revokeDisplayPin(auth: SettingsAuth, displayId: string): Promise<void> {
+    await run(() =>
+      client.rpc('revoke_display_pin', { p_membership_id: auth.membershipId, p_pin: auth.pin, p_display_id: displayId }),
+    )
+  }
+
+  async function deleteHouseholdPin(auth: SettingsAuth, confirmName: string): Promise<void> {
+    await run(() =>
+      client.rpc('delete_household_pin', { p_membership_id: auth.membershipId, p_pin: auth.pin, p_confirm_name: confirmName }),
+    )
+  }
+
   // ─── Full sign-in only ────────────────────────────────────────────────────
   async function createMemberInvite(adult: AdultClient, householdId: string, role: 'owner' | 'adult') {
     const rows = await run<{ out_token: string; out_expires_at: string }[]>(() =>
@@ -434,27 +490,11 @@ export function createSupabaseSettingsApi(client: RoostClient): SettingsApi {
   }
 
   async function listMembers(adult: AdultClient, householdId: string): Promise<MemberRow[]> {
-    const rows = await run<{ id: string; display_name: string; color: string; role: MemberRow['role']; joined_at: string }[] | null>(() =>
-      adult
-        .from('memberships')
-        .select('id, display_name, color, role, joined_at')
-        .eq('household_id', householdId)
-        .is('left_at', null)
-        .order('joined_at', { ascending: true }),
-    )
-    return (rows ?? []).map((r) => ({ membershipId: r.id, displayName: r.display_name, color: r.color, role: r.role, joinedAt: r.joined_at }))
+    return readMembers(adult, householdId)
   }
 
   async function listDisplays(adult: AdultClient, householdId: string): Promise<DisplayRow[]> {
-    const rows = await run<{ id: string; name: string; last_seen_at: string | null }[] | null>(() =>
-      adult
-        .from('displays')
-        .select('id, name, last_seen_at')
-        .eq('household_id', householdId)
-        .is('revoked_at', null)
-        .order('created_at', { ascending: true }),
-    )
-    return (rows ?? []).map((r) => ({ displayId: r.id, name: r.name, lastSeenAt: r.last_seen_at }))
+    return readDisplays(adult, householdId)
   }
 
   async function deleteHousehold(adult: AdultClient, householdId: string, confirmName: string): Promise<void> {
@@ -485,6 +525,15 @@ export function createSupabaseSettingsApi(client: RoostClient): SettingsApi {
     uploadPhoto,
     addPhoto,
     deletePhoto,
+    listHouseholdMembers,
+    listHouseholdDisplays,
+    createMemberInvitePin,
+    revokeMemberInvitePin,
+    setMemberRolePin,
+    removeMemberPin,
+    renameDisplayPin,
+    revokeDisplayPin,
+    deleteHouseholdPin,
     createMemberInvite,
     acceptMemberInvite,
     revokeMemberInvite,
@@ -501,4 +550,31 @@ export function createSupabaseSettingsApi(client: RoostClient): SettingsApi {
     revokeDisplay,
     deleteHousehold,
   }
+}
+
+/** Current members of `householdId` (not former), oldest first. Any client that belongs to the household — a
+ *  signed-in adult's or the display's own — may read them; RLS decides. */
+async function readMembers(from: RoostClient, householdId: string): Promise<MemberRow[]> {
+  const rows = await run<{ id: string; display_name: string; color: string; role: MemberRow['role']; joined_at: string }[] | null>(() =>
+    from
+      .from('memberships')
+      .select('id, display_name, color, role, joined_at')
+      .eq('household_id', householdId)
+      .is('left_at', null)
+      .order('joined_at', { ascending: true }),
+  )
+  return (rows ?? []).map((r) => ({ membershipId: r.id, displayName: r.display_name, color: r.color, role: r.role, joinedAt: r.joined_at }))
+}
+
+/** Active displays of `householdId`, oldest first, with last-seen times. Read like `readMembers`. */
+async function readDisplays(from: RoostClient, householdId: string): Promise<DisplayRow[]> {
+  const rows = await run<{ id: string; name: string; last_seen_at: string | null }[] | null>(() =>
+    from
+      .from('displays')
+      .select('id, name, last_seen_at')
+      .eq('household_id', householdId)
+      .is('revoked_at', null)
+      .order('created_at', { ascending: true }),
+  )
+  return (rows ?? []).map((r) => ({ displayId: r.id, name: r.name, lastSeenAt: r.last_seen_at }))
 }

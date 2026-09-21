@@ -204,7 +204,7 @@ describe('SettingsPinGate', () => {
 })
 
 describe('SettingsShell', () => {
-  it('shows the signed-in adult, every section and the owner sign-in marks', async () => {
+  it('shows the signed-in adult and every section, with no section asking for a sign-in of its own', async () => {
     const w = await openShell(fakeApi())
 
     expect(w.find('h1').text()).toBe('Settings')
@@ -212,23 +212,22 @@ describe('SettingsShell', () => {
     const links = w.findAll('nav[aria-label="Settings sections"] a')
     expect(links).toHaveLength(14)
     expect(links[0]!.attributes('aria-current')).toBe('page')
-    expect(w.findAll('nav a').filter((a) => a.text().includes('Requires owner sign-in')).map((a) => a.text().replace('Requires owner sign-in', '').trim())).toEqual([
-      'Members', 'Displays', 'Delete household',
-    ])
+    expect(w.findAll('nav a').filter((a) => a.text().includes('Requires owner sign-in'))).toEqual([])
     w.unmount()
   })
 
-  it('in demo, an owner changes roles in Members and renames the display without a sign-in', async () => {
+  it('in demo, an owner changes roles in Members and renames the display on the PIN session alone', async () => {
     const settingsApi = await demoApi()
     await useDisplayStore().refresh()
     const w = await openShell(settingsApi, 'members')
     expect(w.find('h2').text()).toBe('Members')
     expect(w.find('[data-testid="adult-sign-in"]').exists()).toBe(false)
+    expect(w.find('[data-testid="owner-only"]').exists()).toBe(false)
     expect(w.findAll('button').some((b) => b.text() === 'Add adult')).toBe(false)
 
     await w.find(`[data-testid="member-${ALEX}"]`).findAll('button').find((b) => b.text() === 'Make owner')!.trigger('click')
     await settle()
-    expect(settingsApi.setMemberRole).toHaveBeenCalledWith(expect.anything(), ALEX, 'owner')
+    expect(settingsApi.setMemberRolePin).toHaveBeenCalledWith(SAM_AUTH, ALEX, 'owner')
     expect(w.find(`[data-testid="member-${ALEX}"]`).text()).toContain('Owner')
 
     await router.replace('/settings/displays')
@@ -238,7 +237,7 @@ describe('SettingsShell', () => {
     await inputByLabel(w, 'Display name').setValue('Hall')
     await buttonByText(w, 'Save name').trigger('click')
     await settle()
-    expect(settingsApi.renameDisplay).toHaveBeenCalledWith(expect.anything(), 'demo-display', 'Hall')
+    expect(settingsApi.renameDisplayPin).toHaveBeenCalledWith(SAM_AUTH, 'demo-display', 'Hall')
     expect(w.find('[data-testid="display-demo-display"]').text()).toContain('Hall')
     w.unmount()
   })

@@ -1,16 +1,18 @@
 <script setup lang="ts">
 /**
- * Members (spec §6.2, §6.4, §7.9), owners only after a full sign-in: the household's adults with their role and
- * join date; remove an adult. On a display (Settings) also change a role (a household always keeps an owner) and
- * add an adult. Adding hands the tablet over: the owner picks a role and an invite is made, then the owner's
- * sign-in and the Settings session end and the new adult joins in the full-screen /join-adult flow (JoinAdultFlow).
- * `host` is where the section is shown (see sectionHosts); without one it is Settings on this display.
+ * Members (spec §6.2, §6.4, §7.9), owners only: the household's adults with their role and join date; remove an
+ * adult. On a display (Settings) also change a role (a household always keeps an owner) and add an adult. Adding
+ * hands the tablet over: the owner picks a role and an invite is made, then the Settings session ends and the new
+ * adult joins in the full-screen /join-adult flow (JoinAdultFlow). `host` is where the section is shown (see
+ * sectionHosts) and how the owner is authorised — the Settings PIN on a display, an email sign-in in a browser;
+ * without one it is Settings on this display.
  */
 import { computed, ref, watch } from 'vue'
 import type { MemberRow } from '@/data/settingsApi'
 import RAvatar from '@/ui/RAvatar.vue'
 import RButton from '@/ui/RButton.vue'
 import RChips, { type ChipOption } from '@/ui/RChips.vue'
+import OwnerOnlyPanel from '../OwnerOnlyPanel.vue'
 import OwnerSignInPanel from '../OwnerSignInPanel.vue'
 import { formatJoined, isOnlyOwner, roleLabel } from '../ownerForms'
 import { useDisplayOwnerHost, type OwnerSectionHost } from '../sectionHosts'
@@ -20,7 +22,7 @@ type InviteRole = 'owner' | 'adult'
 
 const props = defineProps<{ host?: OwnerSectionHost }>()
 const host = props.host ?? useDisplayOwnerHost()
-const { gate, offline } = host
+const { gate, act, offline } = host
 
 const householdName = computed(() => host.household.value?.name ?? 'this household')
 const timeZone = computed(() => host.household.value?.timeZone ?? 'UTC')
@@ -31,16 +33,14 @@ const loading = ref(false)
 const error = ref<string | null>(null)
 const notice = ref<string | null>(null)
 const confirmRemoveId = ref<string | null>(null)
-/** Picking the role for a new adult, before the invite exists (still signed in as the owner). */
+/** Picking the role for a new adult, before the invite exists. */
 const addingRole = ref<InviteRole | null>(null)
 
 async function load(): Promise<void> {
-  const householdId = host.household.value?.id
-  if (!gate.owner.value || !householdId) return
+  if (!gate.membershipId.value || !host.household.value) return
   loading.value = true
   try {
-    const api = await host.loadApi()
-    rows.value = await gate.run((o) => api.listMembers(o.client, householdId))
+    rows.value = await act.listMembers()
   } catch (e) {
     error.value = ownerActionMessage(e)
   } finally {
@@ -49,12 +49,12 @@ async function load(): Promise<void> {
 }
 
 watch(
-  gate.owner,
-  (owner) => {
+  gate.membershipId,
+  (membershipId) => {
     rows.value = []
     confirmRemoveId.value = null
     addingRole.value = null
-    if (owner) void load()
+    if (membershipId) void load()
   },
   { immediate: true },
 )
@@ -65,10 +65,9 @@ async function changeRole(row: MemberRow, role: InviteRole): Promise<void> {
   if (gate.busy.value || offline.value) return
   error.value = null
   notice.value = null
-  const me = gate.owner.value?.membershipId
+  const me = gate.membershipId.value
   try {
-    const api = await host.loadApi()
-    await gate.run((o) => api.setMemberRole(o.client, row.membershipId, role))
+    await act.setMemberRole(row.membershipId, role)
   } catch (e) {
     error.value = ownerActionMessage(e)
     return
@@ -86,8 +85,7 @@ async function remove(row: MemberRow): Promise<void> {
   error.value = null
   notice.value = null
   try {
-    const api = await host.loadApi()
-    await gate.run((o) => api.removeMember(o.client, row.membershipId))
+    await act.removeMember(row.membershipId)
   } catch (e) {
     error.value = ownerActionMessage(e)
     return
@@ -118,13 +116,11 @@ function startAdd(): void {
 
 async function createInvite(): Promise<void> {
   const role = addingRole.value
-  const householdId = host.household.value?.id
-  if (!role || !householdId || gate.busy.value || offline.value) return
+  if (!role || !host.household.value || gate.busy.value || offline.value) return
   error.value = null
   let token: string
   try {
-    const api = await host.loadApi()
-    token = (await gate.run((o) => api.createMemberInvite(o.client, householdId, role))).token
+    token = (await act.createMemberInvite(role)).token
   } catch (e) {
     error.value = ownerActionMessage(e)
     return
@@ -139,7 +135,8 @@ async function createInvite(): Promise<void> {
 
     <p v-if="notice" role="status" class="text-[18px] font-medium text-green-deep">{{ notice }}</p>
 
-    <OwnerSignInPanel :gate="gate" purpose="manage members" />
+    <OwnerSignInPanel v-if="gate.signIn" :gate="gate.signIn" purpose="manage members" />
+    <OwnerOnlyPanel v-else-if="gate.phase.value !== 'ready'" purpose="manage members" :notice="gate.notice.value" />
 
     <template v-if="gate.phase.value === 'ready'">
       <p v-if="gate.demo" class="text-[18px] text-ink-3">
@@ -160,7 +157,7 @@ async function createInvite(): Promise<void> {
             <RAvatar :name="row.displayName" :color="row.color" :size="48" decorative />
             <div class="flex min-w-0 flex-1 basis-40 flex-col">
               <span class="text-[22px] font-semibold text-ink">
-                {{ row.displayName }}<span v-if="row.membershipId === gate.owner.value?.membershipId" class="text-ink-3"> (you)</span>
+                {{ row.displayName }}<span v-if="row.membershipId === gate.membershipId.value" class="text-ink-3"> (you)</span>
               </span>
               <span class="text-[18px] text-ink-3">
                 {{ roleLabel(row.role) }}<template v-if="formatJoined(row.joinedAt, timeZone)"> · {{ formatJoined(row.joinedAt, timeZone) }}</template>
@@ -176,7 +173,7 @@ async function createInvite(): Promise<void> {
               </RButton>
             </template>
             <RButton
-              v-if="!gate.demo && row.membershipId !== gate.owner.value?.membershipId"
+              v-if="!gate.demo && row.membershipId !== gate.membershipId.value"
               variant="ghost"
               :disabled="gate.busy.value || offline || isOnlyOwner(rows, row.membershipId)"
               @click="confirmRemoveId = row.membershipId"

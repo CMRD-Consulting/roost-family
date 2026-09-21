@@ -1,15 +1,17 @@
 <script setup lang="ts">
 /**
- * Displays (spec §6.3, §6.4, §7.9), owners only after a full sign-in: the household's displays with when each
- * last checked in; rename; remove (revoke) with a confirmation. Removing the tablet in use forgets the household
- * on it and shows "This display was removed". Adding a display happens on the new tablet. `host` is where the
- * section is shown (see sectionHosts); without one it is Settings on this display.
+ * Displays (spec §6.3, §6.4, §7.9), owners only: the household's displays with when each last checked in; rename;
+ * remove (revoke) with a confirmation. Removing the tablet in use forgets the household on it and shows "This
+ * display was removed". Adding a display happens on the new tablet. `host` is where the section is shown (see
+ * sectionHosts) and how the owner is authorised — the Settings PIN on a display, an email sign-in in a browser;
+ * without one it is Settings on this display.
  */
 import { computed, ref, watch } from 'vue'
 import type { DisplayRow } from '@/data/settingsApi'
 import { validateDisplayLabel } from '@/features/setup/validation'
 import RButton from '@/ui/RButton.vue'
 import RInput from '@/ui/RInput.vue'
+import OwnerOnlyPanel from '../OwnerOnlyPanel.vue'
 import OwnerSignInPanel from '../OwnerSignInPanel.vue'
 import { formatLastSeen } from '../ownerForms'
 import { useDisplayOwnerHost, type OwnerSectionHost } from '../sectionHosts'
@@ -17,7 +19,7 @@ import { ownerActionMessage } from '../useOwnerSignIn'
 
 const props = defineProps<{ host?: OwnerSectionHost }>()
 const host = props.host ?? useDisplayOwnerHost()
-const { gate, offline, thisDisplayId } = host
+const { gate, act, offline, thisDisplayId } = host
 
 const householdName = computed(() => host.household.value?.name ?? 'this household')
 
@@ -32,12 +34,10 @@ const renameValue = ref('')
 const confirmRemoveId = ref<string | null>(null)
 
 async function load(): Promise<void> {
-  const householdId = host.household.value?.id
-  if (!gate.owner.value || !householdId) return
+  if (!gate.membershipId.value || !host.household.value) return
   loading.value = true
   try {
-    const api = await host.loadApi()
-    rows.value = await gate.run((o) => api.listDisplays(o.client, householdId))
+    rows.value = await act.listDisplays()
     loaded.value = true
   } catch (e) {
     error.value = ownerActionMessage(e)
@@ -47,13 +47,13 @@ async function load(): Promise<void> {
 }
 
 watch(
-  gate.owner,
-  (owner) => {
+  gate.membershipId,
+  (membershipId) => {
     rows.value = []
     loaded.value = false
     renamingId.value = null
     confirmRemoveId.value = null
-    if (owner) void load()
+    if (membershipId) void load()
   },
   { immediate: true },
 )
@@ -72,8 +72,7 @@ async function saveRename(row: DisplayRow): Promise<void> {
   if (error.value) return
   const name = renameValue.value.trim()
   try {
-    const api = await host.loadApi()
-    await gate.run((o) => api.renameDisplay(o.client, row.displayId, name))
+    await act.renameDisplay(row.displayId, name)
   } catch (e) {
     error.value = ownerActionMessage(e)
     return
@@ -95,8 +94,7 @@ async function remove(row: DisplayRow): Promise<void> {
   if (gate.busy.value || offline.value) return
   error.value = null
   try {
-    const api = await host.loadApi()
-    await gate.run((o) => api.revokeDisplay(o.client, row.displayId))
+    await act.revokeDisplay(row.displayId)
   } catch (e) {
     error.value = ownerActionMessage(e)
     return
@@ -115,7 +113,8 @@ async function remove(row: DisplayRow): Promise<void> {
   <section aria-labelledby="settings-displays-title" class="flex flex-col gap-5">
     <h2 id="settings-displays-title" class="text-[32px] font-semibold text-ink">Displays</h2>
 
-    <OwnerSignInPanel :gate="gate" purpose="manage displays" />
+    <OwnerSignInPanel v-if="gate.signIn" :gate="gate.signIn" purpose="manage displays" />
+    <OwnerOnlyPanel v-else-if="gate.phase.value !== 'ready'" purpose="manage displays" :notice="gate.notice.value" />
 
     <template v-if="gate.phase.value === 'ready'">
       <p v-if="gate.demo" class="text-[18px] text-ink-3">In the demo you can rename the display. Removing displays is not available in demo.</p>

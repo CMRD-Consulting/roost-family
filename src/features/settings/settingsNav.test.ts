@@ -14,8 +14,8 @@ describe('settingsNav', () => {
     expect(new Set(ids).size).toBe(ids.length)
   })
 
-  it('marks only Members, Displays and Delete household as needing an owner sign-in', () => {
-    expect(SETTINGS_SECTIONS.filter((s) => s.ownerSignIn).map((s) => s.id)).toEqual(['members', 'displays', 'delete-household'])
+  it('marks no section as needing a sign-in of its own: the Settings PIN authorises every one', () => {
+    expect(SETTINGS_SECTIONS.every((s) => Object.keys(s).sort().join() === 'id,label')).toBe(true)
   })
 
   it('finds a section by id and falls back to Household for anything else', () => {

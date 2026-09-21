@@ -377,9 +377,21 @@ export function createDemoSettingsApi(): SettingsApi {
     if (photo.storagePath.startsWith('blob:')) URL.revokeObjectURL(photo.storagePath)
   }
 
-  // ─── Full sign-in only: no demo backing except role changes and display rename ───────────────────────
+  // ─── Owner actions: no demo backing except role changes and the display rename ───────────────────────
   async function notAvailable(): Promise<never> {
     throw new SettingsError('Not available in demo', 'other')
+  }
+
+  /** The owner actions a display offers, PIN-checked here as everywhere else in demo. */
+  async function notAvailableWithPin(auth: SettingsAuth): Promise<never> {
+    requirePin(auth)
+    return notAvailable()
+  }
+
+  function requireOwnerPin(auth: SettingsAuth): void {
+    requirePin(auth)
+    const member = getDemoSnapshot(new Date()).members.find((m) => m.id === auth.membershipId)
+    if (member?.role !== 'owner') throw new SettingsError('only an owner can do this', 'auth')
   }
 
   async function listMembers(): Promise<MemberRow[]> {
@@ -408,7 +420,7 @@ export function createDemoSettingsApi(): SettingsApi {
     return [{ displayId: DEMO_DISPLAY_ID, name: demoDisplayName, lastSeenAt: new Date().toISOString() }]
   }
 
-  async function setMemberRole(_client: AdultClient, membershipId: string, role: 'owner' | 'adult'): Promise<void> {
+  function changeRole(membershipId: string, role: 'owner' | 'adult'): void {
     const members = getDemoSnapshot(new Date()).members
     const target = members.find((m) => m.id === membershipId)
     if (!target) throw new SettingsError('Not found', 'other')
@@ -418,7 +430,21 @@ export function createDemoSettingsApi(): SettingsApi {
     mutateDemo((s) => ({ ...s, members: s.members.map((m) => (m.id === membershipId ? { ...m, role } : m)) }))
   }
 
+  async function setMemberRole(_client: AdultClient, membershipId: string, role: 'owner' | 'adult'): Promise<void> {
+    changeRole(membershipId, role)
+  }
+
   async function renameDisplay(_client: AdultClient, _displayId: string, name: string): Promise<void> {
+    demoDisplayName = name
+  }
+
+  async function setMemberRolePin(auth: SettingsAuth, membershipId: string, role: 'owner' | 'adult'): Promise<void> {
+    requireOwnerPin(auth)
+    changeRole(membershipId, role)
+  }
+
+  async function renameDisplayPin(auth: SettingsAuth, _displayId: string, name: string): Promise<void> {
+    requireOwnerPin(auth)
     demoDisplayName = name
   }
 
@@ -446,6 +472,16 @@ export function createDemoSettingsApi(): SettingsApi {
     uploadPhoto,
     addPhoto,
     deletePhoto,
+    listHouseholdMembers: listMembers,
+    listHouseholdDisplays: listDisplays,
+    createMemberInvitePin: notAvailableWithPin,
+    // Demo has no invites to delete.
+    revokeMemberInvitePin: async (auth: SettingsAuth) => void requirePin(auth),
+    setMemberRolePin,
+    removeMemberPin: notAvailableWithPin,
+    renameDisplayPin,
+    revokeDisplayPin: notAvailableWithPin,
+    deleteHouseholdPin: notAvailableWithPin,
     createMemberInvite: notAvailable,
     acceptMemberInvite: notAvailable,
     // Demo has no invites to delete.

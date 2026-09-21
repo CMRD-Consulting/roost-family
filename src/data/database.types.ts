@@ -1818,6 +1818,13 @@ export type Database = {
           out_token: string
         }[]
       }
+      create_member_invite_pin: {
+        Args: { p_membership_id: string; p_pin: string; p_role: string }
+        Returns: {
+          out_expires_at: string
+          out_token: string
+        }[]
+      }
       create_take_list_link: {
         Args: { p_household_id: string }
         Returns: {
@@ -1836,6 +1843,10 @@ export type Database = {
       }
       delete_household: {
         Args: { p_confirm_name: string; p_household_id: string }
+        Returns: undefined
+      }
+      delete_household_pin: {
+        Args: { p_confirm_name: string; p_membership_id: string; p_pin: string }
         Returns: undefined
       }
       delete_old_entries: {
@@ -1916,8 +1927,21 @@ export type Database = {
         }[]
       }
       remove_member: { Args: { p_membership_id: string }; Returns: undefined }
+      remove_member_pin: {
+        Args: { p_membership_id: string; p_pin: string; p_target_id: string }
+        Returns: undefined
+      }
       rename_display: {
         Args: { p_display_id: string; p_name: string }
+        Returns: undefined
+      }
+      rename_display_pin: {
+        Args: {
+          p_display_id: string
+          p_membership_id: string
+          p_name: string
+          p_pin: string
+        }
         Returns: undefined
       }
       request_household_export: {
@@ -1925,8 +1949,16 @@ export type Database = {
         Returns: string
       }
       revoke_display: { Args: { p_display_id: string }; Returns: undefined }
+      revoke_display_pin: {
+        Args: { p_display_id: string; p_membership_id: string; p_pin: string }
+        Returns: undefined
+      }
       revoke_member_invite: {
         Args: { p_invite_token: string }
+        Returns: undefined
+      }
+      revoke_member_invite_pin: {
+        Args: { p_invite_token: string; p_membership_id: string; p_pin: string }
         Returns: undefined
       }
       revoke_take_list_link: {
@@ -1967,6 +1999,15 @@ export type Database = {
       }
       set_member_role: {
         Args: { p_membership_id: string; p_role: string }
+        Returns: undefined
+      }
+      set_member_role_pin: {
+        Args: {
+          p_membership_id: string
+          p_pin: string
+          p_role: string
+          p_target_id: string
+        }
         Returns: undefined
       }
       set_my_color: {

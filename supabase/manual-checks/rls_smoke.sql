@@ -3065,6 +3065,223 @@ select private.purge_deleted_households();
 select pg_temp.expect('links that ended 8 and 9 days ago are gone; those that ended 6 days ago and the active one stay', (
   select array_agg(token_hash order by token_hash) from public.take_list_links where household_id in (:'household_t', :'household_u'))
   = array['smoke-active', 'smoke-expired-6d', 'smoke-revoked-6d']);
+
+-- ─── PIN-authorised owner actions (migration 14) ─────────────────────────
+-- Fixtures: household P with owners Pat (PIN 2244) and Pia, adult Quinn (PIN 3355), caregiver Rae (PIN 4466),
+-- display "P kitchen" (session PDISP) and display "P old" (session POLD); household N with owner Nia (PIN 5577)
+-- and display "N kitchen" (session NDISP). N is the throwaway household deleted at the end.
+\set PAT '{"sub":"00000000-0000-0000-0000-000000000029","role":"authenticated","is_anonymous":false}'
+\set QUINN '{"sub":"00000000-0000-0000-0000-00000000002a","role":"authenticated","is_anonymous":false}'
+\set RAE '{"sub":"00000000-0000-0000-0000-00000000002b","role":"authenticated","is_anonymous":false}'
+\set PDISP '{"sub":"00000000-0000-0000-0000-00000000002c","role":"authenticated","is_anonymous":true}'
+\set POLD '{"sub":"00000000-0000-0000-0000-00000000002d","role":"authenticated","is_anonymous":true}'
+\set NIA '{"sub":"00000000-0000-0000-0000-00000000002e","role":"authenticated","is_anonymous":false}'
+\set NDISP '{"sub":"00000000-0000-0000-0000-00000000002f","role":"authenticated","is_anonymous":true}'
+\set PIA '{"sub":"00000000-0000-0000-0000-000000000030","role":"authenticated","is_anonymous":false}'
+reset role;
+insert into auth.users (id, instance_id, aud, role, email, raw_app_meta_data, raw_user_meta_data, is_anonymous, created_at, updated_at)
+values
+  ('00000000-0000-0000-0000-000000000029', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'pat@roost.test', '{}', '{}', false, now(), now()),
+  ('00000000-0000-0000-0000-00000000002a', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'quinn@roost.test', '{}', '{}', false, now(), now()),
+  ('00000000-0000-0000-0000-00000000002b', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'rae@roost.test', '{}', '{}', false, now(), now()),
+  ('00000000-0000-0000-0000-00000000002c', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', null, '{}', '{}', true, now(), now()),
+  ('00000000-0000-0000-0000-00000000002d', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', null, '{}', '{}', true, now(), now()),
+  ('00000000-0000-0000-0000-00000000002e', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'nia@roost.test', '{}', '{}', false, now(), now()),
+  ('00000000-0000-0000-0000-00000000002f', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', null, '{}', '{}', true, now(), now()),
+  ('00000000-0000-0000-0000-000000000030', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'pia@roost.test', '{}', '{}', false, now(), now());
+insert into public.households (name, time_zone) values ('P family', 'America/New_York') returning id as household_p \gset
+insert into public.households (name, time_zone) values ('N family', 'America/Denver') returning id as household_n \gset
+insert into public.memberships (user_id, household_id, role, display_name, color) values
+  ('00000000-0000-0000-0000-000000000029', :'household_p', 'owner', 'Pat', '#2F86A6') returning id as membership_pat \gset
+insert into public.memberships (user_id, household_id, role, display_name, color) values
+  ('00000000-0000-0000-0000-000000000030', :'household_p', 'owner', 'Pia', '#2F86A6') returning id as membership_pia \gset
+insert into public.memberships (user_id, household_id, role, display_name, color) values
+  ('00000000-0000-0000-0000-00000000002a', :'household_p', 'adult', 'Quinn', '#2F86A6') returning id as membership_quinn \gset
+insert into public.memberships (user_id, household_id, role, display_name, color) values
+  ('00000000-0000-0000-0000-00000000002b', :'household_p', 'caregiver', 'Rae', '#2F86A6') returning id as membership_rae \gset
+insert into public.memberships (user_id, household_id, role, display_name, color) values
+  ('00000000-0000-0000-0000-00000000002e', :'household_n', 'owner', 'Nia', '#2F86A6') returning id as membership_nia \gset
+insert into public.displays (household_id, name, auth_user_id) values
+  (:'household_p', 'P kitchen', '00000000-0000-0000-0000-00000000002c') returning id as display_p \gset
+insert into public.displays (household_id, name, auth_user_id) values
+  (:'household_p', 'P old', '00000000-0000-0000-0000-00000000002d') returning id as display_p_old \gset
+insert into public.displays (household_id, name, auth_user_id) values
+  (:'household_n', 'N kitchen', '00000000-0000-0000-0000-00000000002f') returning id as display_n \gset
+insert into public.display_claims (display_id, token_hash, expires_at) values (:'display_p_old', 'smoke-p-old-claim', now() + interval '10 minutes');
+insert into public.member_pins (membership_id, pin_hash) values
+  (:'membership_pat', extensions.crypt('2244', extensions.gen_salt('bf', 8))),
+  (:'membership_quinn', extensions.crypt('3355', extensions.gen_salt('bf', 8))),
+  (:'membership_rae', extensions.crypt('4466', extensions.gen_salt('bf', 8))),
+  (:'membership_nia', extensions.crypt('5577', extensions.gen_salt('bf', 8)));
+select set_config('smoke.household_p', :'household_p', true), set_config('smoke.household_n', :'household_n', true),
+       set_config('smoke.membership_pat', :'membership_pat', true), set_config('smoke.membership_pia', :'membership_pia', true),
+       set_config('smoke.membership_quinn', :'membership_quinn', true), set_config('smoke.membership_rae', :'membership_rae', true),
+       set_config('smoke.membership_nia', :'membership_nia', true), set_config('smoke.display_p', :'display_p', true),
+       set_config('smoke.display_p_old', :'display_p_old', true), set_config('smoke.display_n', :'display_n', true);
+
+\echo '[120] PIN owner RPCs: authenticated only, and the owner-PIN helper is server-only'
+select pg_temp.expect('anon cannot execute any PIN owner RPC', not exists (
+  select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public' and p.proname in (
+    'create_member_invite_pin', 'revoke_member_invite_pin', 'set_member_role_pin', 'remove_member_pin',
+    'rename_display_pin', 'revoke_display_pin', 'delete_household_pin')
+    and has_function_privilege('anon', p.oid, 'execute')));
+select pg_temp.expect('authenticated can execute all 7 PIN owner RPCs', (
+  select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public' and p.proname in (
+    'create_member_invite_pin', 'revoke_member_invite_pin', 'set_member_role_pin', 'remove_member_pin',
+    'rename_display_pin', 'revoke_display_pin', 'delete_household_pin')
+    and has_function_privilege('authenticated', p.oid, 'execute')) = 7);
+select pg_temp.expect('no client role can execute require_settings_owner', not exists (
+  select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'private' and p.proname = 'require_settings_owner'
+    and (has_function_privilege('authenticated', p.oid, 'execute') or has_function_privilege('anon', p.oid, 'execute'))));
+
+\echo '[121] rename_display_pin / revoke_display_pin: the display''s own session, the owner''s PIN'
+set local role authenticated;
+select set_config('request.jwt.claims', :'PDISP', true);
+select public.rename_display_pin(:'membership_pat', '2244', :'display_p', '  Playroom  ');
+select pg_temp.expect('the display is renamed and trimmed', (
+  select name = 'Playroom' from public.displays where id = pg_temp.v('display_p')));
+select pg_temp.expect('the rename is audited for the acting owner', pg_temp.audited(
+  pg_temp.v('household_p'), pg_temp.v('membership_pat'), 'displays', 'rename', pg_temp.v('display_p')));
+select pg_temp.expect_error('a blank display name',
+  $q$select public.rename_display_pin(pg_temp.v('membership_pat'), '2244', pg_temp.v('display_p'), '   ')$q$, '22023');
+select clock_timestamp() as pin_owner_wrong_started \gset
+select pg_temp.expect_error('a wrong PIN',
+  $q$select public.rename_display_pin(pg_temp.v('membership_pat'), '0000', pg_temp.v('display_p'), 'Nope')$q$, '42501');
+select pg_temp.expect('the wrong PIN took at least half a second',
+  clock_timestamp() - :'pin_owner_wrong_started'::timestamptz >= interval '500 milliseconds');
+select pg_temp.expect_error('an adult of the household with their own valid PIN',
+  $q$select public.rename_display_pin(pg_temp.v('membership_quinn'), '3355', pg_temp.v('display_p'), 'Nope')$q$, '42501');
+select pg_temp.expect_error('a caregiver of the household with their own valid PIN',
+  $q$select public.rename_display_pin(pg_temp.v('membership_rae'), '4466', pg_temp.v('display_p'), 'Nope')$q$, '42501');
+select pg_temp.expect_error('another household''s display, with this household''s owner PIN',
+  $q$select public.rename_display_pin(pg_temp.v('membership_pat'), '2244', pg_temp.v('display_n'), 'Nope')$q$, '42501');
+select pg_temp.expect_error('another household''s owner and PIN, from this display''s session',
+  $q$select public.rename_display_pin(pg_temp.v('membership_nia'), '5577', pg_temp.v('display_n'), 'Nope')$q$, '42501');
+select pg_temp.expect_error('revoking another household''s display',
+  $q$select public.revoke_display_pin(pg_temp.v('membership_pat'), '2244', pg_temp.v('display_n'))$q$, '42501');
+select public.revoke_display_pin(:'membership_pat', '2244', :'display_p_old');
+select pg_temp.expect('the removal is audited', pg_temp.audited(
+  pg_temp.v('household_p'), pg_temp.v('membership_pat'), 'displays', 'revoke', pg_temp.v('display_p_old')));
+reset role;
+select pg_temp.expect('the other display is revoked and its claim is gone', (
+  select revoked_at is not null from public.displays where id = pg_temp.v('display_p_old'))
+  and not exists (select 1 from public.display_claims where display_id = pg_temp.v('display_p_old')));
+set local role authenticated;
+select set_config('request.jwt.claims', :'POLD', true);
+select pg_temp.expect_error('a revoked display''s session, even with the owner''s PIN',
+  $q$select public.rename_display_pin(pg_temp.v('membership_pat'), '2244', pg_temp.v('display_p'), 'Nope')$q$, '42501');
+select pg_temp.expect_error('a revoked display''s session cannot revoke either',
+  $q$select public.revoke_display_pin(pg_temp.v('membership_pat'), '2244', pg_temp.v('display_p'))$q$, '42501');
+reset role;
+
+\echo '[122] create_member_invite_pin / revoke_member_invite_pin: owner PIN, own household only'
+set local role authenticated;
+select set_config('request.jwt.claims', :'PDISP', true);
+select pg_temp.expect_error('an adult of the household cannot invite',
+  $q$select public.create_member_invite_pin(pg_temp.v('membership_quinn'), '3355', 'adult')$q$, '42501');
+select pg_temp.expect_error('a caregiver cannot invite',
+  $q$select public.create_member_invite_pin(pg_temp.v('membership_rae'), '4466', 'adult')$q$, '42501');
+select pg_temp.expect_error('a wrong PIN cannot invite',
+  $q$select public.create_member_invite_pin(pg_temp.v('membership_pat'), '0000', 'adult')$q$, '42501');
+select pg_temp.expect_error('an unknown role',
+  $q$select public.create_member_invite_pin(pg_temp.v('membership_pat'), '2244', 'caregiver')$q$, '22023');
+select out_token as invite_p from public.create_member_invite_pin(:'membership_pat', '2244', 'owner') \gset
+select set_config('smoke.invite_p', :'invite_p', true);
+select pg_temp.expect('the invite is audited', (
+  select change ->> 'section' = 'members' and change ->> 'action' = 'invite' and (change -> 'fields' ->> 'role') = 'owner'
+    and membership_id = pg_temp.v('membership_pat')
+  from public.settings_audit where household_id = pg_temp.v('household_p') order by id desc limit 1));
+reset role;
+select pg_temp.expect('the invite is for this household, owner, unused, expiring in 10 minutes, by the acting owner', (
+  select role = 'owner' and used_at is null and created_by = pg_temp.v('membership_pat')
+    and expires_at between now() + interval '9 minutes' and now() + interval '11 minutes'
+  from public.member_invites where household_id = pg_temp.v('household_p')));
+select pg_temp.expect('only the hash is stored', not exists (
+  select 1 from public.member_invites where token_hash = pg_temp.v_text('invite_p')));
+set local role authenticated;
+select set_config('request.jwt.claims', :'PDISP', true);
+select pg_temp.expect_error('another household''s owner cannot cancel it from here',
+  $q$select public.revoke_member_invite_pin(pg_temp.v('membership_nia'), '5577', pg_temp.v_text('invite_p'))$q$, '42501');
+select public.revoke_member_invite_pin(:'membership_pat', '2244', :'invite_p');
+select pg_temp.expect('the cancellation is audited', (
+  select change ->> 'section' = 'members' and change ->> 'action' = 'invite_cancel' and membership_id = pg_temp.v('membership_pat')
+  from public.settings_audit where household_id = pg_temp.v('household_p') order by id desc limit 1));
+select public.revoke_member_invite_pin(:'membership_pat', '2244', 'not-a-token');
+reset role;
+select pg_temp.expect('the invite is gone', not exists (
+  select 1 from public.member_invites where household_id = pg_temp.v('household_p')));
+
+\echo '[123] set_member_role_pin / remove_member_pin: own household, never the last owner'
+set local role authenticated;
+select set_config('request.jwt.claims', :'PDISP', true);
+select pg_temp.expect_error('an adult cannot change roles',
+  $q$select public.set_member_role_pin(pg_temp.v('membership_quinn'), '3355', pg_temp.v('membership_quinn'), 'owner')$q$, '42501');
+select pg_temp.expect_error('a caregiver cannot change roles',
+  $q$select public.set_member_role_pin(pg_temp.v('membership_rae'), '4466', pg_temp.v('membership_quinn'), 'owner')$q$, '42501');
+select pg_temp.expect_error('a wrong PIN cannot change roles',
+  $q$select public.set_member_role_pin(pg_temp.v('membership_pat'), '0000', pg_temp.v('membership_quinn'), 'owner')$q$, '42501');
+select pg_temp.expect_error('another household''s member',
+  $q$select public.set_member_role_pin(pg_temp.v('membership_pat'), '2244', pg_temp.v('membership_nia'), 'adult')$q$, '42501');
+select pg_temp.expect_error('an unknown role',
+  $q$select public.set_member_role_pin(pg_temp.v('membership_pat'), '2244', pg_temp.v('membership_quinn'), 'caregiver')$q$, '22023');
+select public.set_member_role_pin(:'membership_pat', '2244', :'membership_quinn', 'owner');
+select pg_temp.expect('Quinn is an owner and it is audited', (
+  select role = 'owner' from public.memberships where id = pg_temp.v('membership_quinn'))
+  and pg_temp.audited(pg_temp.v('household_p'), pg_temp.v('membership_pat'), 'members', 'role', pg_temp.v('membership_quinn')));
+select public.set_member_role_pin(:'membership_pat', '2244', :'membership_quinn', 'adult');
+select public.remove_member_pin(:'membership_pat', '2244', :'membership_pia');
+select pg_temp.expect('Pia has left, and it is audited', (
+  select left_at is not null from public.memberships where id = pg_temp.v('membership_pia'))
+  and pg_temp.audited(pg_temp.v('household_p'), pg_temp.v('membership_pat'), 'members', 'remove', pg_temp.v('membership_pia')));
+reset role;
+select pg_temp.expect('her PIN is gone', not exists (
+  select 1 from public.member_pins where membership_id = pg_temp.v('membership_pia')));
+set local role authenticated;
+select set_config('request.jwt.claims', :'PDISP', true);
+select pg_temp.expect_error('the last owner cannot step down',
+  $q$select public.set_member_role_pin(pg_temp.v('membership_pat'), '2244', pg_temp.v('membership_pat'), 'adult')$q$, '22023');
+select pg_temp.expect_error('the last owner cannot remove themself',
+  $q$select public.remove_member_pin(pg_temp.v('membership_pat'), '2244', pg_temp.v('membership_pat'))$q$, '22023');
+select pg_temp.expect_error('a member who has already left',
+  $q$select public.remove_member_pin(pg_temp.v('membership_pat'), '2244', pg_temp.v('membership_pia'))$q$, '42501');
+select pg_temp.expect_error('another household''s member cannot be removed',
+  $q$select public.remove_member_pin(pg_temp.v('membership_pat'), '2244', pg_temp.v('membership_nia'))$q$, '42501');
+select public.remove_member_pin(:'membership_pat', '2244', :'membership_rae');
+select pg_temp.expect('the caregiver is removed', (
+  select left_at is not null from public.memberships where id = pg_temp.v('membership_rae')));
+reset role;
+
+\echo '[124] delete_household_pin: the typed name and an owner PIN, on the throwaway household N'
+set local role authenticated;
+select set_config('request.jwt.claims', :'NDISP', true);
+select pg_temp.expect_error('a wrong PIN',
+  $q$select public.delete_household_pin(pg_temp.v('membership_nia'), '0000', 'N family')$q$, '42501');
+select pg_temp.expect_error('another household''s owner PIN, from this display''s session',
+  $q$select public.delete_household_pin(pg_temp.v('membership_pat'), '2244', 'P family')$q$, '42501');
+select pg_temp.expect_error('the wrong household name',
+  $q$select public.delete_household_pin(pg_temp.v('membership_nia'), '5577', 'n family')$q$, '22023');
+select pg_temp.expect_error('no name at all',
+  $q$select public.delete_household_pin(pg_temp.v('membership_nia'), '5577', null)$q$, '22023');
+select public.delete_household_pin(:'membership_nia', '5577', '  N family  ');
+reset role;
+select pg_temp.expect('N is soft-deleted, its display revoked and every PIN gone', (
+  select deleted_at is not null from public.households where id = pg_temp.v('household_n'))
+  and (select revoked_at is not null from public.displays where id = pg_temp.v('display_n'))
+  and not exists (select 1 from public.member_pins where membership_id = pg_temp.v('membership_nia')));
+select pg_temp.expect('the deletion is audited', (
+  select change ->> 'section' = 'household' and change ->> 'action' = 'delete' and membership_id = pg_temp.v('membership_nia')
+  from public.settings_audit where household_id = pg_temp.v('household_n') order by id desc limit 1));
+set local role authenticated;
+select set_config('request.jwt.claims', :'NDISP', true);
+select pg_temp.expect_error('nothing works on a deleted household, even with the right PIN',
+  $q$select public.rename_display_pin(pg_temp.v('membership_nia'), '5577', pg_temp.v('display_n'), 'Nope')$q$, '42501');
+select pg_temp.expect_error('and it cannot be deleted twice',
+  $q$select public.delete_household_pin(pg_temp.v('membership_nia'), '5577', 'N family')$q$, '42501');
+reset role;
+
 \o
 \echo 'ALL RLS SMOKE CHECKS PASSED'
 rollback;

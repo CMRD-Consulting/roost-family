@@ -123,31 +123,10 @@ onBeforeUnmount(() => {
               :to="`/settings/${s.id}`"
               replace
               :aria-current="s.id === section.id ? 'page' : undefined"
-              class="flex min-h-[52px] items-center justify-between gap-2 rounded-[var(--radius-control)] px-4 py-2 text-left focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-orange-deep"
+              class="flex min-h-[52px] items-center rounded-[var(--radius-control)] px-4 py-2 text-left focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-orange-deep"
               :class="s.id === section.id ? 'bg-ink text-surface' : 'text-ink'"
             >
-              <span class="flex flex-col">
-                <span class="text-[19px] font-medium leading-tight">{{ s.label }}</span>
-                <span v-if="s.ownerSignIn" class="text-[18px] leading-tight" :class="s.id === section.id ? 'text-surface' : 'text-ink-3'">
-                  Requires owner sign-in
-                </span>
-              </span>
-              <svg
-                v-if="s.ownerSignIn"
-                width="20"
-                height="20"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                class="shrink-0"
-                aria-hidden="true"
-              >
-                <rect x="5" y="11" width="14" height="10" rx="2" />
-                <path d="M8 11V7a4 4 0 0 1 8 0v4" />
-              </svg>
+              <span class="text-[19px] font-medium leading-tight">{{ s.label }}</span>
             </RouterLink>
           </li>
         </ul>

@@ -1,13 +1,15 @@
 <script setup lang="ts">
 /**
- * Delete household (spec §11.3), owners only after a full sign-in and a typed confirmation of the household name.
- * Every display is removed at once and every adult loses access; the data is purged within 30 days. On a display
- * this tablet then forgets the household and shows "This display was removed". `host` is where the section is
- * shown (see sectionHosts); without one it is Settings on this display.
+ * Delete household (spec §11.3), owners only, after a typed confirmation of the household name. Every display is
+ * removed at once and every adult loses access; the data is purged within 30 days. On a display this tablet then
+ * forgets the household and shows "This display was removed". `host` is where the section is shown (see
+ * sectionHosts) and how the owner is authorised — the Settings PIN on a display, an email sign-in in a browser;
+ * without one it is Settings on this display.
  */
 import { computed, ref } from 'vue'
 import RButton from '@/ui/RButton.vue'
 import RInput from '@/ui/RInput.vue'
+import OwnerOnlyPanel from '../OwnerOnlyPanel.vue'
 import OwnerSignInPanel from '../OwnerSignInPanel.vue'
 import { confirmsHouseholdName } from '../ownerForms'
 import { useDisplayOwnerHost, type OwnerSectionHost } from '../sectionHosts'
@@ -15,7 +17,7 @@ import { ownerActionMessage } from '../useOwnerSignIn'
 
 const props = defineProps<{ host?: OwnerSectionHost }>()
 const host = props.host ?? useDisplayOwnerHost()
-const { gate, offline } = host
+const { gate, act, offline } = host
 
 const householdName = computed(() => host.household.value?.name ?? '')
 const typedName = ref('')
@@ -23,13 +25,11 @@ const error = ref<string | null>(null)
 const confirmed = computed(() => confirmsHouseholdName(typedName.value, householdName.value))
 
 async function deleteHousehold(): Promise<void> {
-  const householdId = host.household.value?.id
-  if (!householdId || !confirmed.value || gate.busy.value || offline.value) return
+  if (!host.household.value || !confirmed.value || gate.busy.value || offline.value) return
   error.value = null
   const confirmName = typedName.value.trim()
   try {
-    const api = await host.loadApi()
-    await gate.run((o) => api.deleteHousehold(o.client, householdId, confirmName))
+    await act.deleteHousehold(confirmName)
   } catch (e) {
     error.value = ownerActionMessage(e)
     return
@@ -58,7 +58,8 @@ async function deleteHousehold(): Promise<void> {
     <p v-if="gate.demo" role="status" class="text-[18px] font-medium text-ink-2">Not available in demo.</p>
 
     <template v-else>
-      <OwnerSignInPanel :gate="gate" purpose="delete the household" />
+      <OwnerSignInPanel v-if="gate.signIn" :gate="gate.signIn" purpose="delete the household" />
+      <OwnerOnlyPanel v-else-if="gate.phase.value !== 'ready'" purpose="delete the household" :notice="gate.notice.value" />
 
       <div v-if="gate.phase.value === 'ready'" class="flex flex-col gap-4 rounded-[var(--radius-card)] bg-surface px-6 py-5">
         <RInput v-model="typedName" :label="`Type ${householdName} to confirm`" autocomplete="off" :maxlength="80" />

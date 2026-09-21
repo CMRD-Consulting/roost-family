@@ -423,6 +423,106 @@ describe('createSupabaseSettingsApi', () => {
     })
   })
 
+  describe('PIN-authorised owner RPCs (a display)', () => {
+    const AUTH = { membershipId: 'membership-1', pin: '1234' }
+
+    it('createMemberInvitePin -> create_member_invite_pin, returns token and expiry', async () => {
+      const { client, calls } = createFakeClient({
+        rpc: { create_member_invite_pin: { error: null, data: [{ out_token: 'tok', out_expires_at: '2026-09-14T20:00:00Z' }] } },
+      })
+      const result = await createSupabaseSettingsApi(client).createMemberInvitePin(AUTH, 'adult')
+      expect(result).toEqual({ token: 'tok', expiresAt: '2026-09-14T20:00:00Z' })
+      expect(calls).toEqual([
+        { op: 'rpc', name: 'create_member_invite_pin', args: { p_membership_id: 'membership-1', p_pin: '1234', p_role: 'adult' } },
+      ])
+    })
+
+    it('revokeMemberInvitePin -> revoke_member_invite_pin', async () => {
+      const { client, calls } = createFakeClient()
+      await createSupabaseSettingsApi(client).revokeMemberInvitePin(AUTH, 'tok')
+      expect(calls).toEqual([
+        { op: 'rpc', name: 'revoke_member_invite_pin', args: { p_membership_id: 'membership-1', p_pin: '1234', p_invite_token: 'tok' } },
+      ])
+    })
+
+    it('setMemberRolePin -> set_member_role_pin, with the acting membership and the target apart', async () => {
+      const { client, calls } = createFakeClient()
+      await createSupabaseSettingsApi(client).setMemberRolePin(AUTH, 'membership-2', 'owner')
+      expect(calls).toEqual([
+        { op: 'rpc', name: 'set_member_role_pin', args: { p_membership_id: 'membership-1', p_pin: '1234', p_target_id: 'membership-2', p_role: 'owner' } },
+      ])
+    })
+
+    it('removeMemberPin -> remove_member_pin', async () => {
+      const { client, calls } = createFakeClient()
+      await createSupabaseSettingsApi(client).removeMemberPin(AUTH, 'membership-2')
+      expect(calls).toEqual([
+        { op: 'rpc', name: 'remove_member_pin', args: { p_membership_id: 'membership-1', p_pin: '1234', p_target_id: 'membership-2' } },
+      ])
+    })
+
+    it('renameDisplayPin -> rename_display_pin', async () => {
+      const { client, calls } = createFakeClient()
+      await createSupabaseSettingsApi(client).renameDisplayPin(AUTH, 'display-1', 'Kitchen')
+      expect(calls).toEqual([
+        { op: 'rpc', name: 'rename_display_pin', args: { p_membership_id: 'membership-1', p_pin: '1234', p_display_id: 'display-1', p_name: 'Kitchen' } },
+      ])
+    })
+
+    it('revokeDisplayPin -> revoke_display_pin', async () => {
+      const { client, calls } = createFakeClient()
+      await createSupabaseSettingsApi(client).revokeDisplayPin(AUTH, 'display-1')
+      expect(calls).toEqual([
+        { op: 'rpc', name: 'revoke_display_pin', args: { p_membership_id: 'membership-1', p_pin: '1234', p_display_id: 'display-1' } },
+      ])
+    })
+
+    it('deleteHouseholdPin -> delete_household_pin: the typed name and the PIN, no household id', async () => {
+      const { client, calls } = createFakeClient()
+      await createSupabaseSettingsApi(client).deleteHouseholdPin(AUTH, 'Rivera')
+      expect(calls).toEqual([
+        { op: 'rpc', name: 'delete_household_pin', args: { p_membership_id: 'membership-1', p_pin: '1234', p_confirm_name: 'Rivera' } },
+      ])
+    })
+
+    it('a wrong PIN comes back as an auth error, as for every other settings RPC', async () => {
+      const { client } = createFakeClient({
+        rpc: { revoke_display_pin: { error: { message: 'incorrect PIN', code: '42501' }, status: 400 } },
+      })
+      await expect(createSupabaseSettingsApi(client).revokeDisplayPin(AUTH, 'display-1')).rejects.toMatchObject({
+        code: 'auth',
+        message: 'incorrect PIN',
+      })
+    })
+
+    it('listHouseholdMembers and listHouseholdDisplays read on the device’s own client, like the adult ones', async () => {
+      const { client, calls } = createFakeClient({
+        from: { error: null, data: [{ id: 'm1', display_name: 'Sam', color: '#653437', role: 'owner', joined_at: '2026-01-02T10:00:00Z' }] },
+      })
+      const api = createSupabaseSettingsApi(client)
+      expect(await api.listHouseholdMembers('household-1')).toEqual([
+        { membershipId: 'm1', displayName: 'Sam', color: '#653437', role: 'owner', joinedAt: '2026-01-02T10:00:00Z' },
+      ])
+      await api.listHouseholdDisplays('household-1')
+      expect(calls).toEqual([
+        {
+          op: 'from', table: 'memberships',
+          chain: [
+            ['select', 'id, display_name, color, role, joined_at'], ['eq', 'household_id', 'household-1'], ['is', 'left_at', null],
+            ['order', 'joined_at', { ascending: true }],
+          ],
+        },
+        {
+          op: 'from', table: 'displays',
+          chain: [
+            ['select', 'id, name, last_seen_at'], ['eq', 'household_id', 'household-1'], ['is', 'revoked_at', null],
+            ['order', 'created_at', { ascending: true }],
+          ],
+        },
+      ])
+    })
+  })
+
   describe('full sign-in RPCs (adult client)', () => {
     it('createMemberInvite -> create_member_invite, returns token and expiry', async () => {
       const { client, calls } = createFakeClient({

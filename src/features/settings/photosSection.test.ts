@@ -118,7 +118,7 @@ describe('Settings > Photos', () => {
   it('is in the nav right after Sitter info, with a PIN session only', () => {
     const ids = SETTINGS_SECTIONS.map((s) => s.id)
     expect(ids.indexOf('photos')).toBe(ids.indexOf('sitter-info') + 1)
-    expect(SETTINGS_SECTIONS.find((s) => s.id === 'photos')).toEqual({ id: 'photos', label: 'Photos', ownerSignIn: false })
+    expect(SETTINGS_SECTIONS.find((s) => s.id === 'photos')).toEqual({ id: 'photos', label: 'Photos' })
   })
 
   it('shows the slideshow photos newest first as thumbnails from signed URLs, the count and the privacy note', async () => {

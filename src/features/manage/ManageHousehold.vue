@@ -108,12 +108,14 @@ async function requestExport(): Promise<void> {
   const host = ownerHost.value
   const handler = props.onRequestExport
   const householdId = host?.household.value?.id
-  if (!host || !handler || !householdId || host.gate.busy.value || offline.value) return
+  // The export runs on this adult's own sign-in, like every owner action in a browser (spec §7.10).
+  const signIn = host?.gate.signIn
+  if (!host || !handler || !householdId || !signIn || host.gate.busy.value || offline.value) return
   exportError.value = null
   exportNotice.value = null
   const email = adult.value?.email
   try {
-    await host.gate.run(async (o) => {
+    await signIn.run(async (o) => {
       await handler({ client: o.client, householdId, membershipId: o.membershipId })
     })
     exportNotice.value = email

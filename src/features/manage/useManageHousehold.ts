@@ -3,7 +3,7 @@ import { isDemo } from '@/data/householdSource'
 import { SettingsError, type AdultClient, type AdultMembershipRow, type MemberRow, type SettingsApi } from '@/data/settingsApi'
 import type { AdultSession } from '@/session/adultSession'
 import { useAdultSessionIdle } from '@/session/useAdultSessionIdle'
-import type { AccountSectionHost, OwnerSectionHost, SectionHousehold } from '@/features/settings/sectionHosts'
+import type { AccountSectionHost, OwnerActions, OwnerSectionHost, SectionHousehold } from '@/features/settings/sectionHosts'
 import { signedInOwner } from '@/features/settings/useOwnerSignIn'
 import { loadManageApi } from './manageApi'
 import { initialSelection, isExpiredSession, isPermissionRefusal } from './manageModel'
@@ -251,7 +251,7 @@ export function useManageHousehold(options: ManageHouseholdOptions = {}) {
     const session = adult.value
     const row = selected.value
     if (!session || !row || row.role !== 'owner') return null
-    const gate = signedInOwner(
+    const signIn = signedInOwner(
       { client: session.client, membershipId: row.membershipId, userId: session.userId },
       {
         demo: isDemo,
@@ -267,12 +267,37 @@ export function useManageHousehold(options: ManageHouseholdOptions = {}) {
         },
       },
     )
+    /** Every owner action here runs on this adult's own sign-in (spec §7.10): a browser has no PIN pad. The API
+     *  loads before the action counts as in flight, as the sections used to load it themselves. */
+    async function withApi<T>(action: (api: SettingsApi, client: AdultClient) => Promise<T>): Promise<T> {
+      const api = await loadApi()
+      return signIn.run((o) => action(api, o.client))
+    }
+    const act: OwnerActions = {
+      listMembers: () => withApi((api, client) => api.listMembers(client, row.householdId)),
+      setMemberRole: (id, role) => withApi((api, client) => api.setMemberRole(client, id, role)),
+      removeMember: (id) => withApi((api, client) => api.removeMember(client, id)),
+      createMemberInvite: (role) => withApi((api, client) => api.createMemberInvite(client, row.householdId, role)),
+      listDisplays: () => withApi((api, client) => api.listDisplays(client, row.householdId)),
+      renameDisplay: (id, name) => withApi((api, client) => api.renameDisplay(client, id, name)),
+      revokeDisplay: (id) => withApi((api, client) => api.revokeDisplay(client, id)),
+      deleteHousehold: (confirmName) => withApi((api, client) => api.deleteHousehold(client, row.householdId, confirmName)),
+    }
     return {
       surface: 'browser',
       household,
       offline,
       loadApi,
-      gate,
+      gate: {
+        demo: isDemo,
+        phase: signIn.phase,
+        membershipId: computed(() => row.membershipId),
+        busy,
+        notice: signIn.notice,
+        signOut: (message = null) => signIn.signOut(message),
+        signIn,
+      },
+      act,
       thisDisplayId: computed(() => null),
       canManageRoles: false,
       canAddAdults: false,

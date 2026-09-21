@@ -99,4 +99,16 @@ status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/rest/v1/rpc/create
   -d "{\"p_household_id\":\"$HOUSEHOLD\"}")
 check "anon calls create_take_list_link" 401 "$status"
 
+# The PIN-authorised owner actions a display offers (migration 14): the PIN is checked inside the RPC, but anon
+# may not reach it at all.
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/rest/v1/rpc/revoke_display_pin" \
+  -H "apikey: $KEY" -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d '{"p_membership_id":"bbbbbbbb-0000-0000-0000-000000000001","p_pin":"1234","p_display_id":"00000000-0000-0000-0000-000000000000"}')
+check "anon calls revoke_display_pin" 401 "$status"
+
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/rest/v1/rpc/delete_household_pin" \
+  -H "apikey: $KEY" -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d '{"p_membership_id":"bbbbbbbb-0000-0000-0000-000000000001","p_pin":"1234","p_confirm_name":"Rivera"}')
+check "anon calls delete_household_pin" 401 "$status"
+
 exit $fail

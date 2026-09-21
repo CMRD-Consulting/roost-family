@@ -32,8 +32,9 @@ export interface SettingsAuth {
   pin: string
 }
 
-/** A signed-in adult's client (spec §6.3), for the RPCs that require a full sign-in rather than a PIN:
- *  members, displays, and household deletion. */
+/** A signed-in adult's client (spec §6.3), for the RPCs that require a full sign-in rather than a PIN. In a
+ *  browser (Manage household) that is how every members/displays/deletion action is authorised; a display uses
+ *  the PIN-checked `…Pin` methods below instead. */
 export type AdultClient = RoostClient
 
 export interface HouseholdSettingsInput {
@@ -168,9 +169,11 @@ export interface AdultMembershipRow {
 }
 
 /**
- * Every configuration change goes through this interface (spec §7.9). Most methods are PIN-checked
- * (`SettingsAuth`, re-verified by the server on every call); the members/displays/deletion methods instead
- * require a full adult sign-in (`AdultClient`, spec §6.3) and are not available in demo mode.
+ * Every configuration change goes through this interface (spec §7.9). Almost every method is PIN-checked
+ * (`SettingsAuth`, re-verified by the server on every call), including the owner-only ones a display offers:
+ * members, displays and deleting the household. The parallel `AdultClient` methods authorise the same actions
+ * with a full adult sign-in instead, for Manage household in a browser (spec §6.3, §7.10), where there is no
+ * PIN pad. Demo mode has no accounts, so it backs the PIN methods and refuses most of the account ones.
  */
 export interface SettingsApi {
   /** Enters a settings session: verifies the PIN and returns the membership's role and display name. */
@@ -226,7 +229,26 @@ export interface SettingsApi {
   /** Deletes the photo and its stored file, and clears any child or routine step that used it. */
   deletePhoto(auth: SettingsAuth, photoId: string): Promise<void>
 
-  // ─── Full sign-in only (spec §6.3): members, displays, household deletion ─────────────────────────────
+  // ─── Owner actions on a display, authorised by the Settings PIN (spec §6.3, §7.9) ─────────────────────
+  /** Current members of the household (not former), oldest first. A plain read on this device's own client:
+   *  RLS already lets a display read its household's memberships, so there is no PIN to check. */
+  listHouseholdMembers(householdId: string): Promise<MemberRow[]>
+  /** Active displays of the household, oldest first, read on this device's own client like `listHouseholdMembers`. */
+  listHouseholdDisplays(householdId: string): Promise<DisplayRow[]>
+  /** The invite for the add-adult hand-off (spec §6.4); the household is the PIN's own. */
+  createMemberInvitePin(auth: SettingsAuth, role: 'owner' | 'adult'): Promise<{ token: string; expiresAt: string }>
+  /** Deletes an unused invite of the PIN's household while Settings is still open. (Once the tablet has been
+   *  handed over the session is gone, and the new adult cancels with `revokeMemberInvite` instead.) */
+  revokeMemberInvitePin(auth: SettingsAuth, token: string): Promise<void>
+  setMemberRolePin(auth: SettingsAuth, membershipId: string, role: 'owner' | 'adult'): Promise<void>
+  removeMemberPin(auth: SettingsAuth, membershipId: string): Promise<void>
+  renameDisplayPin(auth: SettingsAuth, displayId: string, name: string): Promise<void>
+  /** Removes a display from the household at once (spec §6.3); that tablet shows "This display was removed". */
+  revokeDisplayPin(auth: SettingsAuth, displayId: string): Promise<void>
+  /** Deletes the PIN's own household (spec §11.3); `confirmName` must be the household's name, as typed. */
+  deleteHouseholdPin(auth: SettingsAuth, confirmName: string): Promise<void>
+
+  // ─── Full sign-in only (spec §6.3, §7.10): Manage household in a browser ──────────────────────────────
   createMemberInvite(client: AdultClient, householdId: string, role: 'owner' | 'adult'): Promise<{ token: string; expiresAt: string }>
   acceptMemberInvite(client: AdultClient, input: { token: string; displayName: string; color: string; pin: string }): Promise<string>
   /** Deletes an unused invite when the add-adult hand-off is cancelled. Runs on the display's own client: by then the

@@ -17,26 +17,24 @@ export type SettingsSectionId =
 export interface SettingsSection {
   id: SettingsSectionId
   label: string
-  /** Needs a full sign-in of an owner, not just the PIN session (spec §6.3, §7.9). */
-  ownerSignIn: boolean
 }
 
 /** Settings sections in nav order (spec §7.9). The URL is `/settings/<id>`. */
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
-  { id: 'household', label: 'Household', ownerSignIn: false },
-  { id: 'children', label: 'Children', ownerSignIn: false },
-  { id: 'routines', label: 'Routines', ownerSignIn: false },
-  { id: 'medicines', label: 'Medicines', ownerSignIn: false },
-  { id: 'stickers', label: 'Stickers', ownerSignIn: false },
-  { id: 'sitter-info', label: 'Sitter info', ownerSignIn: false },
-  { id: 'photos', label: 'Photos', ownerSignIn: false },
-  { id: 'logs', label: 'Logs', ownerSignIn: false },
-  { id: 'inbox', label: 'Inbox', ownerSignIn: false },
-  { id: 'my-account', label: 'My account', ownerSignIn: false },
-  { id: 'members', label: 'Members', ownerSignIn: true },
-  { id: 'displays', label: 'Displays', ownerSignIn: true },
-  { id: 'delete-household', label: 'Delete household', ownerSignIn: true },
-  { id: 'about', label: 'About', ownerSignIn: false },
+  { id: 'household', label: 'Household' },
+  { id: 'children', label: 'Children' },
+  { id: 'routines', label: 'Routines' },
+  { id: 'medicines', label: 'Medicines' },
+  { id: 'stickers', label: 'Stickers' },
+  { id: 'sitter-info', label: 'Sitter info' },
+  { id: 'photos', label: 'Photos' },
+  { id: 'logs', label: 'Logs' },
+  { id: 'inbox', label: 'Inbox' },
+  { id: 'my-account', label: 'My account' },
+  { id: 'members', label: 'Members' },
+  { id: 'displays', label: 'Displays' },
+  { id: 'delete-household', label: 'Delete household' },
+  { id: 'about', label: 'About' },
 ]
 
 export const DEFAULT_SECTION_ID: SettingsSectionId = 'household'

@@ -253,6 +253,60 @@ describe('createDemoSettingsApi', () => {
     })
   })
 
+  describe('PIN-authorised owner methods (Settings on a display)', () => {
+    const alexAuth = { membershipId: ALEX_ID, pin: '5678' }
+
+    it('setMemberRolePin mutates the demo household for an owner with the right PIN', async () => {
+      const api = createDemoSettingsApi()
+      await api.setMemberRolePin(auth, ALEX_ID, 'owner')
+      expect(getDemoSnapshot(new Date()).members.find((m) => m.id === ALEX_ID)?.role).toBe('owner')
+    })
+
+    it('setMemberRolePin keeps at least one owner', async () => {
+      const api = createDemoSettingsApi()
+      await expect(api.setMemberRolePin(auth, SAM_ID, 'adult')).rejects.toMatchObject({ code: 'invalid' })
+      expect(getDemoSnapshot(new Date()).members.find((m) => m.id === SAM_ID)?.role).toBe('owner')
+    })
+
+    it('renameDisplayPin mutates the demo display name', async () => {
+      const api = createDemoSettingsApi()
+      await api.renameDisplayPin(auth, 'demo-display', 'Living room')
+      expect(getDemoDisplayName()).toBe('Living room')
+    })
+
+    it('refuses a wrong PIN', async () => {
+      const api = createDemoSettingsApi()
+      await expect(api.setMemberRolePin({ membershipId: SAM_ID, pin: '0000' }, ALEX_ID, 'owner')).rejects.toMatchObject({ code: 'auth' })
+      await expect(api.renameDisplayPin({ membershipId: SAM_ID, pin: '0000' }, 'demo-display', 'Nope')).rejects.toMatchObject({ code: 'auth' })
+      expect(getDemoDisplayName()).toBe('Kitchen')
+    })
+
+    it('refuses an adult who is not an owner, even with their own valid PIN', async () => {
+      const api = createDemoSettingsApi()
+      await expect(api.setMemberRolePin(alexAuth, ALEX_ID, 'owner')).rejects.toMatchObject({ code: 'auth' })
+      await expect(api.renameDisplayPin(alexAuth, 'demo-display', 'Nope')).rejects.toMatchObject({ code: 'auth' })
+    })
+
+    it('the rest have no demo backing, but still check the PIN first', async () => {
+      const api = createDemoSettingsApi()
+      await expect(api.createMemberInvitePin(auth, 'adult')).rejects.toMatchObject({ message: 'Not available in demo' })
+      await expect(api.removeMemberPin(auth, ALEX_ID)).rejects.toMatchObject({ message: 'Not available in demo' })
+      await expect(api.revokeDisplayPin(auth, 'demo-display')).rejects.toMatchObject({ message: 'Not available in demo' })
+      await expect(api.deleteHouseholdPin(auth, 'Rivera')).rejects.toMatchObject({ message: 'Not available in demo' })
+      await expect(api.deleteHouseholdPin({ membershipId: SAM_ID, pin: '0000' }, 'Rivera')).rejects.toMatchObject({ code: 'auth' })
+      await expect(api.revokeMemberInvitePin({ membershipId: SAM_ID, pin: '0000' }, 'tok')).rejects.toMatchObject({ code: 'auth' })
+      await expect(api.revokeMemberInvitePin(auth, 'tok')).resolves.toBeUndefined()
+    })
+
+    it('listHouseholdMembers and listHouseholdDisplays read the demo household', async () => {
+      const api = createDemoSettingsApi()
+      expect((await api.listHouseholdMembers('household-1')).map((m) => m.displayName)).toEqual(['Sam', 'Alex'])
+      expect(await api.listHouseholdDisplays('household-1')).toEqual([
+        { displayId: 'demo-display', name: 'Kitchen', lastSeenAt: expect.any(String) },
+      ])
+    })
+  })
+
   describe('full sign-in only methods', () => {
     it('setMyPin and adultMembership are not available', async () => {
       const api = createDemoSettingsApi()
