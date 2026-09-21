@@ -466,3 +466,27 @@ additional_redirect_urls = []
 [remotes.production.auth.email]
 # Local development resends freely; production keeps Supabase's one-per-minute per address.
 max_frequency = "1m0s"
+
+# Custom SMTP: required before the code email templates can be pushed, and to mail anyone outside the Supabase
+# organization. Host, user, password and sender come from the shell that runs `supabase config push`, so no
+# credential is committed and the provider can change without touching this file. For a Mailgun sandbox domain
+# (Sending > Domains > sandbox….mailgun.org > SMTP credentials):
+#   ROOST_SMTP_HOST  smtp.mailgun.org (smtp.eu.mailgun.org for an EU account)
+#   ROOST_SMTP_USER  postmaster@sandbox….mailgun.org
+#   ROOST_SMTP_PASS  that SMTP user's password
+#   ROOST_SMTP_FROM  the same postmaster@sandbox….mailgun.org address: mail through a sandbox domain must come
+#                    from it, or the recipient's SPF/DKIM checks fail. With a verified domain of our own this
+#                    becomes no-reply@roost.cmrd.dev.
+# A sandbox domain delivers only to its Authorized Recipients (at most 5, each confirms by email).
+[remotes.production.auth.email.smtp]
+enabled = true
+host = "env(ROOST_SMTP_HOST)"
+port = 587
+user = "env(ROOST_SMTP_USER)"
+pass = "env(ROOST_SMTP_PASS)"
+admin_email = "env(ROOST_SMTP_FROM)"
+sender_name = "Roost Family"
+
+[remotes.production.auth.rate_limit]
+# The base value (2) is the cap of Supabase's own sender; with custom SMTP each sign-in is one email.
+email_sent = 30

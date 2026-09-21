@@ -92,9 +92,18 @@ The hosted project is `roost-family` (ref `njhwxoybuxwwtdvebdou`, us-east-1, fre
 - **Auth settings:** `supabase config push --project-ref njhwxoybuxwwtdvebdou` applies `config.toml` with the
   `[remotes.production]` overrides. The app depends on three of them, none a hosted default: anonymous sign-ins
   (a display's identity), 6-digit codes (hosted default: 8) and the code email templates.
-- **The email templates can't be pushed until custom SMTP is configured:** Supabase refuses template changes on the
-  free plan with its own sender, and its default template mails a link, not the code. Until then adults can't sign in.
-  Once SMTP is set (Dashboard > Authentication > Emails), run the config push again; the templates are all that differ.
+- **Email (custom SMTP):** Supabase refuses template changes on the free plan with its own sender, and that sender
+  mails a link (not the code) and only to the Supabase organization's own addresses. `[remotes.production.auth.email.smtp]`
+  takes the host, user, password and sender from the shell, so no credential is committed:
+  ```bash
+  export ROOST_SMTP_HOST=smtp.mailgun.org ROOST_SMTP_USER=postmaster@sandbox….mailgun.org \
+    ROOST_SMTP_FROM=postmaster@sandbox….mailgun.org ROOST_SMTP_PASS=…
+  supabase config push --project-ref njhwxoybuxwwtdvebdou
+  ```
+  Today that is a Mailgun sandbox domain: it delivers for real, but only to its Authorized Recipients (at most 5, each
+  confirms by email), and the sender must be on the sandbox domain. For other families, verify `roost.cmrd.dev` with
+  Mailgun (or any provider), change the four values (sender `no-reply@roost.cmrd.dev`) and push again. Every push
+  needs the four variables set, or it would blank the SMTP settings.
 - **Functions:** `supabase functions deploy --use-api` (bundles on Supabase, so no Docker). Secrets are set with
   `supabase secrets set`: `APP_URL`, `CALENDAR_FINGERPRINT_KEY` (never rotate casually: it stops duplicate-link
   detection for existing connections), and later `SMTP_*`, `NWS_CONTACT` and the calendar providers' credentials.
