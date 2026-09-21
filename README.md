@@ -49,7 +49,27 @@ pnpm dev               # http://localhost:5173
 
 ## Hosting (production)
 
-The app is a static build (`dist/`). There is no hosting config in the repo; configure the host to send:
+The app is a static build (`dist/`) hosted on Netlify: site `roost-family` on the `crishellco` team,
+https://roost-family.netlify.app. Netlify's free plan won't build from a private, organization-owned repository, so
+GitHub Actions does it (`.github/workflows/deploy.yml`): it runs the tests, then `netlify deploy --build`, which
+builds through Netlify Build so `netlify.toml` still decides the build command, per-context environment, headers and
+redirects. Builds from Git are switched off on the Netlify site itself.
+
+- **A merge to `main` builds and publishes production.** A pull request gets a Deploy Preview at
+  `https://pr-<number>--roost-family.netlify.app`, which always runs on the demo data source
+  (`VITE_DATA_SOURCE=demo`), never a real household.
+- The workflow needs one repository secret, `NETLIFY_AUTH_TOKEN`: a personal access token from the `crishellco`
+  Netlify account (User settings > Applications), stored with `gh secret set NETLIFY_AUTH_TOKEN`.
+- Node comes from `.nvmrc` and pnpm from `packageManager` in `package.json`, in the workflow as locally.
+- Production environment variables live on the Netlify site, scoped to the Production context, not in the repo:
+  `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` and optionally `VITE_SENTRY_DSN`
+  (`netlify env:set VITE_SUPABASE_URL <url> --context production`). `netlify deploy --build` fetches them; Vite
+  inlines them at build time, so changing one needs a new deploy (re-run the workflow).
+- A critical update (spec §5.8): set `ROOST_CRITICAL=1` on the site, deploy, then unset it.
+- The Netlify CLI needs Node 22 (`nvm use`); link a checkout with
+  `netlify link --id 52d25665-ea46-4376-9b04-a7a2f0c8814f`.
+
+The headers `netlify.toml` sends, and any other host must too:
 
 | Header | Paths | Why |
 |---|---|---|
