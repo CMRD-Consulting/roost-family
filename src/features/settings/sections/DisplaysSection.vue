@@ -12,7 +12,6 @@ import { validateDisplayLabel } from '@/features/setup/validation'
 import RButton from '@/ui/RButton.vue'
 import RInput from '@/ui/RInput.vue'
 import OwnerOnlyPanel from '../OwnerOnlyPanel.vue'
-import OwnerSignInPanel from '../OwnerSignInPanel.vue'
 import { formatLastSeen } from '../ownerForms'
 import { useDisplayOwnerHost, type OwnerSectionHost } from '../sectionHosts'
 import { ownerActionMessage } from '../useOwnerSignIn'
@@ -113,8 +112,7 @@ async function remove(row: DisplayRow): Promise<void> {
   <section aria-labelledby="settings-displays-title" class="flex flex-col gap-5">
     <h2 id="settings-displays-title" class="text-[32px] font-semibold text-ink">Displays</h2>
 
-    <OwnerSignInPanel v-if="gate.signIn" :gate="gate.signIn" purpose="manage displays" />
-    <OwnerOnlyPanel v-else-if="gate.phase.value !== 'ready'" purpose="manage displays" :notice="gate.notice.value" />
+    <OwnerOnlyPanel v-if="gate.phase.value !== 'ready'" purpose="manage displays" :notice="gate.notice.value" />
 
     <template v-if="gate.phase.value === 'ready'">
       <p v-if="gate.demo" class="text-[18px] text-ink-3">In the demo you can rename the display. Removing displays is not available in demo.</p>

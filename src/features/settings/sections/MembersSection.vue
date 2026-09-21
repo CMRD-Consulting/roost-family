@@ -13,7 +13,6 @@ import RAvatar from '@/ui/RAvatar.vue'
 import RButton from '@/ui/RButton.vue'
 import RChips, { type ChipOption } from '@/ui/RChips.vue'
 import OwnerOnlyPanel from '../OwnerOnlyPanel.vue'
-import OwnerSignInPanel from '../OwnerSignInPanel.vue'
 import { formatJoined, isOnlyOwner, roleLabel } from '../ownerForms'
 import { useDisplayOwnerHost, type OwnerSectionHost } from '../sectionHosts'
 import { ownerActionMessage } from '../useOwnerSignIn'
@@ -135,8 +134,7 @@ async function createInvite(): Promise<void> {
 
     <p v-if="notice" role="status" class="text-[18px] font-medium text-green-deep">{{ notice }}</p>
 
-    <OwnerSignInPanel v-if="gate.signIn" :gate="gate.signIn" purpose="manage members" />
-    <OwnerOnlyPanel v-else-if="gate.phase.value !== 'ready'" purpose="manage members" :notice="gate.notice.value" />
+    <OwnerOnlyPanel v-if="gate.phase.value !== 'ready'" purpose="manage members" :notice="gate.notice.value" />
 
     <template v-if="gate.phase.value === 'ready'">
       <p v-if="gate.demo" class="text-[18px] text-ink-3">

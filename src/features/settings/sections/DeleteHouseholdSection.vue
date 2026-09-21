@@ -10,7 +10,6 @@ import { computed, ref } from 'vue'
 import RButton from '@/ui/RButton.vue'
 import RInput from '@/ui/RInput.vue'
 import OwnerOnlyPanel from '../OwnerOnlyPanel.vue'
-import OwnerSignInPanel from '../OwnerSignInPanel.vue'
 import { confirmsHouseholdName } from '../ownerForms'
 import { useDisplayOwnerHost, type OwnerSectionHost } from '../sectionHosts'
 import { ownerActionMessage } from '../useOwnerSignIn'
@@ -58,8 +57,7 @@ async function deleteHousehold(): Promise<void> {
     <p v-if="gate.demo" role="status" class="text-[18px] font-medium text-ink-2">Not available in demo.</p>
 
     <template v-else>
-      <OwnerSignInPanel v-if="gate.signIn" :gate="gate.signIn" purpose="delete the household" />
-      <OwnerOnlyPanel v-else-if="gate.phase.value !== 'ready'" purpose="delete the household" :notice="gate.notice.value" />
+      <OwnerOnlyPanel v-if="gate.phase.value !== 'ready'" purpose="delete the household" :notice="gate.notice.value" />
 
       <div v-if="gate.phase.value === 'ready'" class="flex flex-col gap-4 rounded-[var(--radius-card)] bg-surface px-6 py-5">
         <RInput v-model="typedName" :label="`Type ${householdName} to confirm`" autocomplete="off" :maxlength="80" />

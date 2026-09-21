@@ -4,7 +4,7 @@ import { SettingsError, type AdultClient, type AdultMembershipRow, type MemberRo
 import type { AdultSession } from '@/session/adultSession'
 import { useAdultSessionIdle } from '@/session/useAdultSessionIdle'
 import type { AccountSectionHost, OwnerActions, OwnerSectionHost, SectionHousehold } from '@/features/settings/sectionHosts'
-import { signedInOwner } from '@/features/settings/useOwnerSignIn'
+import { signedInOwner, type OwnerSignInPhase } from '@/features/settings/useOwnerSignIn'
 import { loadManageApi } from './manageApi'
 import { initialSelection, isExpiredSession, isPermissionRefusal } from './manageModel'
 
@@ -290,10 +290,12 @@ export function useManageHousehold(options: ManageHouseholdOptions = {}) {
       loadApi,
       gate: {
         demo: isDemo,
-        phase: signIn.phase,
+        // The page only builds this host for a signed-in owner, so the owner-only sections are always ready
+        // and never have a notice to show; a display's PIN session is what can be 'notOwner' (usePinOwner).
+        phase: computed<OwnerSignInPhase>(() => 'ready'),
         membershipId: computed(() => row.membershipId),
         busy,
-        notice: signIn.notice,
+        notice: ref<string | null>(null),
         signOut: (message = null) => signIn.signOut(message),
         signIn,
       },
