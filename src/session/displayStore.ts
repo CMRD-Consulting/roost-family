@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { createDeviceCache } from '@/data/deviceCache'
 import { DEMO_DISPLAY, isDemo } from '@/data/householdSource'
-import { loadDisplayState, type DisplayIdentity, type DisplayState } from './displaySession'
+import { loadDisplayState, resetDisplay, type DisplayIdentity, type DisplayState } from './displaySession'
 
 /** The display state as the app sees it: `offline` when the server or session could not be read. */
 export type DisplayStoreState = DisplayState | { kind: 'offline' }
@@ -98,6 +98,25 @@ export const useDisplayStore = defineStore('display', () => {
     if (!isDemo) await forgetHouseholdData()
   }
 
+  /**
+   * An owner just signed this display out from its own Settings (spec §6.4): the server already unbound it, so the
+   * tablet is unregistered now. The household's data goes, as in `markRemoved`, and so does the device session: the
+   * next Join a household starts from a clean tablet, exactly as one that lost its session by accident would.
+   */
+  async function markSignedOut(): Promise<void> {
+    const unregistered: DisplayState = { kind: 'unregistered' }
+    lastKnown.value = unregistered
+    state.value = unregistered
+    if (isDemo) return
+    await forgetHouseholdData()
+    try {
+      await resetDisplay((await import('@/data/supabase')).displayClient)
+    } catch (e) {
+      // The server no longer knows this device as a display; a session left behind is bound to nothing.
+      console.warn("Couldn't drop the device session", e)
+    }
+  }
+
   function refreshOnce(): Promise<DisplayStoreState> {
     refreshing ??= refresh().finally(() => {
       refreshing = null
@@ -144,5 +163,5 @@ export const useDisplayStore = defineStore('display', () => {
     }
   }
 
-  return { state, lastKnown, identity, refresh, ensure, watch, markReachable, markRemoved }
+  return { state, lastKnown, identity, refresh, ensure, watch, markReachable, markRemoved, markSignedOut }
 })

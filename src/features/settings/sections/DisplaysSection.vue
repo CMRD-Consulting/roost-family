@@ -2,7 +2,8 @@
 /**
  * Displays (spec §6.3, §6.4, §7.9), owners only: the household's displays with when each last checked in; rename;
  * remove (revoke) with a confirmation. Removing the tablet in use forgets the household on it and shows "This
- * display was removed". Adding a display happens on the new tablet. `host` is where the section is shown (see
+ * display was removed". Signing the tablet in use out keeps the display (name, history, its place among the 3) for a
+ * tablet to reconnect as. Adding or reconnecting a display happens on that tablet. `host` is where the section is shown (see
  * sectionHosts) and how the owner is authorised — the Settings PIN on a display, an email sign-in in a browser;
  * without one it is Settings on this display.
  */
@@ -31,6 +32,7 @@ const notice = ref<string | null>(null)
 const renamingId = ref<string | null>(null)
 const renameValue = ref('')
 const confirmRemoveId = ref<string | null>(null)
+const confirmSignOut = ref(false)
 
 async function load(): Promise<void> {
   if (!gate.membershipId.value || !host.household.value) return
@@ -52,6 +54,7 @@ watch(
     loaded.value = false
     renamingId.value = null
     confirmRemoveId.value = null
+    confirmSignOut.value = false
     if (membershipId) void load()
   },
   { immediate: true },
@@ -61,6 +64,7 @@ function startRename(row: DisplayRow): void {
   error.value = null
   notice.value = null
   confirmRemoveId.value = null
+  confirmSignOut.value = false
   renamingId.value = row.displayId
   renameValue.value = row.name
 }
@@ -86,7 +90,29 @@ function startRemove(row: DisplayRow): void {
   error.value = null
   notice.value = null
   renamingId.value = null
+  confirmSignOut.value = false
   confirmRemoveId.value = row.displayId
+}
+
+function startSignOut(): void {
+  error.value = null
+  notice.value = null
+  renamingId.value = null
+  confirmRemoveId.value = null
+  confirmSignOut.value = true
+}
+
+async function signOut(): Promise<void> {
+  if (!act.signOutThisDisplay || gate.busy.value || offline.value) return
+  error.value = null
+  try {
+    await act.signOutThisDisplay()
+  } catch (e) {
+    error.value = ownerActionMessage(e)
+    return
+  }
+  confirmSignOut.value = false
+  await host.afterThisDisplaySignedOut()
 }
 
 async function remove(row: DisplayRow): Promise<void> {
@@ -137,9 +163,15 @@ async function remove(row: DisplayRow): Promise<void> {
                   class="rounded-full bg-orange-tint px-3 py-0.5 text-[18px] font-medium text-orange-deep"
                 >This display</span>
               </span>
-              <span class="text-[18px] text-ink-3">{{ formatLastSeen(row.lastSeenAt, new Date()) }}</span>
+              <span class="text-[18px] text-ink-3">{{ row.connected ? formatLastSeen(row.lastSeenAt, new Date()) : 'Signed out' }}</span>
             </div>
             <RButton variant="secondary" :disabled="gate.busy.value || offline" @click="startRename(row)">Rename</RButton>
+            <RButton
+              v-if="!gate.demo && act.signOutThisDisplay && row.displayId === thisDisplayId"
+              variant="secondary"
+              :disabled="gate.busy.value || offline"
+              @click="startSignOut"
+            >Sign out</RButton>
             <RButton v-if="!gate.demo" variant="ghost" :disabled="gate.busy.value || offline" @click="startRemove(row)">Remove</RButton>
           </div>
 
@@ -148,6 +180,18 @@ async function remove(row: DisplayRow): Promise<void> {
             <div class="flex flex-wrap gap-3">
               <RButton variant="secondary" :disabled="gate.busy.value" @click="renamingId = null">Cancel</RButton>
               <RButton :disabled="gate.busy.value || offline" @click="saveRename(row)">Save name</RButton>
+            </div>
+          </div>
+
+          <div v-if="confirmSignOut && row.displayId === thisDisplayId" class="flex flex-col gap-3 border-t border-line pt-3">
+            <p class="text-[20px] text-ink">
+              Sign this tablet out? {{ row.name }} stays in {{ householdName }} with its name and history, and anything
+              saved on this tablet is cleared. To bring it back, on this or another tablet, choose
+              <strong>Join a household</strong> and pick {{ row.name }}.
+            </p>
+            <div class="flex flex-wrap gap-3">
+              <RButton variant="secondary" :disabled="gate.busy.value" @click="confirmSignOut = false">Cancel</RButton>
+              <RButton variant="danger" :disabled="gate.busy.value || offline" @click="signOut">Sign out {{ row.name }}</RButton>
             </div>
           </div>
 
@@ -170,11 +214,14 @@ async function remove(row: DisplayRow): Promise<void> {
     </template>
 
     <div class="flex flex-col gap-3 rounded-[var(--radius-card)] bg-surface px-6 py-5">
-      <h3 class="text-[22px] font-semibold text-ink">Add a display</h3>
+      <h3 class="text-[22px] font-semibold text-ink">Add or reconnect a display</h3>
       <ol class="flex list-decimal flex-col gap-1 pl-6 text-[18px] text-ink-2">
-        <li>Open Roost Family on the new tablet and choose <strong>Join a household</strong>.</li>
+        <li>Open Roost Family on the tablet and choose <strong>Join a household</strong>.</li>
         <li>An owner signs in there and picks {{ householdName }}.</li>
-        <li>Name the display, like “Kitchen” or “Playroom”.</li>
+        <li>
+          Pick the display the tablet used to be, to reconnect it with its name and history, or add it as a new one and
+          name it, like “Kitchen” or “Playroom”.
+        </li>
       </ol>
     </div>
   </section>

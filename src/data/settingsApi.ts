@@ -154,6 +154,8 @@ export interface DisplayRow {
   name: string
   /** ISO timestamp of the last heartbeat; null when it has never checked in. */
   lastSeenAt: string | null
+  /** A tablet holds it. False after Sign out this display, until a tablet reconnects as it (spec §6.4). */
+  connected: boolean
 }
 
 /** One of the signed-in adult's current memberships, for Manage household's household picker (spec §7.10). */
@@ -245,6 +247,9 @@ export interface SettingsApi {
   renameDisplayPin(auth: SettingsAuth, displayId: string, name: string): Promise<void>
   /** Removes a display from the household at once (spec §6.3); that tablet shows "This display was removed". */
   revokeDisplayPin(auth: SettingsAuth, displayId: string): Promise<void>
+  /** Signs out the display this call comes from (spec §6.4): it stays in the household, with its name and history,
+   *  for a tablet to reconnect as. There is no display to name: signing another tablet out is `revokeDisplayPin`. */
+  signOutDisplayPin(auth: SettingsAuth): Promise<void>
   /** Deletes the PIN's own household (spec §11.3); `confirmName` must be the household's name, as typed. */
   deleteHouseholdPin(auth: SettingsAuth, confirmName: string): Promise<void>
 

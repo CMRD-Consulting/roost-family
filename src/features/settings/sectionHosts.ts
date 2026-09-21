@@ -63,6 +63,8 @@ export interface OwnerActions {
   listDisplays: () => Promise<DisplayRow[]>
   renameDisplay: (displayId: string, name: string) => Promise<void>
   revokeDisplay: (displayId: string) => Promise<void>
+  /** Only on a display: signs out the tablet the section runs on. A browser is not a display, so it has none. */
+  signOutThisDisplay?: () => Promise<void>
   deleteHousehold: (confirmName: string) => Promise<void>
 }
 
@@ -81,6 +83,8 @@ export interface OwnerSectionHost extends SectionHostBase {
   afterDisplayRenamed: (displayId: string) => void
   /** After removing the display this runs on. */
   afterThisDisplayRemoved: () => Promise<void>
+  /** After signing out the display this runs on: the tablet is back at "Set up / Join a household". */
+  afterThisDisplaySignedOut: () => Promise<void>
   afterHouseholdDeleted: () => Promise<void>
 }
 
@@ -155,6 +159,11 @@ export function useDisplayOwnerHost(): OwnerSectionHost {
       session.end()
       await display.markRemoved()
       await router.replace('/removed')
+    },
+    async afterThisDisplaySignedOut() {
+      session.end()
+      await display.markSignedOut()
+      await router.replace('/setup')
     },
     async afterHouseholdDeleted() {
       session.end()

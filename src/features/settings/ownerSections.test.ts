@@ -18,6 +18,7 @@ const api = vi.hoisted(() => ({ current: null as unknown }))
 const display = vi.hoisted(() => ({
   identity: { displayId: 'display-kitchen', householdId: 'aaaaaaaa-0000-0000-0000-000000000001', name: 'Kitchen' } as unknown,
   markRemoved: vi.fn(),
+  markSignedOut: vi.fn(),
   refresh: vi.fn(),
 }))
 
@@ -38,13 +39,13 @@ const MEMBERS = [
   { membershipId: ALEX, displayName: 'Alex', color: '#2C7F8C', role: 'adult', joinedAt: '2026-03-10T15:00:00Z' },
 ]
 const DISPLAYS = [
-  { displayId: 'display-kitchen', name: 'Kitchen', lastSeenAt: '2026-09-14T18:59:40Z' },
-  { displayId: 'display-playroom', name: 'Playroom', lastSeenAt: '2026-09-14T16:00:00Z' },
+  { displayId: 'display-kitchen', name: 'Kitchen', lastSeenAt: '2026-09-14T18:59:40Z', connected: true },
+  { displayId: 'display-playroom', name: 'Playroom', lastSeenAt: '2026-09-14T16:00:00Z', connected: true },
 ]
 
 type Fake = SettingsApi & Record<
   | 'settingsVerify' | 'listHouseholdMembers' | 'listHouseholdDisplays' | 'setMemberRolePin' | 'removeMemberPin'
-  | 'createMemberInvitePin' | 'renameDisplayPin' | 'revokeDisplayPin' | 'deleteHouseholdPin',
+  | 'createMemberInvitePin' | 'renameDisplayPin' | 'revokeDisplayPin' | 'signOutDisplayPin' | 'deleteHouseholdPin',
   ReturnType<typeof vi.fn>
 >
 
@@ -59,6 +60,7 @@ function fakeApi(): Fake {
     createMemberInvitePin: vi.fn().mockResolvedValue({ token: 'invite-token', expiresAt: '2026-09-14T19:10:00Z' }),
     renameDisplayPin: vi.fn().mockResolvedValue(undefined),
     revokeDisplayPin: vi.fn().mockResolvedValue(undefined),
+    signOutDisplayPin: vi.fn().mockResolvedValue(undefined),
     deleteHouseholdPin: vi.fn().mockResolvedValue(undefined),
   } as never
 }
@@ -94,6 +96,7 @@ async function mountSection(section: Component, membershipId = SAM, pin = '1234'
     routes: [
       { path: '/settings/:section?', component: Stub },
       { path: '/removed', component: Stub },
+      { path: '/setup', component: Stub },
       { path: '/join-adult', component: Stub },
     ],
   })
@@ -114,6 +117,7 @@ beforeEach(() => {
   api.current = settingsApi
   takePendingInvite()
   display.markRemoved.mockReset().mockResolvedValue(undefined)
+  display.markSignedOut.mockReset().mockResolvedValue(undefined)
   display.refresh.mockReset().mockResolvedValue(undefined)
 })
 
@@ -344,6 +348,57 @@ describe('DisplaysSection', () => {
     expect(display.markRemoved).toHaveBeenCalled()
     expect(useSettingsSessionStore().info).toBeNull()
     expect(router.currentRoute.value.path).toBe('/removed')
+    w.unmount()
+  })
+
+  it('offers Sign out only on the display in use, and says what it keeps', async () => {
+    const w = await mountSection(DisplaysSection)
+    const playroom = w.find('[data-testid="display-display-playroom"]')
+    expect(playroom.findAll('button').map((b) => b.text())).toEqual(['Rename', 'Remove'])
+
+    const kitchen = w.find('[data-testid="display-display-kitchen"]')
+    await buttonByText(kitchen, 'Sign out').trigger('click')
+    const text = w.find('[data-testid="display-display-kitchen"]').text()
+    expect(text).toContain('Kitchen stays in Rivera with its name and history')
+    expect(text).toContain('Join a household')
+    expect(settingsApi.signOutDisplayPin).not.toHaveBeenCalled()
+    w.unmount()
+  })
+
+  it('signing this display out ends Settings, clears the tablet and opens setup', async () => {
+    const w = await mountSection(DisplaysSection)
+    await buttonByText(w.find('[data-testid="display-display-kitchen"]'), 'Sign out').trigger('click')
+    await buttonByText(w.find('[data-testid="display-display-kitchen"]'), 'Sign out Kitchen').trigger('click')
+    await settle()
+
+    expect(settingsApi.signOutDisplayPin).toHaveBeenCalledWith(SAM_PIN)
+    expect(settingsApi.revokeDisplayPin).not.toHaveBeenCalled()
+    expect(display.markSignedOut).toHaveBeenCalled()
+    expect(display.markRemoved).not.toHaveBeenCalled()
+    expect(useSettingsSessionStore().info).toBeNull()
+    expect(router.currentRoute.value.path).toBe('/setup')
+    w.unmount()
+  })
+
+  it('a refused sign-out keeps the tablet signed in and says why', async () => {
+    settingsApi.signOutDisplayPin.mockRejectedValue(new SettingsError('incorrect PIN', 'auth'))
+    const w = await mountSection(DisplaysSection)
+    await buttonByText(w.find('[data-testid="display-display-kitchen"]'), 'Sign out').trigger('click')
+    await buttonByText(w.find('[data-testid="display-display-kitchen"]'), 'Sign out Kitchen').trigger('click')
+    await settle()
+
+    expect(display.markSignedOut).not.toHaveBeenCalled()
+    expect(router.currentRoute.value.path).toBe('/settings')
+    expect(w.find('[role="alert"]').exists()).toBe(true)
+    w.unmount()
+  })
+
+  it('a signed-out display says so instead of when it was last seen', async () => {
+    settingsApi.listHouseholdDisplays.mockResolvedValue([DISPLAYS[0], { ...DISPLAYS[1], connected: false }])
+    const w = await mountSection(DisplaysSection)
+    const playroom = w.find('[data-testid="display-display-playroom"]')
+    expect(playroom.text()).toContain('Signed out')
+    expect(playroom.text()).not.toContain('Last seen')
     w.unmount()
   })
 })

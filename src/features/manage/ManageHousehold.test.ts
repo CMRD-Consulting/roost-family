@@ -48,8 +48,8 @@ const MEMBERS = [
   { membershipId: ALEX, displayName: 'Alex', color: '#2C7F8C', role: 'adult', joinedAt: '2026-03-10T15:00:00Z' },
 ]
 const DISPLAYS = [
-  { displayId: 'display-kitchen', name: 'Kitchen', lastSeenAt: '2026-09-14T18:59:40Z' },
-  { displayId: 'display-playroom', name: 'Playroom', lastSeenAt: '2026-09-14T16:00:00Z' },
+  { displayId: 'display-kitchen', name: 'Kitchen', lastSeenAt: '2026-09-14T18:59:40Z', connected: true },
+  { displayId: 'display-playroom', name: 'Playroom', lastSeenAt: '2026-09-14T16:00:00Z', connected: true },
 ]
 
 type Fake = SettingsApi & Record<
@@ -713,7 +713,7 @@ describe('review fixes', () => {
 
   it('switching between two owned households never shows the first one’s displays in the second', async () => {
     api.myMemberships.mockResolvedValue([RIVERA_OWNER, BEACH_OWNER])
-    const beachDisplays = deferred<Array<{ displayId: string; name: string; lastSeenAt: string | null }>>()
+    const beachDisplays = deferred<Array<{ displayId: string; name: string; lastSeenAt: string | null; connected: boolean }>>()
     api.listDisplays.mockImplementation((_client: unknown, householdId: string) =>
       householdId === RIVERA ? Promise.resolve(DISPLAYS) : beachDisplays.promise)
     const w = await mountPage()
@@ -728,7 +728,7 @@ describe('review fixes', () => {
     await settle()
     expect(w.find('header h1').text()).toBe('Beach')
     expect(w.find('[data-testid="display-display-kitchen"]').exists()).toBe(false)
-    beachDisplays.resolve([{ displayId: 'display-porch', name: 'Porch', lastSeenAt: null }])
+    beachDisplays.resolve([{ displayId: 'display-porch', name: 'Porch', lastSeenAt: null, connected: true }])
     await settle()
     expect(w.find('[data-testid="display-display-porch"]').exists()).toBe(true)
     expect(w.find('[data-testid="display-display-kitchen"]').exists()).toBe(false)

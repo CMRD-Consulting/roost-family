@@ -389,6 +389,10 @@ export function createSupabaseSettingsApi(client: RoostClient): SettingsApi {
     )
   }
 
+  async function signOutDisplayPin(auth: SettingsAuth): Promise<void> {
+    await run(() => client.rpc('sign_out_display_pin', { p_membership_id: auth.membershipId, p_pin: auth.pin }))
+  }
+
   async function deleteHouseholdPin(auth: SettingsAuth, confirmName: string): Promise<void> {
     await run(() =>
       client.rpc('delete_household_pin', { p_membership_id: auth.membershipId, p_pin: auth.pin, p_confirm_name: confirmName }),
@@ -533,6 +537,7 @@ export function createSupabaseSettingsApi(client: RoostClient): SettingsApi {
     removeMemberPin,
     renameDisplayPin,
     revokeDisplayPin,
+    signOutDisplayPin,
     deleteHouseholdPin,
     createMemberInvite,
     acceptMemberInvite,
@@ -568,13 +573,13 @@ async function readMembers(from: RoostClient, householdId: string): Promise<Memb
 
 /** Active displays of `householdId`, oldest first, with last-seen times. Read like `readMembers`. */
 async function readDisplays(from: RoostClient, householdId: string): Promise<DisplayRow[]> {
-  const rows = await run<{ id: string; name: string; last_seen_at: string | null }[] | null>(() =>
+  const rows = await run<{ id: string; name: string; last_seen_at: string | null; auth_user_id: string | null }[] | null>(() =>
     from
       .from('displays')
-      .select('id, name, last_seen_at')
+      .select('id, name, last_seen_at, auth_user_id')
       .eq('household_id', householdId)
       .is('revoked_at', null)
       .order('created_at', { ascending: true }),
   )
-  return (rows ?? []).map((r) => ({ displayId: r.id, name: r.name, lastSeenAt: r.last_seen_at }))
+  return (rows ?? []).map((r) => ({ displayId: r.id, name: r.name, lastSeenAt: r.last_seen_at, connected: r.auth_user_id !== null }))
 }

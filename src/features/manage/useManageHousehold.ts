@@ -307,6 +307,7 @@ export function useManageHousehold(options: ManageHouseholdOptions = {}) {
       afterMemberRemoved: () => false,
       afterDisplayRenamed: () => {},
       afterThisDisplayRemoved: async () => {},
+      afterThisDisplaySignedOut: async () => {},
       afterHouseholdDeleted: () => loadMemberships(null, `${row.householdName} was deleted.`),
     }
   })

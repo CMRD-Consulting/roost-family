@@ -302,7 +302,7 @@ describe('createDemoSettingsApi', () => {
       const api = createDemoSettingsApi()
       expect((await api.listHouseholdMembers('household-1')).map((m) => m.displayName)).toEqual(['Sam', 'Alex'])
       expect(await api.listHouseholdDisplays('household-1')).toEqual([
-        { displayId: 'demo-display', name: 'Kitchen', lastSeenAt: expect.any(String) },
+        { displayId: 'demo-display', name: 'Kitchen', lastSeenAt: expect.any(String), connected: true },
       ])
     })
   })
@@ -335,7 +335,7 @@ describe('createDemoSettingsApi', () => {
       const members = await api.listMembers({} as never, 'household-1')
       expect(members.map((m) => [m.membershipId, m.displayName, m.role])).toEqual([[SAM_ID, 'Sam', 'owner'], [ALEX_ID, 'Alex', 'adult']])
       await api.renameDisplay({} as never, 'demo-display', 'Hall')
-      expect(await api.listDisplays({} as never, 'household-1')).toEqual([{ displayId: 'demo-display', name: 'Hall', lastSeenAt: expect.any(String) }])
+      expect(await api.listDisplays({} as never, 'household-1')).toEqual([{ displayId: 'demo-display', name: 'Hall', lastSeenAt: expect.any(String), connected: true }])
     })
 
     it('myMemberships treats the user id as a demo membership id', async () => {

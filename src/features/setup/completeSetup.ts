@@ -86,10 +86,14 @@ export async function completeSetup(
   return identity
 }
 
-/** Wording for a failed `register_display`; the server's limit message is written for logs, not people. */
-export function registerDisplayErrorMessage(serverMessage: string, householdName: string): string {
+/** Wording for a failed `register_display` or `reconnect_display`; the server's messages are written for logs, not
+ *  people. */
+export function joinDisplayErrorMessage(serverMessage: string, householdName: string): string {
   if (/at most \d+ displays/i.test(serverMessage)) {
-    return `${householdName} already has 3 displays. Remove one in Settings → Displays or at roost.cmrd.dev/manage, then try again.`
+    return `${householdName} already has 3 displays. Reconnect this tablet as one of them, or remove one in Settings → Displays or at roost.cmrd.dev/manage, then try again.`
+  }
+  if (/display not found/i.test(serverMessage)) {
+    return 'That display isn’t available any more. Pick another, or add this tablet as a new display.'
   }
   return serverMessage
 }

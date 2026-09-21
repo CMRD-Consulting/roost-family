@@ -206,6 +206,14 @@ It starts as one family's app (household #1, the author's) but is built as a mul
 3. The Owner names the display (e.g., "Kitchen", "Playroom").
 4. The display is registered and the Owner is signed out.
 
+**Reconnect a display** (a tablet that was signed out, or lost its device session: cleared browser data, a kiosk reset, a reinstall):
+1. On that tablet → **Join a household**; an Owner signs in there and picks the household, as above.
+2. **Which display is this?** lists the household's displays ("Kitchen · Last seen 3 days ago", or "Signed out") before **Add as a new display**. With no displays the question is skipped.
+3. Picking one reconnects the tablet as **that same display**: its name, its history and its place among the 3 are kept. Whatever tablet held it stops being it at once and shows "This display was removed". A display that checked in within the last 10 minutes asks first ("…a tablet may still be using it. Reconnecting signs that tablet out.").
+4. The Owner is signed out and the main screen opens.
+
+**Sign out this display:** Settings → Displays, on the row of the tablet in use, on the Owner's PIN ([6.3](#63-adult-sessions-on-a-display)). The display stays in the household with its name and history, shown as "Signed out", and does not count towards the 3 until a tablet reconnects as it (reconnecting re-checks the limit). The tablet forgets the household and its device session and returns to setup. Signing out a *different* tablet is what Remove and Reconnect are for.
+
 ### 6.5 Attribution
 
 Every entry records:
@@ -415,7 +423,7 @@ Opened with an adult PIN, which authorises every section, including the Owner-on
 - **Inbox:** jots (check off or delete)
 - **My account:** my color, my calendars (connect/disconnect and assign each to a person; Google and Microsoft from [7.10](#710-manage-household-any-browser)), 🔐 change my PIN, 🔐 leave household
 - 👑 **Members:** add adult, change role, remove member
-- 👑 **Displays:** list with last-seen time, rename, revoke, add display
+- 👑 **Displays:** list with last-seen time (or "Signed out"), rename, revoke, **sign out this display**, add or reconnect a display ([6.4](#64-adding-adults-and-displays))
 - 👑 🔐 **Export:** request export ([11.3](#113-data-export--deletion)); offered in the browser at [7.10](#710-manage-household-any-browser)
 - 👑 **Delete household:** typed confirmation of the household name, then the PIN that opened Settings
 - **About:** app version, privacy policy, terms
@@ -594,6 +602,7 @@ All household-owned tables are scoped to a household, directly through `househol
 | Nap Mode behavior under taps unspecified | Dim but fully usable; only the moon or automatic rules end it; sticker celebrations shown silently |
 | — | Added from the design: grocery ✕ delete and 24-hour auto-clear of checked items, "Done shopping — end link" on the display, PIN to acknowledge a dose-conflict alert, 6-box invite code |
 | Managing calendars on the display needed an emailed sign-in code of its own | On a display the **adult PIN authorises calendars too** ([5.5](#55-calendar-integration), [6.3](#63-adult-sessions-on-a-display)): connecting a link, showing and assigning a calendar, and disconnecting. A display's session is anonymous, so the account check could never be satisfied there at all, and the Calendars card sat behind a second email code even though the PIN had just opened Settings. The rules are otherwise unchanged: an adult touches only their **own** connections, an assignee must be of the same household, a shown calendar needs exactly one person, the link stays in Vault, and every change is audited. Google and Microsoft still connect only from `/manage`. |
+| A tablet that lost its device session could only come back as a **new** display: a new name, one more of the household's 3, and the old display left behind as a ghost | **Reconnect a display** and **Sign out this display** ([6.4](#64-adding-adults-and-displays)). Join a household lists the household's displays before "Add as a new display"; picking one moves that same display (name, history, its place among the 3) to this tablet, and whatever tablet held it is signed out, so one display is never two tablets. It needs what adding a display needs, an Owner's sign-in on the tablet, because a tablet with no household has no PIN to check. A display that checked in within 10 minutes asks first. Settings → Displays can sign the tablet in use out on the Owner's PIN: the display stays, unbound, until a tablet reconnects as it, and does not count towards the 3 meanwhile (reconnecting re-checks the limit). |
 | Members, Displays and Delete household each needed their own emailed sign-in code on the display | On a display the **adult PIN authorises every Settings action, including deleting the household** ([6.3](#63-adult-sessions-on-a-display)). Trade-off: a 4-digit PIN now guards household deletion, where a code emailed to the Owner's account used to. What stays: only an **Owner** can do it, the household name must be **typed exactly**, the deletion is a 30-day soft delete that support can reverse, every wrong PIN waits 0.75 s server-side, and the change is audited. A one-owner household was otherwise asked for three separate codes in a single Settings visit, which pushed people to keep a browser signed in instead — a weaker guard than the PIN. In a **browser** at `/manage`, where there is no PIN, the email code still authorises everything. |
 
 **Design gaps:** screens and states the v2 design doesn't show (email-code entry, Diaper sheet body, empty/error/stale states, Add-adult flow, Manage household Members and My account panes, per-child routines and age overrides in Settings, voided doses, Night Mode tap-to-peek) are built from this spec using the v2 design system. Claude Design is asked only for final routine icon artwork (`docs/design/2026-09-14-claude-design-update-2.md`).
