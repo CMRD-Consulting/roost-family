@@ -23,7 +23,7 @@ function submit() {
   <WizardFrame title="About you" subtitle="Your PIN unlocks Settings and confirms medicine doses on the tablet." :error="error" can-go-back @back="emit('back')">
     <div class="flex items-center gap-4">
       <RAvatar :name="state.displayName || '?'" :color="state.color" :size="56" />
-      <div class="flex-1"><RInput v-model="state.displayName" label="Your name" autocomplete="given-name" :maxlength="LIMITS.personName" /></div>
+      <div class="min-w-0 flex-1"><RInput v-model="state.displayName" label="Your name" autocomplete="given-name" :maxlength="LIMITS.personName" /></div>
     </div>
     <div class="flex flex-wrap gap-2" role="radiogroup" aria-label="Your color">
       <button

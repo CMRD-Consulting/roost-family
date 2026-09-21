@@ -16,7 +16,8 @@ const id = useId()
 </script>
 
 <template>
-  <div class="flex flex-col gap-2">
+  <!-- min-w-0: in a flex row the field shrinks to its share instead of holding the input's intrinsic width. -->
+  <div class="flex min-w-0 flex-col gap-2">
     <label :for="id" class="text-[18px] font-medium text-ink-2">{{ label }}</label>
     <input
       :id="id"
