@@ -16,6 +16,18 @@ function fakeClients(result: { data?: unknown; error?: RpcError | null }) {
   return { factory, calls }
 }
 
+function fakeClientsBy(results: Record<string, { data?: unknown; error?: RpcError | null }>) {
+  const calls: Array<{ authorization: string; fn: string; args: unknown }> = []
+  const factory = vi.fn((authorization: string): RpcClient => ({
+    rpc: async (fn, args) => {
+      calls.push({ authorization, fn, args })
+      const r = results[fn] ?? {}
+      return { data: r.data ?? null, error: r.error ?? null }
+    },
+  }))
+  return { factory, calls }
+}
+
 const req = (authorization?: string) =>
   new Request('http://localhost/functions/v1/x', { headers: authorization ? { Authorization: authorization } : {} })
 
@@ -87,5 +99,53 @@ describe('requireFullSignInAdult', () => {
   it('403 when no membership id comes back', async () => {
     const { factory } = fakeClients({ data: null })
     expect((await authError(createCallerAuth(factory).requireFullSignInAdult(req('Bearer x'), HOUSEHOLD))).status).toBe(403)
+  })
+})
+
+describe('requirePinMembership', () => {
+  const PIN_ARGS = { p_membership_id: MEMBERSHIP, p_pin: '1234' }
+
+  it('confirms the caller belongs to the household, then the PIN, with the caller\'s own header', async () => {
+    const { factory, calls } = fakeClientsBy({
+      my_calendar_caller: { data: [{ user_id: USER, kind: 'display', membership_id: null }] },
+      calendar_pin_membership: { data: MEMBERSHIP },
+    })
+    const auth = createCallerAuth(factory)
+    expect(await auth.requirePinMembership(req('Bearer display'), HOUSEHOLD, MEMBERSHIP, '1234')).toBe(MEMBERSHIP)
+    expect(calls).toEqual([
+      { authorization: 'Bearer display', fn: 'my_calendar_caller', args: { p_household_id: HOUSEHOLD } },
+      { authorization: 'Bearer display', fn: 'calendar_pin_membership', args: PIN_ARGS },
+    ])
+  })
+
+  it('403 without asking for the PIN when the caller is not of that household', async () => {
+    const { factory, calls } = fakeClientsBy({ my_calendar_caller: { data: [] }, calendar_pin_membership: { data: MEMBERSHIP } })
+    const e = await authError(createCallerAuth(factory).requirePinMembership(req('Bearer x'), HOUSEHOLD, MEMBERSHIP, '1234'))
+    expect(e.status).toBe(403)
+    expect(calls.map((c) => c.fn)).toEqual(['my_calendar_caller'])
+  })
+
+  it('403 when the database refuses the PIN (wrong PIN, a caregiver, another household)', async () => {
+    const { factory } = fakeClientsBy({
+      my_calendar_caller: { data: [{ user_id: USER, kind: 'display', membership_id: null }] },
+      calendar_pin_membership: { error: { code: '42501', message: 'incorrect PIN' } },
+    })
+    const e = await authError(createCallerAuth(factory).requirePinMembership(req('Bearer d'), HOUSEHOLD, MEMBERSHIP, '0000'))
+    expect(e.status).toBe(403)
+    expect(e.message).toBe('forbidden')
+  })
+
+  it('403 when another membership comes back than the one the PIN was given for', async () => {
+    const { factory } = fakeClientsBy({
+      my_calendar_caller: { data: [{ user_id: USER, kind: 'display', membership_id: null }] },
+      calendar_pin_membership: { data: 'bbbbbbbb-0000-0000-0000-000000000002' },
+    })
+    expect((await authError(createCallerAuth(factory).requirePinMembership(req('Bearer d'), HOUSEHOLD, MEMBERSHIP, '1234'))).status).toBe(403)
+  })
+
+  it('401 without a bearer token, before any database call', async () => {
+    const { factory } = fakeClientsBy({})
+    expect((await authError(createCallerAuth(factory).requirePinMembership(req(), HOUSEHOLD, MEMBERSHIP, '1234'))).status).toBe(401)
+    expect(factory).not.toHaveBeenCalled()
   })
 })

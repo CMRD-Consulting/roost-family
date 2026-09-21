@@ -1,13 +1,17 @@
 /**
  * HTTP handling for `calendar-connect-ics`, kept free of Deno and Supabase so Vitest can exercise it.
  *
- * POST { householdId, url } with a full sign-in adult's JWT.
+ * POST { householdId, url } with a full sign-in adult's JWT (Manage household in a browser), or
+ * POST { householdId, url, membershipId, pin } from a display, whose Settings PIN session authorises the connection
+ * (spec §6.3): the display's own JWT plus the PIN of the adult who opened Settings.
  *   200 { connectionId, selectionId, name, alreadyConnected }
  *                                     alreadyConnected: the caller had already connected this link; the existing
  *                                     connection is returned unchanged
- *   400 { error: 'invalid_request' }  body is not { householdId: uuid, url }
+ *   400 { error: 'invalid_request' }  body is not { householdId: uuid, url }, or carries a `pin` without a
+ *                                     well-formed `membershipId`
  *   400 { error: 'invalid_url' }      not https/webcal, credentials in the URL, or a non-default port
- *   401/403 { error: 'forbidden' }    not a full sign-in owner or adult of the household
+ *   401/403 { error: 'forbidden' }    not a full sign-in owner or adult of the household, or the PIN is wrong, a
+ *                                     caregiver's, or not of the caller's own household
  *   413 { error: 'too_large' }        the server declares a body over the 20 MB download budget (all but
  *                                     unreachable: only the header is read, and the read stops at the first VEVENT)
  *   422 { error: 'not_a_calendar' }   the response is not an iCalendar file
@@ -44,6 +48,11 @@ export interface ConnectIcsResult {
 export interface ConnectIcsDeps {
   /** The caller's membership id when they are a full sign-in owner or adult; throws AuthError otherwise. */
   requireFullSignInAdult(req: Request, householdId: string): Promise<string>
+  /**
+   * The membership id a display's caller proves with an open Settings PIN session: the PIN must be an active owner's
+   * or adult's of the caller's own live household. Throws AuthError otherwise.
+   */
+  requirePinMembership(req: Request, householdId: string, membershipId: string, pin: string): Promise<string>
   allowPrivateHosts: boolean
   /**
    * Fetches a normalized URL with the SSRF, size, redirect and time limits (`fetchIcsFiltered`), reading only the
@@ -91,8 +100,19 @@ export function createConnectIcsHandler(deps: ConnectIcsDeps): (req: Request) =>
     const householdId = body?.householdId
     if (!body || typeof householdId !== 'string' || !UUID_RE.test(householdId)) return json(400, { error: 'invalid_request' })
 
+    // A `pin` in the body means a display acting on its open Settings session; without one the caller is an adult
+    // signed in at /manage. `membershipId` alone is ignored: only a checked PIN can name the acting membership.
+    const pin = body.pin
+    const pinMembershipId = body.membershipId
+    const withPin = pin !== undefined && pin !== null
+    if (withPin && (typeof pin !== 'string' || !pin || typeof pinMembershipId !== 'string' || !UUID_RE.test(pinMembershipId))) {
+      return json(400, { error: 'invalid_request' })
+    }
+
     try {
-      const membershipId = await deps.requireFullSignInAdult(req, householdId)
+      const membershipId = withPin
+        ? await deps.requirePinMembership(req, householdId, pinMembershipId as string, pin as string)
+        : await deps.requireFullSignInAdult(req, householdId)
       if (!deps.fingerprint) return json(503, { error: 'not_configured' })
 
       const url = normalizeIcsUrl(body.url, { allowPrivateHosts: deps.allowPrivateHosts })

@@ -449,6 +449,35 @@ describe('createCalendarSettingsApi', () => {
     rpc.mockResolvedValue({ data: null, error: { message: 'calendar not found', code: '42501' } })
     await expect(api.disconnect(client, 'conn-1')).rejects.toMatchObject({ code: 'forbidden' })
   })
+
+  it('makes the same three changes with the Settings PIN, for a display', async () => {
+    const PIN = { membershipId: 'member-1', pin: '1234' }
+    const invoke = vi.fn().mockResolvedValue({ data: { connectionId: 'c', selectionId: 's', name: 'Family' }, error: null })
+    await expect(api.connectIcsWithPin(fakeClient(invoke), HOUSEHOLD, PIN, 'https://example.com/a.ics')).resolves.toEqual({
+      connectionId: 'c', selectionId: 's', name: 'Family', alreadyConnected: false,
+    })
+    expect(invoke).toHaveBeenCalledWith('calendar-connect-ics', {
+      body: { householdId: HOUSEHOLD, url: 'https://example.com/a.ics', membershipId: 'member-1', pin: '1234' },
+      timeout: 20_000,
+    })
+
+    const rpc = vi.fn().mockResolvedValue({ data: null, error: null })
+    const client = { rpc } as never
+    await api.setSelectionWithPin(client, PIN, 'sel-1', true, { type: 'child', id: 'child-2' })
+    expect(rpc).toHaveBeenCalledWith('set_calendar_selection_pin', {
+      p_membership_id: 'member-1', p_pin: '1234', p_selection_id: 'sel-1', p_visible: true,
+      p_assigned_membership_id: null, p_assigned_child_id: 'child-2',
+    })
+    await api.disconnectWithPin(client, PIN, 'conn-1')
+    expect(rpc).toHaveBeenCalledWith('disconnect_calendar_pin', {
+      p_membership_id: 'member-1', p_pin: '1234', p_connection_id: 'conn-1',
+    })
+
+    rpc.mockResolvedValue({ data: null, error: { message: 'incorrect PIN', code: '42501' } })
+    await expect(api.setSelectionWithPin(client, PIN, 'sel-1', false, null)).rejects.toMatchObject({ code: 'forbidden' })
+    invoke.mockResolvedValue({ data: null, error: httpError(403, { error: 'forbidden' }) })
+    await expect(api.connectIcsWithPin(fakeClient(invoke), HOUSEHOLD, PIN, 'https://x')).rejects.toMatchObject({ code: 'forbidden' })
+  })
 })
 
 describe('calendarConnectMessage', () => {

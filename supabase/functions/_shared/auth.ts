@@ -7,6 +7,10 @@
  *   - `requireFullSignInAdult` → `public.my_calendar_membership`: a full sign-in (not a display, not anonymous) owner
  *     or adult; returns their membership id. Functions that create connections must use this id, never one from the
  *     request body.
+ *   - `requirePinMembership` → `my_calendar_caller` then `public.calendar_pin_membership`: a display whose Settings
+ *     PIN session authorises a calendar change (spec §6.3). The caller must belong to the household, and the PIN must
+ *     be an active owner's or adult's of a live household — the caller's own. Returns that membership id, which is
+ *     again the only one a connection may be created for.
  *
  * Plain TypeScript with an injected client factory, so Vitest runs it; the Edge Functions pass a supabase-js client.
  */
@@ -61,10 +65,11 @@ function rethrow(error: RpcError): never {
 export interface CallerAuth {
   callerHousehold(req: Request, householdId: string): Promise<Caller>
   requireFullSignInAdult(req: Request, householdId: string): Promise<string>
+  requirePinMembership(req: Request, householdId: string, membershipId: string, pin: string): Promise<string>
 }
 
 export function createCallerAuth(callerClient: CallerClientFactory): CallerAuth {
-  return {
+  const auth: CallerAuth = {
     async callerHousehold(req, householdId) {
       const client = callerClient(authorizationOf(req))
       const { data, error } = await client.rpc('my_calendar_caller', { p_household_id: householdId })
@@ -85,5 +90,18 @@ export function createCallerAuth(callerClient: CallerClientFactory): CallerAuth 
       if (typeof data !== 'string' || !data) throw new AuthError(403, 'forbidden')
       return data
     },
+
+    async requirePinMembership(req, householdId, membershipId, pin) {
+      // The household first (`calendar_pin_membership` takes no household, like every other settings RPC): the PIN's
+      // membership is checked to be of the caller's own household, so both together pin it to this one.
+      await auth.callerHousehold(req, householdId)
+      const client = callerClient(authorizationOf(req))
+      const { data, error } = await client.rpc('calendar_pin_membership', { p_membership_id: membershipId, p_pin: pin })
+      if (error) rethrow(error)
+      // Never the id from the request: only the one the database confirmed for that PIN.
+      if (typeof data !== 'string' || data !== membershipId) throw new AuthError(403, 'forbidden')
+      return data
+    },
   }
+  return auth
 }

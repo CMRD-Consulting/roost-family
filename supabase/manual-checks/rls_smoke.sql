@@ -3282,6 +3282,186 @@ select pg_temp.expect_error('and it cannot be deleted twice',
   $q$select public.delete_household_pin(pg_temp.v('membership_nia'), '5577', 'N family')$q$, '42501');
 reset role;
 
+-- ─── PIN-authorised calendar actions (migration 15) ──────────────────────
+-- Fixtures: household C with owner Cal (PIN 1177), adult Cass (PIN 2288), caregiver Cleo (PIN 3399), child Cub,
+-- display "C kitchen" (session CDISP) and revoked display "C old" (session COLD); household D with owner Dee and
+-- child Dot, for the cross-household checks. Cal and Cass each have a connection with one hidden calendar.
+\set CAL '{"sub":"00000000-0000-0000-0000-000000000031","role":"authenticated","is_anonymous":false}'
+\set CASS '{"sub":"00000000-0000-0000-0000-000000000032","role":"authenticated","is_anonymous":false}'
+\set CLEO '{"sub":"00000000-0000-0000-0000-000000000033","role":"authenticated","is_anonymous":false}'
+\set CDISP '{"sub":"00000000-0000-0000-0000-000000000034","role":"authenticated","is_anonymous":true}'
+\set COLD '{"sub":"00000000-0000-0000-0000-000000000035","role":"authenticated","is_anonymous":true}'
+\set DEE '{"sub":"00000000-0000-0000-0000-000000000036","role":"authenticated","is_anonymous":false}'
+reset role;
+insert into auth.users (id, instance_id, aud, role, email, raw_app_meta_data, raw_user_meta_data, is_anonymous, created_at, updated_at)
+values
+  ('00000000-0000-0000-0000-000000000031', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'cal@roost.test', '{}', '{}', false, now(), now()),
+  ('00000000-0000-0000-0000-000000000032', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'cass@roost.test', '{}', '{}', false, now(), now()),
+  ('00000000-0000-0000-0000-000000000033', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'cleo@roost.test', '{}', '{}', false, now(), now()),
+  ('00000000-0000-0000-0000-000000000034', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', null, '{}', '{}', true, now(), now()),
+  ('00000000-0000-0000-0000-000000000035', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', null, '{}', '{}', true, now(), now()),
+  ('00000000-0000-0000-0000-000000000036', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'dee@roost.test', '{}', '{}', false, now(), now());
+insert into public.households (name, time_zone) values ('C family', 'America/New_York') returning id as household_c \gset
+insert into public.households (name, time_zone) values ('D family', 'America/Chicago') returning id as household_d \gset
+insert into public.memberships (user_id, household_id, role, display_name, color) values
+  ('00000000-0000-0000-0000-000000000031', :'household_c', 'owner', 'Cal', '#2F86A6') returning id as membership_cal \gset
+insert into public.memberships (user_id, household_id, role, display_name, color) values
+  ('00000000-0000-0000-0000-000000000032', :'household_c', 'adult', 'Cass', '#2F86A6') returning id as membership_cass \gset
+insert into public.memberships (user_id, household_id, role, display_name, color) values
+  ('00000000-0000-0000-0000-000000000033', :'household_c', 'caregiver', 'Cleo', '#2F86A6') returning id as membership_cleo \gset
+insert into public.memberships (user_id, household_id, role, display_name, color) values
+  ('00000000-0000-0000-0000-000000000036', :'household_d', 'owner', 'Dee', '#2F86A6') returning id as membership_dee \gset
+insert into public.displays (household_id, name, auth_user_id) values
+  (:'household_c', 'C kitchen', '00000000-0000-0000-0000-000000000034') returning id as display_c \gset
+insert into public.displays (household_id, name, auth_user_id, revoked_at) values
+  (:'household_c', 'C old', '00000000-0000-0000-0000-000000000035', now()) returning id as display_c_old \gset
+insert into public.children (name, birthday, color) values ('Cub', '2021-05-05', '#C2477A') returning id as kid_cub \gset
+insert into public.child_households (child_id, household_id) values (:'kid_cub', :'household_c');
+insert into public.children (name, birthday, color) values ('Dot', '2022-06-06', '#C2477A') returning id as kid_dot \gset
+insert into public.child_households (child_id, household_id) values (:'kid_dot', :'household_d');
+insert into public.member_pins (membership_id, pin_hash) values
+  (:'membership_cal', extensions.crypt('1177', extensions.gen_salt('bf', 8))),
+  (:'membership_cass', extensions.crypt('2288', extensions.gen_salt('bf', 8))),
+  (:'membership_cleo', extensions.crypt('3399', extensions.gen_salt('bf', 8))),
+  (:'membership_dee', extensions.crypt('4400', extensions.gen_salt('bf', 8)));
+set local role service_role;
+select public.svc_create_calendar_connection(:'household_c', :'membership_cal', 'ics', 'Cal family', 'https://calendar.test/c-cal.ics') as conn_cal \gset
+select public.svc_create_calendar_connection(:'household_c', :'membership_cass', 'ics', 'Cass work', 'https://calendar.test/c-cass.ics') as conn_cass \gset
+select public.svc_create_calendar_connection(:'household_d', :'membership_dee', 'ics', 'Dee family', 'https://calendar.test/d-dee.ics') as conn_dee \gset
+select public.svc_add_calendar_selection(:'conn_cal', 'c-cal-1', 'Cal family', null, null, null) as sel_cal \gset
+select public.svc_add_calendar_selection(:'conn_cass', 'c-cass-1', 'Cass work', null, null, null) as sel_cass \gset
+select public.svc_add_calendar_selection(:'conn_dee', 'd-dee-1', 'Dee family', null, null, null) as sel_dee \gset
+reset role;
+select set_config('smoke.household_c', :'household_c', true), set_config('smoke.household_d', :'household_d', true),
+       set_config('smoke.membership_cal', :'membership_cal', true), set_config('smoke.membership_cass', :'membership_cass', true),
+       set_config('smoke.membership_cleo', :'membership_cleo', true), set_config('smoke.membership_dee', :'membership_dee', true),
+       set_config('smoke.kid_cub', :'kid_cub', true), set_config('smoke.kid_dot', :'kid_dot', true),
+       set_config('smoke.conn_cal', :'conn_cal', true), set_config('smoke.conn_cass', :'conn_cass', true),
+       set_config('smoke.conn_dee', :'conn_dee', true), set_config('smoke.sel_cal', :'sel_cal', true),
+       set_config('smoke.sel_cass', :'sel_cass', true), set_config('smoke.sel_dee', :'sel_dee', true);
+
+\echo '[125] PIN calendar RPCs: authenticated only, and the account-authenticated originals are untouched'
+select pg_temp.expect('anon cannot execute any PIN calendar RPC', not exists (
+  select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public' and p.proname in (
+    'set_calendar_selection_pin', 'disconnect_calendar_pin', 'calendar_pin_membership')
+    and has_function_privilege('anon', p.oid, 'execute')));
+select pg_temp.expect('authenticated can execute all 3 PIN calendar RPCs', (
+  select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public' and p.proname in (
+    'set_calendar_selection_pin', 'disconnect_calendar_pin', 'calendar_pin_membership')
+    and has_function_privilege('authenticated', p.oid, 'execute')) = 3);
+select pg_temp.expect('PUBLIC cannot execute them either', not exists (
+  select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+  where n.nspname = 'public' and p.proname in (
+    'set_calendar_selection_pin', 'disconnect_calendar_pin', 'calendar_pin_membership')
+    and a.grantee = 0 and a.privilege_type = 'EXECUTE'));
+select pg_temp.expect('the account-authenticated originals still exist for /manage',
+  has_function_privilege('authenticated', 'public.set_calendar_selection(uuid, boolean, uuid, uuid)', 'execute')
+  and has_function_privilege('authenticated', 'public.disconnect_calendar(uuid)', 'execute')
+  and has_function_privilege('authenticated', 'public.my_calendar_membership(uuid)', 'execute'));
+
+\echo '[126] set_calendar_selection_pin: the display''s own session, the adult''s PIN, own calendars only'
+set local role authenticated;
+select set_config('request.jwt.claims', :'CDISP', true);
+select clock_timestamp() as pin_calendar_wrong_started \gset
+select pg_temp.expect_error('a wrong PIN',
+  $q$select public.set_calendar_selection_pin(pg_temp.v('membership_cal'), '0000', pg_temp.v('sel_cal'), true, pg_temp.v('membership_cal'), null)$q$, '42501');
+select pg_temp.expect('the wrong PIN took at least half a second',
+  clock_timestamp() - :'pin_calendar_wrong_started'::timestamptz >= interval '500 milliseconds');
+select pg_temp.expect_error('a caregiver of the household with their own valid PIN',
+  $q$select public.set_calendar_selection_pin(pg_temp.v('membership_cleo'), '3399', pg_temp.v('sel_cal'), true, pg_temp.v('membership_cleo'), null)$q$, '42501');
+select pg_temp.expect_error('another adult of the household sets Cal''s selection',
+  $q$select public.set_calendar_selection_pin(pg_temp.v('membership_cass'), '2288', pg_temp.v('sel_cal'), true, pg_temp.v('membership_cass'), null)$q$, '42501');
+select pg_temp.expect_error('another household''s owner and PIN, from this display''s session',
+  $q$select public.set_calendar_selection_pin(pg_temp.v('membership_dee'), '4400', pg_temp.v('sel_dee'), true, pg_temp.v('membership_dee'), null)$q$, '42501');
+select pg_temp.expect_error('assign to another household''s member',
+  $q$select public.set_calendar_selection_pin(pg_temp.v('membership_cal'), '1177', pg_temp.v('sel_cal'), true, pg_temp.v('membership_dee'), null)$q$, '42501');
+select pg_temp.expect_error('assign to another household''s child',
+  $q$select public.set_calendar_selection_pin(pg_temp.v('membership_cal'), '1177', pg_temp.v('sel_cal'), true, null, pg_temp.v('kid_dot'))$q$, '42501');
+select pg_temp.expect_error('visible without an assignee',
+  $q$select public.set_calendar_selection_pin(pg_temp.v('membership_cal'), '1177', pg_temp.v('sel_cal'), true, null, null)$q$, '22023');
+select pg_temp.expect_error('two assignees',
+  $q$select public.set_calendar_selection_pin(pg_temp.v('membership_cal'), '1177', pg_temp.v('sel_cal'), false, pg_temp.v('membership_cal'), pg_temp.v('kid_cub'))$q$, '22023');
+select pg_temp.expect_error('visible null',
+  $q$select public.set_calendar_selection_pin(pg_temp.v('membership_cal'), '1177', pg_temp.v('sel_cal'), null, pg_temp.v('membership_cal'), null)$q$, '22023');
+select pg_temp.expect_error('an unknown selection',
+  $q$select public.set_calendar_selection_pin(pg_temp.v('membership_cal'), '1177', gen_random_uuid(), false, null, null)$q$, '42501');
+reset role;
+select pg_temp.expect('rejected calls changed nothing', (
+  select not visible and assigned_membership_id is null and assigned_child_id is null
+  from public.calendar_selections where id = pg_temp.v('sel_cal')));
+set local role authenticated;
+select set_config('request.jwt.claims', :'CDISP', true);
+select public.set_calendar_selection_pin(:'membership_cal', '1177', :'sel_cal', true, null, :'kid_cub');
+select pg_temp.expect('Cal shows the calendar as Cub''s, with the PIN alone', (
+  select visible and assigned_child_id = pg_temp.v('kid_cub') and assigned_membership_id is null
+  from public.calendar_selections where id = pg_temp.v('sel_cal')));
+select pg_temp.expect('the change is audited for the acting adult', pg_temp.audited(
+  pg_temp.v('household_c'), pg_temp.v('membership_cal'), 'calendars', 'selection', pg_temp.v('sel_cal')));
+select public.set_calendar_selection_pin(:'membership_cass', '2288', :'sel_cass', true, :'membership_cass', null);
+select pg_temp.expect('an adult (not only an owner) manages their own calendars', (
+  select visible and assigned_membership_id = pg_temp.v('membership_cass')
+  from public.calendar_selections where id = pg_temp.v('sel_cass')));
+select public.set_calendar_selection_pin(:'membership_cal', '1177', :'sel_cal', false, null, null);
+select pg_temp.expect('hidden and unassigned is allowed', (
+  select not visible and assigned_child_id is null from public.calendar_selections where id = pg_temp.v('sel_cal')));
+select set_config('request.jwt.claims', :'COLD', true);
+select pg_temp.expect_error('a revoked display''s session, even with the owner''s PIN',
+  $q$select public.set_calendar_selection_pin(pg_temp.v('membership_cal'), '1177', pg_temp.v('sel_cal'), true, pg_temp.v('membership_cal'), null)$q$, '42501');
+reset role;
+
+\echo '[127] calendar_pin_membership: the membership the Edge Function may connect for, or 42501'
+set local role authenticated;
+select set_config('request.jwt.claims', :'CDISP', true);
+select pg_temp.expect('an owner''s PIN returns their membership',
+  public.calendar_pin_membership(:'membership_cal', '1177') = :'membership_cal');
+select pg_temp.expect('an adult''s PIN returns theirs',
+  public.calendar_pin_membership(:'membership_cass', '2288') = :'membership_cass');
+select pg_temp.expect_error('a wrong PIN',
+  $q$select public.calendar_pin_membership(pg_temp.v('membership_cal'), '0000')$q$, '42501');
+select pg_temp.expect_error('a caregiver with their own valid PIN',
+  $q$select public.calendar_pin_membership(pg_temp.v('membership_cleo'), '3399')$q$, '42501');
+select pg_temp.expect_error('another household''s membership and PIN',
+  $q$select public.calendar_pin_membership(pg_temp.v('membership_dee'), '4400')$q$, '42501');
+select set_config('request.jwt.claims', :'COLD', true);
+select pg_temp.expect_error('a revoked display''s session',
+  $q$select public.calendar_pin_membership(pg_temp.v('membership_cal'), '1177')$q$, '42501');
+reset role;
+
+\echo '[128] disconnect_calendar_pin: own connection only; removes the connection, its selections and its Vault secret'
+select vault_secret_id as secret_cal from public.calendar_connections where id = :'conn_cal' \gset
+set local role authenticated;
+select set_config('request.jwt.claims', :'CDISP', true);
+select pg_temp.expect_error('a wrong PIN',
+  $q$select public.disconnect_calendar_pin(pg_temp.v('membership_cal'), '0000', pg_temp.v('conn_cal'))$q$, '42501');
+select pg_temp.expect_error('a caregiver of the household with their own valid PIN',
+  $q$select public.disconnect_calendar_pin(pg_temp.v('membership_cleo'), '3399', pg_temp.v('conn_cal'))$q$, '42501');
+select pg_temp.expect_error('another adult of the household disconnects Cal''s calendar',
+  $q$select public.disconnect_calendar_pin(pg_temp.v('membership_cass'), '2288', pg_temp.v('conn_cal'))$q$, '42501');
+select pg_temp.expect_error('another household''s connection, with this household''s owner PIN',
+  $q$select public.disconnect_calendar_pin(pg_temp.v('membership_cal'), '1177', pg_temp.v('conn_dee'))$q$, '42501');
+select pg_temp.expect_error('an unknown connection',
+  $q$select public.disconnect_calendar_pin(pg_temp.v('membership_cal'), '1177', gen_random_uuid())$q$, '42501');
+select set_config('request.jwt.claims', :'COLD', true);
+select pg_temp.expect_error('a revoked display''s session, even with the owner''s PIN',
+  $q$select public.disconnect_calendar_pin(pg_temp.v('membership_cal'), '1177', pg_temp.v('conn_cal'))$q$, '42501');
+reset role;
+select pg_temp.expect('Cal''s secret still exists before disconnecting', exists (select 1 from vault.secrets where id = :'secret_cal'));
+set local role authenticated;
+select set_config('request.jwt.claims', :'CDISP', true);
+select public.disconnect_calendar_pin(:'membership_cal', '1177', :'conn_cal');
+select pg_temp.expect('disconnect audited', pg_temp.audited(
+  pg_temp.v('household_c'), pg_temp.v('membership_cal'), 'calendars', 'disconnect', pg_temp.v('conn_cal')));
+select pg_temp.expect_error('disconnecting again reads as not found',
+  $q$select public.disconnect_calendar_pin(pg_temp.v('membership_cal'), '1177', pg_temp.v('conn_cal'))$q$, '42501');
+reset role;
+select pg_temp.expect('connection, selections and Vault secret gone',
+  not exists (select 1 from public.calendar_connections where id = pg_temp.v('conn_cal'))
+  and not exists (select 1 from public.calendar_selections where connection_id = pg_temp.v('conn_cal'))
+  and not exists (select 1 from vault.secrets where id = :'secret_cal'));
+select pg_temp.expect('Cass''s connection and secret are untouched', pg_temp.vault_secret_exists(pg_temp.v('conn_cass')));
+
 \o
 \echo 'ALL RLS SMOKE CHECKS PASSED'
 rollback;

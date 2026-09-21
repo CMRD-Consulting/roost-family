@@ -1104,6 +1104,9 @@ describe('SettingsShell', () => {
       await settle()
       expect(settingsApi.setMyColor).toHaveBeenCalledWith(SAM_AUTH, expect.any(String))
 
+      // Calendars is no longer behind a sign-in, and says why there is nothing to manage in the demo.
+      expect(w.get('[data-testid="calendars-section"]').text()).toContain('Calendars aren’t available in the demo.')
+
       await buttonByText(w, 'Change my PIN').trigger('click')
       await settle()
       expect(w.find('[role="alert"]').text()).toBe('Not available in demo.')

@@ -8,7 +8,7 @@
  */
 import { computed, type Ref } from 'vue'
 import { useRouter } from 'vue-router'
-import type { AdultClient, DisplayRow, MemberRow, SettingsApi } from '@/data/settingsApi'
+import type { AdultClient, DisplayRow, MemberRow, SettingsApi, SettingsAuth } from '@/data/settingsApi'
 import { useDisplayStore } from '@/session/displayStore'
 import { useHouseholdStore } from '@/stores/householdStore'
 import { useSettingsSessionStore } from '@/stores/settingsSession'
@@ -95,8 +95,10 @@ export interface AccountSectionHost extends SectionHostBase {
   lastOwner: Readonly<Ref<boolean>>
   /** Null on a display, where each action asks for a sign-in of its own. */
   signedIn: SignedInAdult | null
-  /** Changing my color and PIN work through the Settings PIN session, so only on a display. */
+  /** My color, my calendars and changing my PIN work through the Settings PIN session, so only on a display. */
   pinSession: {
+    /** The open session's credentials, which authorise My calendars here (spec §6.3); null once it has ended. */
+    auth: Readonly<Ref<SettingsAuth | null>>
     /** The PIN changed: reopen the Settings session with it. False when that failed and Settings closed. */
     afterPinChanged: (membershipId: string, pin: string) => Promise<boolean>
   } | null
@@ -184,6 +186,7 @@ export function useDisplayAccountHost(): AccountSectionHost {
     lastOwner: computed(() => (store.view && session.info ? isLastOwner(store.view.members, session.info.membershipId) : false)),
     signedIn: null,
     pinSession: {
+      auth: computed(() => session.auth),
       async afterPinChanged(membershipId, pin) {
         // The settings session holds the old PIN; reopen it with the new one so Settings keeps working.
         try {

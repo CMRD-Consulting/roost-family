@@ -1791,6 +1791,10 @@ export type Database = {
         Args: { p_category_id: string; p_membership_id: string; p_pin: string }
         Returns: undefined
       }
+      calendar_pin_membership: {
+        Args: { p_membership_id: string; p_pin: string }
+        Returns: string
+      }
       claim_display: {
         Args: { p_token: string }
         Returns: {
@@ -1868,6 +1872,14 @@ export type Database = {
       }
       disconnect_calendar: {
         Args: { p_connection_id: string }
+        Returns: undefined
+      }
+      disconnect_calendar_pin: {
+        Args: {
+          p_connection_id: string
+          p_membership_id: string
+          p_pin: string
+        }
         Returns: undefined
       }
       display_heartbeat: { Args: never; Returns: boolean }
@@ -1969,6 +1981,17 @@ export type Database = {
         Args: {
           p_assigned_child_id: string
           p_assigned_membership_id: string
+          p_selection_id: string
+          p_visible: boolean
+        }
+        Returns: undefined
+      }
+      set_calendar_selection_pin: {
+        Args: {
+          p_assigned_child_id: string
+          p_assigned_membership_id: string
+          p_membership_id: string
+          p_pin: string
           p_selection_id: string
           p_visible: boolean
         }

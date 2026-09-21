@@ -6,16 +6,21 @@
  * zone. The last good answer is kept **in memory only** (never IndexedDB or the device cache: event data is never
  * stored, §11.2), so a failed refresh or a remount keeps showing it with its `updatedAt`.
  *
- * Calendar settings: an adult with a full sign-in lists their own connections (explicit columns: the Vault secret id
- * and external calendar ids are not readable), connects a calendar link or starts Google / Microsoft OAuth through
- * the Edge Functions, shows / assigns calendars and disconnects through RPCs. OAuth always returns to Manage household
+ * Calendar settings: an adult lists their own connections (explicit columns: the Vault secret id and external calendar
+ * ids are not readable), connects a calendar link or starts Google / Microsoft OAuth through the Edge Functions, shows
+ * / assigns calendars and disconnects through RPCs. OAuth always returns to Manage household
  * (`/manage?calendar=pending&attempt=…`), where the signed-in adult finishes the attempt (`finishOAuth`).
+ *
+ * The three changes come in two forms, one per surface (spec §6.3): in a browser at `/manage` the adult's own
+ * email-code sign-in authorises them; on a display the `…WithPin` calls run on the display's own client and carry the
+ * Settings PIN, which the server checks again on every call. Reading is the same either way — a display may read its
+ * household's connections. Google and Microsoft still connect only from `/manage`.
  */
 import { getCurrentScope, onScopeDispose, ref, shallowRef, watch, type Ref, type ShallowRef } from 'vue'
 import { msUntilNextHouseholdMidnight } from '@/composables/householdMidnight'
 import { startOfHouseholdDay } from '@/domain/time'
 import { isDemo } from './householdSource'
-import type { AdultClient } from './settingsApi'
+import type { AdultClient, SettingsAuth } from './settingsApi'
 import type { RoostClient } from './supabase'
 
 // ─── Today's events ────────────────────────────────────────────────────────
@@ -390,7 +395,47 @@ export interface CalendarSettingsApi {
   finishOAuth(client: AdultClient, attempt: string): Promise<{ connectionId: string; calendars: number; label: string }>
   setSelection(client: AdultClient, selectionId: string, visible: boolean, assignee: Assignee | null): Promise<void>
   disconnect(client: AdultClient, connectionId: string): Promise<void>
+
+  /** The same three changes on a display, authorised by the open Settings PIN session instead (spec §6.3). */
+  connectIcsWithPin(
+    client: RoostClient,
+    householdId: string,
+    auth: SettingsAuth,
+    url: string,
+  ): Promise<{ connectionId: string; selectionId: string; name: string; alreadyConnected: boolean }>
+  setSelectionWithPin(
+    client: RoostClient,
+    auth: SettingsAuth,
+    selectionId: string,
+    visible: boolean,
+    assignee: Assignee | null,
+  ): Promise<void>
+  disconnectWithPin(client: RoostClient, auth: SettingsAuth, connectionId: string): Promise<void>
 }
+
+/** The display's own client, for Calendars on a tablet. Loaded lazily so tests and the browser never build it. */
+export async function loadCalendarClient(): Promise<RoostClient> {
+  const { displayClient } = await import('./supabase')
+  return displayClient
+}
+
+type ConnectIcsResponse = { connectionId?: unknown; selectionId?: unknown; name?: unknown; alreadyConnected?: unknown } | null
+
+function toConnectResult(data: ConnectIcsResponse) {
+  if (typeof data?.connectionId !== 'string') throw new CalendarError('internal')
+  return {
+    connectionId: data.connectionId,
+    selectionId: typeof data.selectionId === 'string' ? data.selectionId : '',
+    name: typeof data.name === 'string' ? data.name : '',
+    alreadyConnected: data.alreadyConnected === true,
+  }
+}
+
+/** A selection's two assignee columns, as the RPCs take them. */
+const assigneeArgs = (assignee: Assignee | null) => ({
+  p_assigned_membership_id: (assignee?.type === 'member' ? assignee.id : null) as string,
+  p_assigned_child_id: (assignee?.type === 'child' ? assignee.id : null) as string,
+})
 
 type PgResult = { data: unknown; error: { message: string; code?: string } | null }
 
@@ -472,18 +517,7 @@ export function createCalendarSettingsApi(): CalendarSettingsApi {
     },
 
     async connectIcs(client, householdId, url) {
-      const data = await invoke<{ connectionId?: unknown; selectionId?: unknown; name?: unknown; alreadyConnected?: unknown } | null>(
-        client,
-        'calendar-connect-ics',
-        { householdId, url },
-      )
-      if (typeof data?.connectionId !== 'string') throw new CalendarError('internal')
-      return {
-        connectionId: data.connectionId,
-        selectionId: typeof data.selectionId === 'string' ? data.selectionId : '',
-        name: typeof data.name === 'string' ? data.name : '',
-        alreadyConnected: data.alreadyConnected === true,
-      }
+      return toConnectResult(await invoke<ConnectIcsResponse>(client, 'calendar-connect-ics', { householdId, url }))
     },
 
     async startOAuth(client, householdId, provider) {
@@ -508,8 +542,7 @@ export function createCalendarSettingsApi(): CalendarSettingsApi {
         client.rpc('set_calendar_selection', {
           p_selection_id: selectionId,
           p_visible: visible,
-          p_assigned_membership_id: (assignee?.type === 'member' ? assignee.id : null) as string,
-          p_assigned_child_id: (assignee?.type === 'child' ? assignee.id : null) as string,
+          ...assigneeArgs(assignee),
         }) as unknown as PromiseLike<PgResult>,
       )
     },
@@ -517,11 +550,53 @@ export function createCalendarSettingsApi(): CalendarSettingsApi {
     async disconnect(client, connectionId) {
       await pg(() => client.rpc('disconnect_calendar', { p_connection_id: connectionId }) as unknown as PromiseLike<PgResult>)
     },
+
+    // ─── The same three, on a display's own client with the Settings PIN ──
+    async connectIcsWithPin(client, householdId, auth, url) {
+      return toConnectResult(
+        await invoke<ConnectIcsResponse>(client, 'calendar-connect-ics', {
+          householdId,
+          url,
+          membershipId: auth.membershipId,
+          pin: auth.pin,
+        }),
+      )
+    },
+
+    async setSelectionWithPin(client, auth, selectionId, visible, assignee) {
+      await pg(() =>
+        client.rpc('set_calendar_selection_pin', {
+          p_membership_id: auth.membershipId,
+          p_pin: auth.pin,
+          p_selection_id: selectionId,
+          p_visible: visible,
+          ...assigneeArgs(assignee),
+        }) as unknown as PromiseLike<PgResult>,
+      )
+    },
+
+    async disconnectWithPin(client, auth, connectionId) {
+      await pg(() =>
+        client.rpc('disconnect_calendar_pin', {
+          p_membership_id: auth.membershipId,
+          p_pin: auth.pin,
+          p_connection_id: connectionId,
+        }) as unknown as PromiseLike<PgResult>,
+      )
+    },
   }
 }
 
-/** A failed calendar connection or change, worded for the adult. `context`: a calendar link, or Google / Microsoft. */
-export function calendarConnectMessage(error: unknown, context: 'ics' | 'oauth' = 'ics'): string {
+/**
+ * A failed calendar connection or change, worded for the adult. `context`: a calendar link, or Google / Microsoft.
+ * `authorisedBy` is what the surface used, so a refusal points at the right thing to try again: the email sign-in at
+ * /manage, or the Settings PIN on a display.
+ */
+export function calendarConnectMessage(
+  error: unknown,
+  context: 'ics' | 'oauth' = 'ics',
+  authorisedBy: 'account' | 'pin' = 'account',
+): string {
   const code = error instanceof CalendarError ? error.code : null
   switch (code) {
     case 'rate_limited':
@@ -542,7 +617,9 @@ export function calendarConnectMessage(error: unknown, context: 'ics' | 'oauth' 
     case 'unreachable':
       return 'We couldn’t reach that calendar link. Check the link and try again.'
     case 'forbidden':
-      return 'Roost Family didn’t accept your sign-in. Sign in again.'
+      return authorisedBy === 'pin'
+        ? 'Roost Family didn’t accept your PIN. Close Settings and open it again.'
+        : 'Roost Family didn’t accept your sign-in. Sign in again.'
     case 'expired':
       return 'That took too long. Connect again.'
     case 'invalid_attempt':

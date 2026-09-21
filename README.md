@@ -123,7 +123,7 @@ refresh tokens) live only in Supabase Vault.
 
 | Function | Caller | Purpose |
 |---|---|---|
-| `calendar-connect-ics` | full sign-in adult | subscribe to an ICS link (`https://` or `webcal://`) |
+| `calendar-connect-ics` | full sign-in adult, or a display with the Settings PIN (`membershipId` + `pin` in the body) | subscribe to an ICS link (`https://` or `webcal://`) |
 | `calendar-events` | display or member | today's events, cached in memory for 5 minutes |
 | `calendar-oauth-start` | full sign-in adult | Google / Microsoft consent URL |
 | `calendar-oauth-callback` | the provider's redirect (no JWT; the single-use state identifies the attempt) | parks the consent as a pending attempt, returns to `/manage?calendar=pending&attempt=…` |

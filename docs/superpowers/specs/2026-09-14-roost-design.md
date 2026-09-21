@@ -127,6 +127,7 @@ It starts as one family's app (household #1, the author's) but is built as a mul
 ### 5.5 Calendar Integration
 
 - Each adult connects their own calendar account (Google in v1; Microsoft 365/Outlook and ICS subscription links before launch, [15](#15-launch-gate--before-the-first-outside-family)).
+- Connecting, showing, assigning and disconnecting a calendar is authorised by the **adult PIN** on a display and by the **email sign-in** in a browser at `/manage` ([6.3](#63-adult-sessions-on-a-display)). Either way an adult only ever touches **their own** connections, and the server decides whose they are. Google and Microsoft connect only from `/manage`, because the provider sends the browser back there.
 - OAuth tokens are stored encrypted in Supabase Vault and **never reach any device**.
 - An Edge Function fetches events on request for the household's displays, caches them **in memory for up to 5 minutes**, and returns only: title, start, end, all-day flag, location, and the person the calendar is assigned to. Descriptions, attendees and links are stripped. **Event data is never written to the database.**
 - Displays request events every 5 minutes.
@@ -184,9 +185,9 @@ It starts as one family's app (household #1, the author's) but is built as a mul
 
 - The display normally runs on its device credential. No adult is signed in.
 - A **full sign-in** on the display starts a temporary adult session. It ends after **5 minutes without a touch** or when the adult leaves the screen that required it, whichever comes first.
-- **On a display, the adult PIN authorises every Settings action** ([7.9](#79-settings)) — adding, removing and re-roling members, renaming and revoking displays, and **deleting the household**. The tablet has a PIN pad and a household that trusts whoever is standing at it; asking for an emailed code per section meant three sign-ins in one visit. The server re-checks the PIN on every call, and that the membership is an **Owner** of a live household; wrong PINs are slowed as everywhere else ([7.3](#73-toddler-guard--pins)). Owner-only sections tell an Adult that the action is an Owner's rather than offering buttons that would fail.
-- Actions that still need a **full sign-in** on a display: connecting or disconnecting a calendar, and resetting a forgotten PIN.
-- **In a browser** at `/manage` ([7.10](#710-manage-household-any-browser)) there is no PIN pad and no PIN: the adult signs in with an **email code**, and that sign-in authorises members, displays, export and deletion there.
+- **On a display, the adult PIN authorises every Settings action** ([7.9](#79-settings)) — adding, removing and re-roling members, renaming and revoking displays, **connecting and disconnecting the adult's own calendars** ([5.5](#55-calendar-integration)), and **deleting the household**. The tablet has a PIN pad and a household that trusts whoever is standing at it; asking for an emailed code per section meant three sign-ins in one visit. The server re-checks the PIN on every call, and that the membership is an **Owner** of a live household; wrong PINs are slowed as everywhere else ([7.3](#73-toddler-guard--pins)). Owner-only sections tell an Adult that the action is an Owner's rather than offering buttons that would fail.
+- The one action that still needs a **full sign-in** on a display: resetting a forgotten PIN. (Connecting Google or Microsoft is not a second sign-in but a different surface: it happens in a browser at `/manage`.)
+- **In a browser** at `/manage` ([7.10](#710-manage-household-any-browser)) there is no PIN pad and no PIN: the adult signs in with an **email code**, and that sign-in authorises members, displays, calendars, export and deletion there.
 - Everything else that's protected uses the adult's **PIN** ([7.3](#73-toddler-guard--pins)).
 
 ### 6.4 Adding Adults and Displays
@@ -411,7 +412,7 @@ Opened with an adult PIN, which authorises every section, including the Owner-on
 - **Photos:** slideshow photos (up to 200)
 - **Logs:** history per child and type; edit or delete entries; void doses
 - **Inbox:** jots (check off or delete)
-- **My account:** my color, change my PIN, 🔐 connect/disconnect my calendars and assign each to a person, leave household
+- **My account:** my color, my calendars (connect/disconnect and assign each to a person; Google and Microsoft from [7.10](#710-manage-household-any-browser)), 🔐 change my PIN, 🔐 leave household
 - 👑 **Members:** add adult, change role, remove member
 - 👑 **Displays:** list with last-seen time, rename, revoke, add display
 - 👑 🔐 **Export:** request export ([11.3](#113-data-export--deletion)); offered in the browser at [7.10](#710-manage-household-any-browser)
@@ -591,6 +592,7 @@ All household-owned tables are scoped to a household, directly through `househol
 | "Who?" row on every log | Kid logs only; jots and groceries attributed to the display |
 | Nap Mode behavior under taps unspecified | Dim but fully usable; only the moon or automatic rules end it; sticker celebrations shown silently |
 | — | Added from the design: grocery ✕ delete and 24-hour auto-clear of checked items, "Done shopping — end link" on the display, PIN to acknowledge a dose-conflict alert, 6-box invite code |
+| Managing calendars on the display needed an emailed sign-in code of its own | On a display the **adult PIN authorises calendars too** ([5.5](#55-calendar-integration), [6.3](#63-adult-sessions-on-a-display)): connecting a link, showing and assigning a calendar, and disconnecting. A display's session is anonymous, so the account check could never be satisfied there at all, and the Calendars card sat behind a second email code even though the PIN had just opened Settings. The rules are otherwise unchanged: an adult touches only their **own** connections, an assignee must be of the same household, a shown calendar needs exactly one person, the link stays in Vault, and every change is audited. Google and Microsoft still connect only from `/manage`. |
 | Members, Displays and Delete household each needed their own emailed sign-in code on the display | On a display the **adult PIN authorises every Settings action, including deleting the household** ([6.3](#63-adult-sessions-on-a-display)). Trade-off: a 4-digit PIN now guards household deletion, where a code emailed to the Owner's account used to. What stays: only an **Owner** can do it, the household name must be **typed exactly**, the deletion is a 30-day soft delete that support can reverse, every wrong PIN waits 0.75 s server-side, and the change is audited. A one-owner household was otherwise asked for three separate codes in a single Settings visit, which pushed people to keep a browser signed in instead — a weaker guard than the PIN. In a **browser** at `/manage`, where there is no PIN, the email code still authorises everything. |
 
 **Design gaps:** screens and states the v2 design doesn't show (email-code entry, Diaper sheet body, empty/error/stale states, Add-adult flow, Manage household Members and My account panes, per-child routines and age overrides in Settings, voided doses, Night Mode tap-to-peek) are built from this spec using the v2 design system. Claude Design is asked only for final routine icon artwork (`docs/design/2026-09-14-claude-design-update-2.md`).

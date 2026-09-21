@@ -111,4 +111,21 @@ status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/rest/v1/rpc/delete
   -d '{"p_membership_id":"bbbbbbbb-0000-0000-0000-000000000001","p_pin":"1234","p_confirm_name":"Rivera"}')
 check "anon calls delete_household_pin" 401 "$status"
 
+# The PIN-authorised calendar actions a display offers (migration 15): the PIN is checked inside the RPC, but anon
+# may not reach it at all.
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/rest/v1/rpc/set_calendar_selection_pin" \
+  -H "apikey: $KEY" -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d '{"p_membership_id":"bbbbbbbb-0000-0000-0000-000000000001","p_pin":"1234","p_selection_id":"00000000-0000-0000-0000-000000000000","p_visible":false,"p_assigned_membership_id":null,"p_assigned_child_id":null}')
+check "anon calls set_calendar_selection_pin" 401 "$status"
+
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/rest/v1/rpc/disconnect_calendar_pin" \
+  -H "apikey: $KEY" -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d '{"p_membership_id":"bbbbbbbb-0000-0000-0000-000000000001","p_pin":"1234","p_connection_id":"00000000-0000-0000-0000-000000000000"}')
+check "anon calls disconnect_calendar_pin" 401 "$status"
+
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/rest/v1/rpc/calendar_pin_membership" \
+  -H "apikey: $KEY" -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d '{"p_membership_id":"bbbbbbbb-0000-0000-0000-000000000001","p_pin":"1234"}')
+check "anon calls calendar_pin_membership" 401 "$status"
+
 exit $fail

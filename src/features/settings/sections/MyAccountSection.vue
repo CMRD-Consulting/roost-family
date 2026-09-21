@@ -1,15 +1,17 @@
 <script setup lang="ts">
 /**
- * My account (spec §7.9). On a display (Settings): my color (PIN session), and two actions that need a full sign-in
- * as the Settings adult (spec §6.3): changing my PIN and leaving the household. The adult session ends after 5
- * minutes without a touch, when the action is done, or when this section closes. In a browser (Manage household,
- * spec §7.10) the adult is already signed in: only leaving the household, with no sign-in of its own. `host` is
- * where the section is shown (see sectionHosts). The `calendars` slot is where the calendar settings go: Manage
- * household fills it with its signed-in adult's; on a display it defaults to "My calendars", behind a full sign-in.
+ * My account (spec §7.9). On a display (Settings): my color and my calendars, both on the Settings PIN session, and
+ * two actions that still need a full sign-in as the Settings adult (spec §6.3): changing my PIN and leaving the
+ * household. The adult session ends after 5 minutes without a touch, when the action is done, or when this section
+ * closes. In a browser (Manage household, spec §7.10) the adult is already signed in: only leaving the household,
+ * with no sign-in of its own. `host` is where the section is shown (see sectionHosts). The `calendars` slot is where
+ * the calendar settings go: Manage household fills it with its signed-in adult's; on a display it defaults to the
+ * display's own client with the Settings PIN, which is all managing calendars needs there.
  */
-import { computed, ref, shallowRef } from 'vue'
+import { computed, onMounted, ref, shallowRef } from 'vue'
+import { loadCalendarClient } from '@/data/calendarApi'
 import { isDemo } from '@/data/householdSource'
-import { SettingsError } from '@/data/settingsApi'
+import { SettingsError, type AdultClient } from '@/data/settingsApi'
 import type { AdultSession } from '@/session/adultSession'
 import { useAdultSessionIdle } from '@/session/useAdultSessionIdle'
 import RButton from '@/ui/RButton.vue'
@@ -30,8 +32,18 @@ const { offline, lastOwner } = host
 const myName = computed(() => host.me.value?.displayName ?? '')
 const householdName = computed(() => host.household.value?.name ?? 'this household')
 
+// ─── My calendars, on the Settings PIN session ─────────────────────────────
+/** The display's own client (loaded lazily, so a browser and the tests never build it). */
+const calendarClient = shallowRef<AdultClient | null>(null)
+onMounted(() => {
+  if (!host.pinSession) return
+  // The demo has no Supabase client: the section says calendars aren't available there and never calls the API.
+  if (isDemo) calendarClient.value = {} as AdultClient
+  else void loadCalendarClient().then((c) => (calendarClient.value = c)).catch(() => {})
+})
+
 // ─── Full sign-in actions ──────────────────────────────────────────────────
-type Action = 'pin' | 'leave' | 'calendars'
+type Action = 'pin' | 'leave'
 type Phase = 'idle' | 'signIn' | 'act'
 
 const action = ref<Action | null>(null)
@@ -82,11 +94,11 @@ function start(next: Action): void {
   phase.value = host.signedIn ? 'act' : 'signIn'
 }
 
-const signInTitle = computed(() => {
-  if (action.value === 'pin') return `Sign in as ${myName.value} to change your PIN`
-  if (action.value === 'calendars') return `Sign in as ${myName.value} to manage your calendars`
-  return `Sign in as ${myName.value} to leave ${householdName.value}`
-})
+const signInTitle = computed(() =>
+  action.value === 'pin'
+    ? `Sign in as ${myName.value} to change your PIN`
+    : `Sign in as ${myName.value} to leave ${householdName.value}`,
+)
 
 function cancel(): void {
   calendarsBusy.value = false
@@ -188,15 +200,16 @@ async function confirmLeave(): Promise<void> {
     <MyColorCard v-if="host.pinSession" />
 
     <slot name="calendars">
-      <div v-if="host.surface === 'display' && phase === 'idle'" class="flex flex-col gap-3 rounded-[var(--radius-card)] bg-surface px-6 py-5">
-        <h3 class="text-[22px] font-semibold text-ink">Calendars</h3>
-        <p class="text-[18px] text-ink-3">
-          Connect your calendars and choose whose events they are. This needs a full sign-in with your email.
-        </p>
-        <div>
-          <RButton variant="secondary" :disabled="offline" @click="start('calendars')">Manage my calendars</RButton>
-        </div>
-      </div>
+      <CalendarsSection
+        v-if="host.pinSession && calendarClient && host.me.value && host.household.value"
+        :client="calendarClient"
+        :household-id="host.household.value.id"
+        :membership-id="host.me.value.membershipId"
+        :pin="host.pinSession.auth.value"
+        surface="display"
+        :heading-level="3"
+        @busy="calendarsBusy = $event"
+      />
     </slot>
 
     <p v-if="notice" role="status" class="text-[18px] font-medium text-green-deep">{{ notice }}</p>
@@ -233,21 +246,6 @@ async function confirmLeave(): Promise<void> {
       />
       <p v-if="error" role="alert" class="text-[18px] text-warn-ink">{{ error }}</p>
     </template>
-
-    <div v-else-if="action === 'calendars'" class="flex flex-col gap-4">
-      <CalendarsSection
-        v-if="adult && host.me.value && host.household.value"
-        :client="adult.client"
-        :household-id="host.household.value.id"
-        :membership-id="host.me.value.membershipId"
-        surface="display"
-        :heading-level="3"
-        @busy="calendarsBusy = $event"
-      />
-      <div>
-        <RButton variant="secondary" @click="cancel">Done with calendars</RButton>
-      </div>
-    </div>
 
     <div v-else-if="action === 'pin'" class="flex flex-col gap-4 rounded-[var(--radius-card)] bg-surface px-6 py-5">
       <h3 class="text-[22px] font-semibold text-ink">Choose a new PIN</h3>

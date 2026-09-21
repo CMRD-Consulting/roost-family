@@ -1,9 +1,12 @@
 <script setup lang="ts">
 /**
- * My calendars (spec §5.5, §7.9, §7.10): the signed-in adult's own calendar connections. Connect a calendar link
- * (ICS), connect Google or Microsoft, show each calendar on the displays and choose whose it is (a member or a child:
- * a shown calendar needs exactly one person), and disconnect. Needs a full sign-in: the caller passes the adult's
- * client (Settings → My account signs in first; Manage household is already signed in).
+ * My calendars (spec §5.5, §7.9, §7.10): one adult's own calendar connections. Connect a calendar link (ICS), connect
+ * Google or Microsoft, show each calendar on the displays and choose whose it is (a member or a child: a shown
+ * calendar needs exactly one person), and disconnect.
+ *
+ * How the caller is authorised depends on the surface (spec §6.3). Manage household passes its signed-in adult's
+ * client and no `pin`. Settings on a display passes the display's own client and the open Settings PIN session, which
+ * authorises every change there — no second, email-code sign-in. Reading is the same either way.
  *
  * Google and Microsoft connect only from Manage household (`surface: 'browser'`). The provider sends the browser back
  * to /manage, and a tablet can't finish there: its full sign-in is never persisted, and /settings needs the PIN
@@ -25,7 +28,7 @@ import {
   type MyConnection,
 } from '@/data/calendarApi'
 import { isDemo } from '@/data/householdSource'
-import type { AdultClient } from '@/data/settingsApi'
+import type { AdultClient, SettingsAuth } from '@/data/settingsApi'
 import RAvatar from '@/ui/RAvatar.vue'
 import RButton from '@/ui/RButton.vue'
 import RInput from '@/ui/RInput.vue'
@@ -37,6 +40,8 @@ const props = withDefaults(
     membershipId: string
     /** 'display': Settings on a tablet (no OAuth). 'browser': Manage household. */
     surface: 'display' | 'browser'
+    /** The open Settings PIN session on a display, which authorises the changes; null in a browser. */
+    pin?: SettingsAuth | null
     headingLevel?: 2 | 3
     api?: CalendarSettingsApi
     /** Bump to read the list again (e.g. after Manage household finished an OAuth connection). */
@@ -44,7 +49,7 @@ const props = withDefaults(
     /** Opens the provider's consent page (tests). */
     navigate?: (url: string) => void
   }>(),
-  { headingLevel: 2, reloadKey: 0 },
+  { headingLevel: 2, reloadKey: 0, pin: null },
 )
 
 const emit = defineEmits<{ busy: [boolean] }>()
@@ -85,6 +90,18 @@ onBeforeUnmount(() => {
   if (busy.value) emit('busy', false)
 })
 
+// ─── The three changes, through whichever authority this surface has ─────
+/** A refusal points at what this surface authorises with: the Settings PIN, or the email sign-in. */
+const failureMessage = (e: unknown, context: 'ics' | 'oauth' = 'ics') => calendarConnectMessage(e, context, props.pin ? 'pin' : 'account')
+const connectIcsCall = (url: string) =>
+  props.pin ? api.connectIcsWithPin(props.client, props.householdId, props.pin, url) : api.connectIcs(props.client, props.householdId, url)
+const setSelectionCall = (selectionId: string, visible: boolean, assignee: Assignee | null) =>
+  props.pin
+    ? api.setSelectionWithPin(props.client, props.pin, selectionId, visible, assignee)
+    : api.setSelection(props.client, selectionId, visible, assignee)
+const disconnectCall = (connectionId: string) =>
+  props.pin ? api.disconnectWithPin(props.client, props.pin, connectionId) : api.disconnect(props.client, connectionId)
+
 /** Only the latest load's answer is shown (a slower earlier one is ignored). */
 let loadSeq = 0
 
@@ -104,7 +121,7 @@ async function load(): Promise<void> {
     error.value = null
   } catch (e) {
     if (mine !== loadSeq) return
-    error.value = `Couldn’t load your calendars. ${calendarConnectMessage(e)}`
+    error.value = `Couldn’t load your calendars. ${failureMessage(e)}`
   } finally {
     if (mine === loadSeq) loading.value = false
   }
@@ -135,7 +152,7 @@ async function act(work: () => Promise<void>, context: 'ics' | 'oauth' = 'ics'):
     await work()
     return true
   } catch (e) {
-    error.value = calendarConnectMessage(e, context)
+    error.value = failureMessage(e, context)
     return false
   } finally {
     busy.value = false
@@ -157,7 +174,7 @@ async function connectLink(): Promise<void> {
   let connectionId: string
   let alreadyConnected: boolean
   try {
-    const result = await api.connectIcs(props.client, props.householdId, url)
+    const result = await connectIcsCall(url)
     icsUrl.value = ''
     connectionId = result.connectionId
     alreadyConnected = result.alreadyConnected
@@ -165,7 +182,7 @@ async function connectLink(): Promise<void> {
       ? 'That calendar is already connected.'
       : `Connected “${result.name}”. Choose whose calendar it is, then show it on the displays.`
   } catch (e) {
-    icsError.value = calendarConnectMessage(e)
+    icsError.value = failureMessage(e)
     return
   } finally {
     busy.value = false
@@ -201,7 +218,7 @@ function replaceCalendar(connectionId: string, next: MyCalendar): void {
 }
 
 async function save(connection: MyConnection, calendar: MyCalendar, visible: boolean, assignee: Assignee | null): Promise<void> {
-  const ok = await act(() => api.setSelection(props.client, calendar.id, visible, assignee))
+  const ok = await act(() => setSelectionCall(calendar.id, visible, assignee))
   if (!ok) return
   replaceCalendar(connection.id, { ...calendar, visible, assignee })
   if (choosingFor.value === calendar.id) choosingFor.value = null
@@ -252,7 +269,7 @@ function personTabindex(calendar: MyCalendar, index: number): 0 | -1 {
 
 // ─── Disconnect ──────────────────────────────────────────────────────────
 async function disconnect(connection: MyConnection): Promise<void> {
-  const ok = await act(() => api.disconnect(props.client, connection.id))
+  const ok = await act(() => disconnectCall(connection.id))
   if (!ok) return
   confirmDisconnectId.value = null
   connections.value = connections.value.filter((c) => c.id !== connection.id)

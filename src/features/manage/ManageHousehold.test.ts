@@ -81,6 +81,10 @@ function fakeCalendarApi() {
     finishOAuth: vi.fn().mockResolvedValue({ connectionId: 'conn-9', calendars: 2, label: 'sam@example.com' }),
     setSelection: vi.fn(),
     disconnect: vi.fn(),
+    // Never used in a browser: /manage authorises calendar changes with the adult's own sign-in.
+    connectIcsWithPin: vi.fn(),
+    setSelectionWithPin: vi.fn(),
+    disconnectWithPin: vi.fn(),
   }
 }
 let calendarApi: ReturnType<typeof fakeCalendarApi>

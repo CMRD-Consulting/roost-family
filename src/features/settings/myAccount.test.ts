@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
+import { CalendarError } from '@/data/calendarApi'
 import { buildDemoSnapshot } from '@/data/demo/demoFixture'
 import { SettingsError, type SettingsApi } from '@/data/settingsApi'
 import { useHouseholdStore } from '@/stores/householdStore'
@@ -28,6 +29,7 @@ const calendars = vi.hoisted(() => ({
 vi.mock('@/data/calendarApi', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/data/calendarApi')>()),
   createCalendarSettingsApi: () => calendars,
+  loadCalendarClient: async () => ({ name: 'display-client' }),
 }))
 vi.mock('@/data/supabase', () => {
   throw new Error('Supabase client loaded by a settings test')
@@ -195,27 +197,49 @@ describe('MyAccountSection', () => {
     w.unmount()
   })
 
-  it('manages my calendars after a full sign-in as the Settings adult, without Google or Microsoft on the tablet', async () => {
-    settingsApi.adultMembership.mockResolvedValue({ membershipId: SAM, role: 'owner' })
+  it('shows my calendars straight away on the Settings PIN, with no sign-in and no Google or Microsoft', async () => {
     const w = await mountAs(SAM, '1234')
-    expect(w.find('[data-testid="calendars-section"]').exists()).toBe(false)
-
-    await buttonByText(w, 'Manage my calendars').trigger('click')
-    await settle()
-    expect(w.text()).toContain('Sign in as Sam to manage your calendars')
-    await signIn(w)
 
     const section = w.get('[data-testid="calendars-section"]')
     expect(section.get('h3').text()).toBe('Calendars')
-    expect(calendars.listMyConnections).toHaveBeenCalledWith({ name: 'adult-client' }, HOUSEHOLD, SAM)
+    // The display's own client, and the PIN session — never an adult sign-in.
+    expect(calendars.listMyConnections).toHaveBeenCalledWith({ name: 'display-client' }, HOUSEHOLD, SAM)
+    expect(w.find('[data-testid="adult-sign-in"]').exists()).toBe(false)
+    expect(w.text()).not.toContain('Manage my calendars')
     expect(section.get('[data-testid="connect-google"]').attributes('disabled')).toBeDefined()
     expect(section.text()).toContain('roost.cmrd.dev/manage')
+    w.unmount()
+  })
 
-    await buttonByText(w, 'Done with calendars').trigger('click')
+  it('shows and assigns a calendar with the Settings PIN, and words a refused PIN', async () => {
+    const setSelectionWithPin = vi.fn().mockResolvedValue(undefined)
+    Object.assign(calendars, {
+      listMyConnections: vi.fn(async () => [
+        {
+          id: 'conn-1', provider: 'ics', label: 'Family', status: 'ok',
+          calendars: [{ id: 'sel-1', name: 'Family', visible: false, gone: false, assignee: { type: 'member', id: SAM } }],
+        },
+      ]),
+      listPeople: vi.fn(async () => [{ type: 'member', id: SAM, name: 'Sam', color: PERSON_COLORS[0] }]),
+      setSelectionWithPin,
+    })
+    const w = await mountAs(SAM, '1234')
+
+    await w.get('[data-testid="visible-sel-1"]').trigger('click')
     await settle()
-    expect(endSession).toHaveBeenCalled()
-    expect(w.find('[data-testid="calendars-section"]').exists()).toBe(false)
-    expect(w.text()).toContain('Manage my calendars')
+    expect(setSelectionWithPin).toHaveBeenCalledWith(
+      { name: 'display-client' }, { membershipId: SAM, pin: '1234' }, 'sel-1', true, { type: 'member', id: SAM },
+    )
+    expect(w.find('[data-testid="adult-sign-in"]').exists()).toBe(false)
+
+    setSelectionWithPin.mockRejectedValue(new CalendarError('forbidden'))
+    await w.get('[data-testid="visible-sel-1"]').trigger('click')
+    await settle()
+    expect(w.get('[data-testid="calendars-section"] [role="alert"]').text())
+      .toBe('Roost Family didn’t accept your PIN. Close Settings and open it again.')
+
+    Object.assign(calendars, { listMyConnections: vi.fn(async () => []), listPeople: vi.fn(async () => []) })
+    delete (calendars as Record<string, unknown>).setSelectionWithPin
     w.unmount()
   })
 
@@ -263,18 +287,22 @@ describe('MyAccountSection', () => {
     w.unmount()
   })
 
-  it('holds off the idle sign-out while a calendar change is still saving', async () => {
+  it('holds off the idle sign-out of an open full sign-in while a calendar change is still saving', async () => {
     settingsApi.adultMembership.mockResolvedValue({ membershipId: SAM, role: 'owner' })
     let finish!: () => void
-    const connectIcs = vi.fn(() => new Promise((resolve) => (finish = () => resolve({ connectionId: 'c', selectionId: 's', name: 'Family', alreadyConnected: false }))))
-    Object.assign(calendars, { connectIcs })
+    const connectIcsWithPin = vi.fn(() => new Promise((resolve) => (finish = () => resolve({ connectionId: 'c', selectionId: 's', name: 'Family', alreadyConnected: false }))))
+    Object.assign(calendars, { connectIcsWithPin })
     const w = await mountAs(SAM, '1234')
-    await buttonByText(w, 'Manage my calendars').trigger('click')
+    // Changing the PIN signs in as the adult; a calendar change saving at the same time holds that sign-in open.
+    await buttonByText(w, 'Change my PIN').trigger('click')
     await settle()
     await signIn(w)
     await w.get('[data-testid="calendars-section"] input[type="url"]').setValue('https://example.com/family.ics')
     await w.get('[data-testid="calendars-section"] form').trigger('submit')
     await settle()
+    expect(connectIcsWithPin).toHaveBeenCalledWith(
+      { name: 'display-client' }, HOUSEHOLD, { membershipId: SAM, pin: '1234' }, 'https://example.com/family.ics',
+    )
     // Restart the Settings PIN session's own 5-minute idle a little later than the adult's, so only the adult's
     // idle expiry falls in the window below.
     await vi.advanceTimersByTimeAsync(1_000)
@@ -290,7 +318,7 @@ describe('MyAccountSection', () => {
     await vi.advanceTimersByTimeAsync(5 * 60_000 + 1_000)
     await settle()
     expect(endSession).toHaveBeenCalled()
-    delete (calendars as Record<string, unknown>).connectIcs
+    delete (calendars as Record<string, unknown>).connectIcsWithPin
     w.unmount()
   })
 

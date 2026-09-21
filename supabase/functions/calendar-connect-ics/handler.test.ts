@@ -43,6 +43,7 @@ function deps(overrides: Partial<ConnectIcsDeps> = {}, fetchOverrides: Partial<I
   const options = fetchOptions(fetchOverrides)
   const d: ConnectIcsDeps = {
     requireFullSignInAdult: vi.fn(async () => MEMBERSHIP),
+    requirePinMembership: vi.fn(async (_req: Request, _householdId: string, membershipId: string) => membershipId),
     allowPrivateHosts: false,
     fetchIcs: vi.fn(async (url: URL) => (await fetchIcsFiltered(url, options, { headerOnly: true })).text),
     readCalendarName: (text) => parser.readIcsCalendarName(text),
@@ -129,6 +130,50 @@ describe('calendar-connect-ics handler', () => {
       expect(options.fetch).not.toHaveBeenCalled()
       expect(d.connect).not.toHaveBeenCalled()
     }
+  })
+
+  it('connects from a display with the Settings PIN instead of a full sign-in', async () => {
+    const { d } = deps()
+    const { res, body } = await call(
+      d,
+      post({ householdId: HOUSEHOLD, url: FEED, membershipId: MEMBERSHIP, pin: '1234' }, { Authorization: 'Bearer display' }),
+    )
+    expect(res.status).toBe(200)
+    expect(body).toEqual({ connectionId: 'conn-1', selectionId: 'sel-1', name: 'Ivy school', alreadyConnected: false })
+    expect(d.requirePinMembership).toHaveBeenCalledWith(expect.any(Request), HOUSEHOLD, MEMBERSHIP, '1234')
+    expect(d.requireFullSignInAdult).not.toHaveBeenCalled()
+    expect(d.recordConnectAttempt).toHaveBeenCalledWith(MEMBERSHIP)
+    expect(d.connect).toHaveBeenCalledWith(expect.objectContaining({ householdId: HOUSEHOLD, membershipId: MEMBERSHIP }))
+  })
+
+  it('connects for the membership the PIN check confirmed, never the one in the body', async () => {
+    const { d } = deps({ requirePinMembership: vi.fn(async () => MEMBERSHIP) })
+    await call(d, post({ householdId: HOUSEHOLD, url: FEED, membershipId: OTHER_MEMBERSHIP, pin: '1234' }))
+    expect(d.connect).toHaveBeenCalledWith(expect.objectContaining({ membershipId: MEMBERSHIP }))
+    expect(JSON.stringify(vi.mocked(d.connect).mock.calls)).not.toContain(OTHER_MEMBERSHIP)
+  })
+
+  it('refuses a wrong PIN, and a caregiver, before fetching anything', async () => {
+    for (const status of [401, 403] as const) {
+      const { d, options } = deps({ requirePinMembership: vi.fn(async () => { throw new AuthError(status, 'forbidden') }) })
+      const { res, body } = await call(d, post({ householdId: HOUSEHOLD, url: FEED, membershipId: MEMBERSHIP, pin: '0000' }))
+      expect(res.status).toBe(status)
+      expect(body).toEqual({ error: 'forbidden' })
+      expect(options.fetch).not.toHaveBeenCalled()
+      expect(d.recordConnectAttempt).not.toHaveBeenCalled()
+      expect(d.connect).not.toHaveBeenCalled()
+    }
+  })
+
+  it('rejects a PIN without a well-formed membership id, without checking anything', async () => {
+    const { d } = deps()
+    for (const body of [{ pin: '1234' }, { membershipId: 'nope', pin: '1234' }, { membershipId: MEMBERSHIP, pin: 1234 }]) {
+      const { res, body: out } = await call(d, post({ householdId: HOUSEHOLD, url: FEED, ...body }))
+      expect(res.status, JSON.stringify(body)).toBe(400)
+      expect(out).toEqual({ error: 'invalid_request' })
+    }
+    expect(d.requirePinMembership).not.toHaveBeenCalled()
+    expect(d.requireFullSignInAdult).not.toHaveBeenCalled()
   })
 
   it('rejects a malformed body', async () => {

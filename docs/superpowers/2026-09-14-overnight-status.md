@@ -80,10 +80,12 @@
   - The server fetches and parses each link, handling repeats, exceptions, moved instances and time zones.
   - Protections: SSRF blocking, a 1 MB cap and a 10 s timeout.
   - Links are stored encrypted in Supabase Vault, and connecting the same link twice is detected.
+  - On the tablet the PIN that opened Settings is all it takes to connect, show, assign and disconnect; in a browser at `/manage` the email sign-in does the same.
 - **Today panel:** today's events for each person, with "Leave in N min" for timed events that have a location, "Now · until…", a stale note, and "Sam's calendar needs reconnecting".
   - Events are never stored: not in the database, not on the device, not in Sentry.
 - **Google and Microsoft:** the connection code is written, but switched off until credentials exist. Connecting only works from Manage household.
   - The connection is finished only once the same adult signs in, which blocks someone else from attaching their calendar to your household.
+- **My calendars on the tablet:** Settings → My account shows the Calendars card straight away — no second, emailed sign-in.
 - **Manage household** (`/manage`, any browser, phone to laptop):
   - Email-code sign-in, and a household picker.
   - Owners: Displays, Members, Export and Delete household.
@@ -163,16 +165,17 @@ Earlier decisions (palette, `orange-deep`, the 18 h wake window, stale sleep, ro
 | **Adults can see the Members and Displays lists on `/manage`; only owners can change them** | Members already see these on the tablet; the server enforces changes | settings RPCs |
 | **Photos per household are capped at 300 (200 slideshow + 100 child and routine-step photos)** | The spec only limits the slideshow to 200 | migration 13 |
 | **Photo deletion keeps the file record until the sweep erases the bytes; the files become unreadable at once** | SQL can't erase Storage files, so deleting the record would lose track of them | migration 7 |
+| **On a display the adult PIN also authorises managing calendars** | A display's session is anonymous, so the account check behind `set_calendar_selection` and `disconnect_calendar` could never be satisfied on a tablet at all: the Calendars card sat behind a second emailed code right after the PIN had opened Settings. Everything else is unchanged — own connections only, same-household assignees, a shown calendar needs one person, links stay in Vault, every change audited — and Google and Microsoft still connect only from `/manage`. | migration 15, `calendar-connect-ics`, `CalendarsSection.vue` |
 | **On a display the adult PIN now authorises every Settings action, including deleting the household** | A one-owner household had to enter three separate emailed codes to visit Members, Displays and Delete household in one sitting, which pushed people to leave a browser signed in instead. **The weaker guard is real:** a 4-digit PIN, not an emailed code, now stands in front of household deletion. What still guards it: owner-only, the household name typed exactly, a 30-day soft delete that support can undo, the 0.75 s wrong-PIN delay, and an audit row. `/manage` in a browser keeps the email sign-in. | migration 14, `usePinOwner.ts` |
 
 ## Verification
 
 - **Automated checks at HEAD:**
-  - `pnpm test`: 1,885 tests in 127 files, all passing.
+  - `pnpm test`: 1,924 tests in 128 files, all passing.
   - `pnpm typecheck` and `pnpm build`: clean.
   - `deno check` on every Edge Function: clean.
 - **Database checks on local Supabase:**
-  - `rls_smoke.sql`: `ALL RLS SMOKE CHECKS PASSED` (124 labelled sections).
+  - `rls_smoke.sql`: `ALL RLS SMOKE CHECKS PASSED` (128 labelled sections).
   - `anon_api_check.sh`: every check OK.
 - **Independent reviews** after every phase and feature: calendar parsing, calendar schema, calendar functions, Today and calendar UI, Manage household, export, Phase 3c and Phase 4a. Every finding was fixed and re-verified.
 - **Browser runs on local Supabase, controlled by me:**
@@ -193,6 +196,7 @@ Earlier decisions (palette, `orange-deep`, the 18 h wake window, stale sleep, ro
     - Requesting it showed "We'll email a link…", the export reached `ready`, and Mailpit got the email with the link.
     - The download page signed Sam in and showed "Your export is ready".
     - The ZIP's contents were checked by the export agent: no secret columns.
+  - **Calendars with the PIN only (display JWT against local Supabase):** a link was connected, shown and assigned, then disconnected, all with Sam's PIN and no sign-in; a wrong PIN was refused at each step, and the Vault secret went with the connection.
   - **Display limit:** a fourth display is refused with "Rivera already has 3 displays. Remove one in Settings → Displays or at roost.cmrd.dev/manage, then try again." Before this run the raw server text showed; it is now fixed.
 
 ## Open follow-ups

@@ -38,6 +38,9 @@ function fakeApi(): Fake {
     finishOAuth: vi.fn(),
     setSelection: vi.fn().mockResolvedValue(undefined),
     disconnect: vi.fn().mockResolvedValue(undefined),
+    connectIcsWithPin: vi.fn().mockResolvedValue({ connectionId: 'conn-2', selectionId: 'sel-2', name: 'Soccer', alreadyConnected: false }),
+    setSelectionWithPin: vi.fn().mockResolvedValue(undefined),
+    disconnectWithPin: vi.fn().mockResolvedValue(undefined),
   }
 }
 
@@ -159,6 +162,44 @@ describe('CalendarsSection', () => {
       await w.get('form').trigger('submit')
       expect(w.get('[data-testid="ics-error"]').text()).toBe('Paste your calendar’s link first.')
       expect(api.connectIcs).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('on a display, with the Settings PIN', () => {
+    const PIN = { membershipId: SAM, pin: '1234' }
+    const onPin = () => mountSection({ surface: 'display', pin: PIN })
+
+    it('reads with the display\'s client and makes every change with the PIN', async () => {
+      const w = await onPin()
+      expect(api.listMyConnections).toHaveBeenCalledWith(CLIENT, HOUSEHOLD, SAM)
+
+      await w.get('input[type="url"]').setValue('https://example.com/family.ics')
+      await w.get('form').trigger('submit')
+      await flushPromises()
+      expect(api.connectIcsWithPin).toHaveBeenCalledWith(CLIENT, HOUSEHOLD, PIN, 'https://example.com/family.ics')
+      expect(api.connectIcs).not.toHaveBeenCalled()
+
+      await w.get(`[data-testid="assign-sel-1-${IVY}"]`).trigger('click')
+      await flushPromises()
+      expect(api.setSelectionWithPin).toHaveBeenCalledWith(CLIENT, PIN, 'sel-1', false, { type: 'child', id: IVY })
+      expect(api.setSelection).not.toHaveBeenCalled()
+
+      await buttonByText(w, 'Disconnect').trigger('click')
+      await buttonByText(w, 'Disconnect Family').trigger('click')
+      await flushPromises()
+      expect(api.disconnectWithPin).toHaveBeenCalledWith(CLIENT, PIN, 'conn-1')
+      expect(api.disconnect).not.toHaveBeenCalled()
+      w.unmount()
+    })
+
+    it('points a refused call at the PIN, not at an email sign-in', async () => {
+      api.connectIcsWithPin.mockRejectedValue(new CalendarError('forbidden'))
+      const w = await onPin()
+      await w.get('input[type="url"]').setValue('https://example.com/x')
+      await w.get('form').trigger('submit')
+      await flushPromises()
+      expect(w.get('[data-testid="ics-error"]').text()).toBe('Roost Family didn’t accept your PIN. Close Settings and open it again.')
+      w.unmount()
     })
   })
 

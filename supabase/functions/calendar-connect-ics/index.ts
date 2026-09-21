@@ -1,5 +1,6 @@
 /**
- * `calendar-connect-ics` Edge Function (spec §5.5, §6.3): a full sign-in adult subscribes the household to an ICS link.
+ * `calendar-connect-ics` Edge Function (spec §5.5, §6.3): an adult subscribes the household to an ICS link — signed
+ * in with an email code at /manage, or on a display with the PIN that opened Settings.
  * See handler.ts for the request and response contract. The link is checked, fetched and parsed here, then stored
  * only in Vault, with its selection, through `svc_create_calendar_connection_with_selections`.
  */
@@ -12,6 +13,7 @@ const parser = createIcsParser(ical)
 
 const handler = createConnectIcsHandler({
   requireFullSignInAdult: (req, householdId) => callerAuth.requireFullSignInAdult(req, householdId),
+  requirePinMembership: (req, householdId, membershipId, pin) => callerAuth.requirePinMembership(req, householdId, membershipId, pin),
   allowPrivateHosts,
   // Only the header is needed (X-WR-CALNAME), so the read stops before the first VEVENT: connecting a calendar with
   // ten years of history costs a few KB and cannot hit a size limit.
