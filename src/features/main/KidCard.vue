@@ -29,14 +29,14 @@ const emit = defineEmits<{ fixSleep: [childId: string] }>()
       class="-mx-2 flex min-h-[60px] min-w-0 flex-col items-start rounded-[var(--radius-control)] px-2 text-left focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-orange-deep"
       @click="emit('fixSleep', card.childId)"
     >
-      <span class="max-w-full truncate text-[40px] font-semibold leading-[1.05] tracking-[-0.02em] text-orange-deep min-[1300px]:text-[46px]">
+      <span class="max-w-full truncate text-[40px] font-semibold leading-[1.05] tracking-[-0.02em] text-orange-deep pb-[0.15em] -mb-[0.15em] min-[1300px]:text-[46px]">
         {{ card.sleep.label }}
       </span>
       <span class="text-[16px] text-ink-3">tap to fix</span>
     </button>
     <div v-else-if="card.sleep" class="flex min-w-0 flex-col">
       <span
-        class="truncate text-[40px] font-semibold leading-[1.05] tracking-[-0.02em] min-[1300px]:text-[46px]"
+        class="truncate text-[40px] font-semibold leading-[1.05] tracking-[-0.02em] pb-[0.15em] -mb-[0.15em] min-[1300px]:text-[46px]"
         :class="card.sleep.kind === 'unknown' ? 'text-ink-2' : 'text-ink'"
       >
         {{ card.sleep.label }}
