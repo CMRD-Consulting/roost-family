@@ -1,0 +1,55 @@
+# Netlify builds and publishes `main` on every merge, and builds a Deploy Preview for every pull request.
+# Node comes from .nvmrc and pnpm from "packageManager" in package.json (Netlify has no PNPM_VERSION).
+# Production needs VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY (and optionally VITE_SENTRY_DSN) set on the
+# Netlify site, scoped to the Production context; they are not kept here.
+
+[build]
+  command = "pnpm build"
+  publish = "dist"
+
+# Previews and branch deploys never touch a real household: they run on the built-in demo data source.
+[context.deploy-preview.environment]
+  VITE_DATA_SOURCE = "demo"
+
+[context.branch-deploy.environment]
+  VITE_DATA_SOURCE = "demo"
+
+# The Take list token (/list/<token>) and export ids live in the URL path. index.html sets the same policy
+# in a <meta>, but the header also covers responses before the page parses.
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Referrer-Policy = "strict-origin"
+    X-Content-Type-Options = "nosniff"
+
+# A shared or back-forward cache never keeps a page whose URL is the list's only credential. Header rules
+# match the requested path, so this covers the index.html fallback served for /list/<token>.
+[[headers]]
+  for = "/list/*"
+  [headers.values]
+    Cache-Control = "no-store"
+
+# The update check must never see a stale copy (spec §5.8).
+[[headers]]
+  for = "/version.json"
+  [headers.values]
+    Cache-Control = "no-store"
+
+# Vite's content-hashed output. Everything else (index.html, sw.js, manifest.webmanifest) keeps Netlify's
+# default `max-age=0, must-revalidate`, which is what a service worker script needs.
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+# A hashed chunk from an older deploy is a real 404, not index.html served as JavaScript.
+[[redirects]]
+  from = "/assets/*"
+  to = "/404.html"
+  status = 404
+
+# Vue Router history mode: every other unknown path is an app route.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
