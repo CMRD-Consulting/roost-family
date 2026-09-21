@@ -22,7 +22,7 @@ pnpm dev               # http://localhost:5173
 - Local email (sign-in codes): http://127.0.0.1:55324
 - Supabase Studio: http://127.0.0.1:55323
 - Seed household "Rivera": owner `sam@roost.test` (PIN 1234), adult `alex@roost.test` (PIN 5678)
-- Unused invite codes: `ROOST1`, `ROOST2`, `ROOST3`
+- Unused invite codes: `ROOST1`, `ROOST2`, `ROOST3` (more: `select * from private.create_invite_codes(3);` in Studio's SQL editor)
 
 ## Offline and demo
 
@@ -108,6 +108,14 @@ The hosted project is `roost-family` (ref `njhwxoybuxwwtdvebdou`, us-east-1, fre
 - **Functions:** `supabase functions deploy --use-api` (bundles on Supabase, so no Docker). Secrets are set with
   `supabase secrets set`: `APP_URL`, `CALENDAR_FINGERPRINT_KEY` (never rotate casually: it stops duplicate-link
   detection for existing connections), and later `SMTP_*`, `NWS_CONTACT` and the calendar providers' credentials.
+- **Invite codes:** while invite-only is on, a family needs an unused code to create a household (spec §6.4). Make
+  them in the dashboard's SQL editor (Dashboard > SQL Editor, which runs as `postgres`); nothing in the app can:
+  ```sql
+  select * from private.create_invite_codes(3, 'Smith family');  -- count (1 to 100, default 1), optional note
+  select * from private.invite_code_status;                      -- unused first; who used the rest, and when
+  ```
+  Codes are 6 characters with no `0`, `O`, `1`, `I` or `L`, and work once. To take back a code nobody has used:
+  `delete from public.invite_codes where code = '…' and used_at is null;`
 - **API keys:** the project issues both legacy JWT keys (`anon`, `service_role`) and the newer `sb_publishable_…` /
   `sb_secret_…` keys. Edge Functions receive the **new** ones as `SUPABASE_ANON_KEY` and
   `SUPABASE_SERVICE_ROLE_KEY`. The web app uses the publishable key (`VITE_SUPABASE_ANON_KEY` on Netlify).

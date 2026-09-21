@@ -3462,6 +3462,64 @@ select pg_temp.expect('connection, selections and Vault secret gone',
   and not exists (select 1 from vault.secrets where id = :'secret_cal'));
 select pg_temp.expect('Cass''s connection and secret are untouched', pg_temp.vault_secret_exists(pg_temp.v('conn_cass')));
 
+-- ─── Invite code admin (migration 16) ────────────────────────────────────
+\echo '[129] create_invite_codes: operator only; distinct, unambiguous codes with a note; bad input is 22023'
+reset role;
+create temp table smoke_minted as select code from private.create_invite_codes(5, '  Smoke family ');
+select pg_temp.expect('five distinct codes', (select count(distinct code) from smoke_minted) = 5);
+select pg_temp.expect('codes are 6 characters with no 0, O, 1, I or L', not exists (
+  select 1 from smoke_minted where code !~ '^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$'));
+select pg_temp.expect('minted codes are stored unused, with the trimmed note and a creation time', (
+  select count(*) from public.invite_codes i join smoke_minted s using (code)
+  where i.note = 'Smoke family' and i.created_at = now() and i.used_at is null and i.used_by_household_id is null) = 5);
+select code as minted_default from private.create_invite_codes() \gset
+select pg_temp.expect('the defaults make one code with no note', (
+  select note is null from public.invite_codes where code = :'minted_default'));
+select code as minted_blank from private.create_invite_codes(1, '   ') \gset
+select pg_temp.expect('a blank note is stored as null', (
+  select note is null from public.invite_codes where code = :'minted_blank'));
+select pg_temp.expect_error('zero codes', $q$select private.create_invite_codes(0)$q$, '22023');
+select pg_temp.expect_error('more than 100 codes', $q$select private.create_invite_codes(101)$q$, '22023');
+select pg_temp.expect_error('a null count', $q$select private.create_invite_codes(null)$q$, '22023');
+select pg_temp.expect_error('a note over 120 characters',
+  $q$select private.create_invite_codes(1, repeat('x', 121))$q$, '22023');
+select pg_temp.expect('no client role can execute create_invite_codes or read invite_code_status',
+  not has_function_privilege('anon', 'private.create_invite_codes(int, text)', 'execute')
+  and not has_function_privilege('authenticated', 'private.create_invite_codes(int, text)', 'execute')
+  and not has_table_privilege('anon', 'private.invite_code_status', 'select')
+  and not has_table_privilege('authenticated', 'private.invite_code_status', 'select'));
+set local role authenticated;
+select set_config('request.jwt.claims', :'A', true);
+-- Execute is asserted through has_function_privilege above, as everywhere in this file, not by calling: on the local
+-- Supabase image (Postgres 17.6) a call to a function the role may not execute ends the backend with a segmentation
+-- fault instead of 42501. Tables and views answer 42501 as they should.
+select pg_temp.expect_error('an adult reads the status view', $q$select * from private.invite_code_status$q$, '42501');
+select pg_temp.expect_error('an adult still cannot read invite_codes', $q$select * from public.invite_codes$q$, '42501');
+reset role;
+
+\echo '[130] a minted code creates a household, and invite_code_status shows who used it'
+insert into auth.users (id, instance_id, aud, role, email, raw_app_meta_data, raw_user_meta_data, is_anonymous, created_at, updated_at)
+values ('00000000-0000-0000-0000-0000000001ce', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'minted@roost.test', '{}', '{}', false, now(), now());
+\set MINTED '{"sub":"00000000-0000-0000-0000-0000000001ce","role":"authenticated","is_anonymous":false}'
+select code as minted_one from smoke_minted order by code limit 1 \gset
+set local role authenticated;
+select set_config('request.jwt.claims', :'MINTED', true);
+select public.record_consent('2026-09-14', true);
+select public.setup_household('Minted family', 'America/Denver', '', null, null, lower(:'minted_one'), 'Min', '#2C7F8C',
+  jsonb_build_array(jsonb_build_object('name', 'Kid', 'birthday', '2024-01-01', 'color', '#653437')), '2468') as household_minted \gset
+select pg_temp.expect_error('a minted code works once',
+  format($q$select public.setup_household('Again family', 'America/Denver', '', null, null, %L, 'Min', '#2C7F8C',
+     jsonb_build_array(jsonb_build_object('name', 'Kid', 'birthday', '2024-01-01', 'color', '#653437')), '2468')$q$, :'minted_one'),
+  '22023');
+reset role;
+select pg_temp.expect('the status view names the household that used the code', (
+  select used_at is not null and household_name = 'Minted family' and note = 'Smoke family'
+  from private.invite_code_status where code = :'minted_one'));
+select pg_temp.expect('the status view lists unused codes first', (
+  select used_at is null from private.invite_code_status limit 1));
+select pg_temp.expect('the status view shows every invite code', (
+  select count(*) from private.invite_code_status) = (select count(*) from public.invite_codes));
+
 \o
 \echo 'ALL RLS SMOKE CHECKS PASSED'
 rollback;
