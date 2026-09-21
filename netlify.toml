@@ -1,5 +1,6 @@
-# Netlify builds and publishes `main` on every merge, and builds a Deploy Preview for every pull request.
-# Node comes from .nvmrc and pnpm from "packageManager" in package.json (Netlify has no PNPM_VERSION).
+# GitHub Actions (.github/workflows/deploy.yml) runs `netlify deploy --build` on every merge to main and for every
+# pull request, so this file still decides the build, per-context environment, headers and redirects.
+# Node comes from .nvmrc and pnpm from "packageManager" in package.json, in the workflow as locally.
 # Production needs VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY (and optionally VITE_SENTRY_DSN) set on the
 # Netlify site, scoped to the Production context; they are not kept here.
 

@@ -1,0 +1,72 @@
+# Netlify's free plan won't build from a private, organization-owned repository, so GitHub Actions builds
+# and the Netlify CLI uploads. The build still runs through Netlify Build (`--build`), so netlify.toml stays
+# the one place for the build command, per-context environment, headers and redirects.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A newer push to the same PR replaces its preview; production deploys queue instead of cancelling.
+concurrency:
+  group: deploy-${{ github.event.pull_request.number || 'production' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  NETLIFY_SITE_ID: 52d25665-ea46-4376-9b04-a7a2f0c8814f
+  NETLIFY_CLI: netlify-cli@27
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # pnpm from "packageManager" in package.json, Node from .nvmrc: the same versions as local development.
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm test
+
+      - name: Require the Netlify token
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+        run: |
+          if [ -z "$NETLIFY_AUTH_TOKEN" ]; then
+            echo "::error::The NETLIFY_AUTH_TOKEN repository secret is not set (see README, Hosting)."
+            exit 1
+          fi
+
+      - name: Publish production
+        if: github.event_name == 'push'
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+        run: >
+          npx --yes "$NETLIFY_CLI" deploy --build --prod
+          --message "${{ github.sha }}"
+
+      # Always the demo data source (netlify.toml, deploy-preview context), never a real household.
+      - name: Publish a Deploy Preview
+        if: github.event_name == 'pull_request'
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          npx --yes "$NETLIFY_CLI" deploy --build --context deploy-preview --alias "pr-$PR" \
+            --message "PR #$PR ${{ github.event.pull_request.head.sha }}"
+          url="https://pr-$PR--roost-family.netlify.app"
+          echo "Deploy Preview: $url" >> "$GITHUB_STEP_SUMMARY"
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --edit-last --create-if-none \
+            --body "Deploy Preview (demo data): $url"
