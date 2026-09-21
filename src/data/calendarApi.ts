@@ -120,12 +120,18 @@ async function invoke<T>(client: RoostClient, name: string, body: Record<string,
   return result.data as T
 }
 
-/** Today's events for a household, on the given client (a display's or a member's). */
+/**
+ * How many household days the panel asks for: today and tomorrow (spec §7.2). The server defaults to today alone, so
+ * asking is what tells it this client knows to keep the two apart.
+ */
+export const EVENT_DAYS = 2
+
+/** Today's and tomorrow's events for a household, on the given client (a display's or a member's). */
 export async function fetchTodayEventsWith(client: RoostClient, householdId: string): Promise<TodayEvents> {
   const data = await invoke<{ events?: unknown; connections?: unknown; partial?: unknown; generatedAt?: unknown } | null>(
     client,
     'calendar-events',
-    { householdId },
+    { householdId, days: EVENT_DAYS },
   )
   if (!data || !Array.isArray(data.events) || !Array.isArray(data.connections) || typeof data.generatedAt !== 'string') {
     throw new CalendarError('internal')
@@ -182,11 +188,20 @@ const DEMO_MEMBER_SAM = 'bbbbbbbb-0000-0000-0000-000000000001'
 const DEMO_CHILD_IVY = 'cccccccc-0000-0000-0000-000000000001'
 const DEMO_CHILD_THEO = 'cccccccc-0000-0000-0000-000000000002'
 
-/** The demo’s calendar, relative to `now`: an all-day event, an event with a leave-by, and two later ones.
- *  Events that would start after today are left out. Colors come from the people (empty `calendarColor`). */
+/** The demo’s calendar, relative to `now`: an all-day event, an event with a leave-by, two later ones, and a couple
+ *  tomorrow morning. Events beyond tomorrow are left out. Colors come from the people (empty `calendarColor`). */
 export function demoTodayEvents(now: Date, timeZone: string): TodayEvents {
   const dayStart = startOfHouseholdDay(now, timeZone)
   const dayEnd = new Date(dayStart.getTime() + 24 * 3_600_000)
+  const tomorrowStart = startOfHouseholdDay(new Date(dayEnd.getTime() + 12 * 3_600_000), timeZone)
+  /** Tomorrow at a wall-clock hour, near enough for the demo. */
+  const tomorrowAt = (hour: number, lengthMin: number, title: string, personType: 'member' | 'child', personId: string, location: string | null = null): TodayEvent => {
+    const start = new Date(tomorrowStart.getTime() + hour * 3_600_000)
+    return {
+      title, startAt: start.toISOString(), endAt: new Date(start.getTime() + lengthMin * 60_000).toISOString(),
+      allDay: false, location, personType, personId, calendarColor: '',
+    }
+  }
   const at = (minutes: number) => {
     // Whole quarter hours, like real calendar events.
     const t = now.getTime() + minutes * 60_000
@@ -208,6 +223,10 @@ export function demoTodayEvents(now: Date, timeZone: string): TodayEvents {
     timed('Pediatrician checkup', 150, 30, 'Riverside Pediatrics', 'child', DEMO_CHILD_THEO),
     timed('Sam home', 180, 15, null, 'member', DEMO_MEMBER_SAM),
   ].filter((e) => Date.parse(e.startAt) < dayEnd.getTime())
+  events.push(
+    tomorrowAt(8.5, 45, 'Dentist', 'child', DEMO_CHILD_THEO, 'Riverside Pediatrics'),
+    tomorrowAt(17.5, 60, 'Soccer practice', 'child', DEMO_CHILD_IVY, 'Field 3'),
+  )
   return { events, connections: [], partial: false, updatedAt: now.toISOString(), receivedAt: now.toISOString() }
 }
 

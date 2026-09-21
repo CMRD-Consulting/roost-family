@@ -32,7 +32,8 @@ export interface SelectionMeta {
 
 export interface DayEvent extends SourceEvent, SelectionMeta {}
 
-/** [dayStartUtc, dayEndUtc): the household's current day, 00:00 to 24:00 local time. */
+/** [dayStartUtc, dayEndUtc): the household's current day, 00:00 to 24:00 local time, or that day and the next
+ *  (`householdDayWindow` with 2 days): the names say "day" because one day is what every old client asks for. */
 export interface DayWindow {
   dayStartUtc: Date
   dayEndUtc: Date
@@ -117,10 +118,16 @@ export function zonedWallTimeToUtc(wall: WallTime, timeZone: string): Date {
   return new Date(asUtc - offsetBefore)
 }
 
-/** Today's household day (00:00 to the next 00:00 local) containing `now`. 23 or 25 hours on DST days. */
-export function householdDayWindow(now: Date, timeZone: string): DayWindow {
+/** How many household days a display may ask for: today, or today and tomorrow (spec §7.2). */
+export type EventDays = 1 | 2
+
+/**
+ * The household day containing `now` (00:00 to the next 00:00 local; 23 or 25 hours on DST days), or with `days` 2
+ * that day and the next.
+ */
+export function householdDayWindow(now: Date, timeZone: string, days: EventDays = 1): DayWindow {
   const today = wallTimeAt(now.getTime(), timeZone)
-  const next = new Date(Date.UTC(today.year, today.month - 1, today.day + 1))
+  const next = new Date(Date.UTC(today.year, today.month - 1, today.day + days))
   return {
     dayStartUtc: zonedWallTimeToUtc({ year: today.year, month: today.month, day: today.day, hour: 0, minute: 0, second: 0 }, timeZone),
     dayEndUtc: zonedWallTimeToUtc(

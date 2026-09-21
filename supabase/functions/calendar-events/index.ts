@@ -15,7 +15,7 @@ import { createIcsSource, createOAuthSource, type CalendarSources } from './sour
 const memory = createEventsMemory()
 
 const sources: CalendarSources = {
-  ics: createIcsSource((url, day, signal) => fetchIcs(url, { day }, signal), createIcsParser(ical)),
+  ics: createIcsSource((url, days, signal) => fetchIcs(url, days, signal), createIcsParser(ical)),
   google: createOAuthSource('google', fetch, oauthClient('google')),
   microsoft: createOAuthSource('microsoft', fetch, oauthClient('microsoft')),
 }
@@ -80,7 +80,7 @@ const store: CalendarStore = {
 
 const handler = createEventsHandler({
   callerHousehold: (req, householdId) => callerAuth.callerHousehold(req, householdId),
-  collect: (householdId, now) => collectDayEvents(householdId, { store, sources, memory, now, log: (m) => console.log(m), waitUntil }),
+  collect: (householdId, now, days) => collectDayEvents(householdId, { store, sources, memory, now, days, log: (m) => console.log(m), waitUntil }),
   now: () => new Date(),
 })
 

@@ -38,6 +38,21 @@ describe('householdDayWindow', () => {
     expect(w.dayStartUtc.toISOString()).toBe('2026-12-31T05:00:00.000Z')
     expect(w.dayEndUtc.toISOString()).toBe('2027-01-01T05:00:00.000Z')
   })
+
+  it('with 2 days runs from today\'s midnight to the end of tomorrow, and 1 is the default', () => {
+    const now = new Date('2026-09-14T16:00:00Z')
+    expect(householdDayWindow(now, TZ, 1)).toEqual(householdDayWindow(now, TZ))
+    const w = householdDayWindow(now, TZ, 2)
+    expect(w.dayStartUtc.toISOString()).toBe('2026-09-14T04:00:00.000Z')
+    expect(w.dayEndUtc.toISOString()).toBe('2026-09-16T04:00:00.000Z')
+  })
+
+  it('2 days are 49 hours when tomorrow falls back, and cross the year', () => {
+    const fall = householdDayWindow(new Date('2026-10-31T16:00:00Z'), TZ, 2)
+    expect(fall.dayStartUtc.toISOString()).toBe('2026-10-31T04:00:00.000Z')
+    expect(fall.dayEndUtc.toISOString()).toBe('2026-11-02T05:00:00.000Z')
+    expect(householdDayWindow(new Date('2026-12-31T20:00:00Z'), TZ, 2).dayEndUtc.toISOString()).toBe('2027-01-02T05:00:00.000Z')
+  })
 })
 
 describe('isValidTimeZone', () => {

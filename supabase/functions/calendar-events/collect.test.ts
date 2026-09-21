@@ -147,12 +147,44 @@ describe('collectDayEvents: ICS', () => {
       partial: false,
       generatedAt: NOW.toISOString(),
     })
-    expect(fetchIcs).toHaveBeenCalledWith(new URL('https://calendar.example.com/conn-ics.ics'), '20260914', expect.any(AbortSignal))
+    expect(fetchIcs).toHaveBeenCalledWith(
+      new URL('https://calendar.example.com/conn-ics.ics'),
+      { day: '20260914', lastDay: '20260914' },
+      expect.any(AbortSignal),
+    )
     for (const event of result!.events) {
       expect(Object.keys(event).sort()).toEqual(['allDay', 'calendarColor', 'endAt', 'location', 'personId', 'personType', 'startAt', 'title'])
     }
     const serialized = JSON.stringify(result)
     for (const leaked of ['goggles', '4321', 'coach@example.com', 'school@example.com', 'secret-link']) expect(serialized).not.toContain(leaked)
+  })
+
+  it('with days 2 returns tomorrow as well, asks the feed for both days, and caches them apart from today alone', async () => {
+    const { store } = fakeStore()
+    const fetchIcs = vi.fn(async () => FIXTURE)
+    const memory = createEventsMemory()
+
+    const today = await collect(store, icsSources(fetchIcs), memory)
+    expect(today!.events.map((e) => e.startAt)).toEqual(['2026-09-14T12:00:00.000Z', '2026-09-14T21:00:00.000Z'])
+
+    const both = await collect(store, icsSources(fetchIcs), memory, { days: 2 })
+    // Tomorrow's drop-off (the weekly series) joins today's two, still sorted by start.
+    expect(both!.events.map((e) => e.startAt)).toEqual([
+      '2026-09-14T12:00:00.000Z',
+      '2026-09-14T21:00:00.000Z',
+      '2026-09-15T12:00:00.000Z',
+    ])
+    expect(both!.events.at(-1)!.title).toBe('School drop-off')
+
+    // A different window is a different cache entry, so the wider ask really fetched.
+    expect(fetchIcs).toHaveBeenCalledTimes(2)
+    expect(fetchIcs.mock.calls.map((c) => c[1])).toEqual([
+      { day: '20260914', lastDay: '20260914' },
+      { day: '20260914', lastDay: '20260915' },
+    ])
+    // And each window is served from memory on its own.
+    await collect(store, icsSources(fetchIcs), memory, { days: 2 })
+    expect(fetchIcs).toHaveBeenCalledTimes(2)
   })
 
   it('reports a calendar the pre-filter had to cut short as partial, with the events it did read', async () => {

@@ -62,7 +62,7 @@ describe('fetchTodayEventsWith', () => {
     const invoke = vi.fn().mockResolvedValue({ data: body('2026-09-14T18:58:00Z'), error: null })
     const result = await fetchTodayEventsWith(fakeClient(invoke), HOUSEHOLD)
     vi.useRealTimers()
-    expect(invoke).toHaveBeenCalledWith('calendar-events', { body: { householdId: HOUSEHOLD }, timeout: 20_000 })
+    expect(invoke).toHaveBeenCalledWith('calendar-events', { body: { householdId: HOUSEHOLD, days: 2 }, timeout: 20_000 })
     expect(result.updatedAt).toBe('2026-09-14T18:58:00Z')
     expect(result.receivedAt).toBe(NOW.toISOString())
     expect(result.events).toHaveLength(1)

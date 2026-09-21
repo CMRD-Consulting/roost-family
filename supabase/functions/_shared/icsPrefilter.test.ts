@@ -2,7 +2,7 @@ import ICAL from 'ical.js'
 import { describe, expect, it } from 'vitest'
 import { householdDayWindow } from './events.ts'
 import { createIcsParser } from './ics.ts'
-import { icsDayKey, prefilterIcsStream, shiftDay, type IcsPrefilterOptions } from './icsPrefilter.ts'
+import { icsDayKey, icsDayRange, prefilterIcsStream, shiftDay, type IcsPrefilterOptions } from './icsPrefilter.ts'
 
 const parser = createIcsParser(ICAL)
 const ZONE = 'America/New_York'
@@ -59,6 +59,14 @@ describe('icsDayKey / shiftDay', () => {
     expect(icsDayKey(householdDayWindow(new Date('2026-09-22T00:30:00Z'), 'UTC'), 'UTC')).toBe('20260922')
   })
 
+  it('icsDayRange names the first and last household day of a window, through a DST change', () => {
+    expect(icsDayRange(WINDOW, ZONE)).toEqual({ day: '20260921', lastDay: '20260921' })
+    expect(icsDayRange(householdDayWindow(NOW, ZONE, 2), ZONE)).toEqual({ day: '20260921', lastDay: '20260922' })
+    // Oct 31 + Nov 1 2026 in New York: 49 hours, whose midpoint is still Oct 31.
+    expect(icsDayRange(householdDayWindow(new Date('2026-10-31T16:00:00Z'), ZONE, 2), ZONE)).toEqual({ day: '20261031', lastDay: '20261101' })
+    expect(icsDayRange(householdDayWindow(new Date('2026-12-31T20:00:00Z'), ZONE, 2), ZONE)).toEqual({ day: '20261231', lastDay: '20270101' })
+  })
+
   it('moves across month and year boundaries', () => {
     expect(shiftDay('20260301', -2)).toBe('20260227')
     expect(shiftDay('20260101', -2)).toBe('20251230')
@@ -108,6 +116,19 @@ describe('prefilterIcsStream', () => {
     expect(out.eventsKept).toBe(4)
     expect(out.text).not.toContain('NextMonth')
     expect(titles(out.text)).toEqual(expect.arrayContaining(['AllDay', 'LongTrip']))
+  })
+
+  it('with a last day, keeps the same slack after it as before the first', async () => {
+    const at = (offset: number, name: string) =>
+      vevent({ UID: `${name}@t`, 'DTSTART;VALUE=DATE': shiftDay(DAY, offset), 'DTEND;VALUE=DATE': shiftDay(DAY, offset + 1), SUMMARY: name })
+    const text = calendar(at(-4, 'TooEarly'), at(-2, 'EarlyEdge'), at(0, 'Today'), at(1, 'Tomorrow'), at(2, 'TwoOut'), at(3, 'LateEdge'), at(4, 'TooLate'))
+
+    // What the filter kept, whatever day the parser would later show it on.
+    const kept = (out: { text: string }) => [...out.text.matchAll(/^SUMMARY:(.*)$/gm)].map((m) => m[1]!.trim())
+
+    expect(kept(await run(text, { lastDay: shiftDay(DAY, 1) }))).toEqual(['EarlyEdge', 'Today', 'Tomorrow', 'TwoOut', 'LateEdge'])
+    // One day, as before: the slack ends 2 days after it.
+    expect(kept(await run(text))).toEqual(['EarlyEdge', 'Today', 'Tomorrow', 'TwoOut'])
   })
 
   it('keeps an event whose DTSTART it cannot read, and one with an unreadable DURATION', async () => {
