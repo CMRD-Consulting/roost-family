@@ -3,6 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { defineComponent } from 'vue'
 import RChips from './RChips.vue'
 import RTimeStepper from './RTimeStepper.vue'
+import RCodeInput from './RCodeInput.vue'
 import RPinPad from './RPinPad.vue'
 import RSheet from './RSheet.vue'
 import RInput from './RInput.vue'
@@ -146,6 +147,30 @@ describe('RTimeStepper', () => {
     await w.findAll('button')[0]!.trigger('click')
     expect(w.get('[aria-live="polite"]').text()).toContain('6:55')
     w.unmount()
+  })
+})
+
+describe('RCodeInput', () => {
+  it('keeps digits only, caps at the length, and mirrors them into boxes', async () => {
+    const w = mountModel(RCodeInput, '', { label: '6-digit code' })
+    const input = w.get('input')
+
+    await input.setValue('12a34b5678')
+
+    expect(w.props('modelValue')).toBe('123456')
+    expect(w.findAll('span').map((s: { text: () => string }) => s.text())).toEqual(['1', '2', '3', '4', '5', '6'])
+    expect(w.get('label').text()).toBe('6-digit code')
+    expect(input.attributes('inputmode')).toBe('numeric')
+  })
+
+  it('uppercases letters and numbers in code mode and submits on Enter', async () => {
+    const w = mountModel(RCodeInput, '', { label: 'Invite code', mode: 'code' })
+
+    await w.get('input').setValue('ro-ost1')
+    expect(w.props('modelValue')).toBe('ROOST1')
+
+    await w.get('input').trigger('keydown.enter')
+    expect(w.emitted('submit')).toHaveLength(1)
   })
 })
 

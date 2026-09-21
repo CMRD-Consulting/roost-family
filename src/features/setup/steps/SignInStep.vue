@@ -2,6 +2,7 @@
 import { onBeforeUnmount, ref } from 'vue'
 import WizardFrame from '../WizardFrame.vue'
 import RButton from '@/ui/RButton.vue'
+import RCodeInput from '@/ui/RCodeInput.vue'
 import RInput from '@/ui/RInput.vue'
 import { useReloadHold } from '@/app/reloadHolds'
 import { disposeAdultClient, newAdultClient, sendEmailCode, verifyEmailCode } from '@/session/adultSession'
@@ -70,7 +71,7 @@ onBeforeUnmount(() => {
     </template>
     <template v-else>
       <p class="text-[20px] text-ink-2">We sent a code to <strong>{{ state.email }}</strong>.</p>
-      <RInput v-model="code" label="6-digit code" inputmode="numeric" autocomplete="one-time-code" :maxlength="6" />
+      <RCodeInput v-model="code" label="6-digit code" autocomplete="one-time-code" @submit="verify" />
       <p v-if="isDev" class="text-[16px] text-ink-3">Local dev: read the code at http://127.0.0.1:55324</p>
       <div class="flex gap-3">
         <RButton :disabled="state.busy" @click="verify">Sign in</RButton>

@@ -10,6 +10,7 @@ import type { RoostClient } from '@/data/supabase'
 import { validateCode, validateEmail } from '@/features/setup/validation'
 import type { AdultSession } from '@/session/adultSession'
 import RButton from '@/ui/RButton.vue'
+import RCodeInput from '@/ui/RCodeInput.vue'
 import RInput from '@/ui/RInput.vue'
 import { useReloadHold } from '@/app/reloadHolds'
 import { useNightHold } from './useNightHold'
@@ -131,7 +132,7 @@ onBeforeUnmount(() => {
     </template>
     <template v-else>
       <p class="text-[20px] text-ink-2">We sent a code to <strong>{{ email }}</strong>.</p>
-      <RInput v-model="code" label="6-digit code" inputmode="numeric" autocomplete="one-time-code" :maxlength="6" />
+      <RCodeInput v-model="code" label="6-digit code" autocomplete="one-time-code" @submit="verify" />
       <p v-if="isDev" class="break-words text-[18px] text-ink-3">Local dev: read the code at http://127.0.0.1:55324</p>
       <div class="flex flex-wrap gap-3">
         <RButton v-if="cancellable" variant="secondary" @click="emit('cancel')">Cancel</RButton>
