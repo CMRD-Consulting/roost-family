@@ -94,6 +94,96 @@ describe('buildTodayModel', () => {
     ])
   })
 
+  it('puts tomorrow’s events under their own heading, after today’s', () => {
+    const m = buildTodayModel(input({
+      events: events([
+        event({ title: 'Swim lesson', startAt: '2026-09-14T20:00:00Z', endAt: '2026-09-14T21:00:00Z' }),
+        event({ title: 'Dentist', startAt: '2026-09-15T12:30:00Z', endAt: '2026-09-15T13:15:00Z', personType: 'member', personId: SAM }),
+        event({ title: 'Soccer', startAt: '2026-09-15T21:30:00Z', endAt: '2026-09-15T22:30:00Z' }),
+      ]),
+    }))
+    expect(m.rows.map((r) => r.title)).toEqual(['Swim lesson'])
+    expect(m.tomorrow?.label).toBe('Tomorrow · Tue')
+    expect(m.tomorrow?.rows.map((r) => [r.title, r.time])).toEqual([
+      ['Dentist', '8:30 – 9:15 AM'],
+      ['Soccer', '5:30 – 6:30 PM'],
+    ])
+    expect(m.tomorrow?.rows[0]?.person?.name).toBe('Sam')
+    expect(m.tomorrow?.more).toBe(0)
+    expect(m.empty).toBe(false)
+  })
+
+  it('has no tomorrow section when tomorrow is empty, or before the first answer', () => {
+    expect(buildTodayModel(input({ events: events([event({})]) })).tomorrow).toBeNull()
+    expect(buildTodayModel(input({ events: null })).tomorrow).toBeNull()
+  })
+
+  it('still says "Nothing else today" when today is over but tomorrow has events', () => {
+    const m = buildTodayModel(input({
+      events: events([event({ title: 'Dentist', startAt: '2026-09-15T12:30:00Z', endAt: '2026-09-15T13:15:00Z' })]),
+    }))
+    expect(m.rows).toEqual([])
+    expect(m.empty).toBe(true)
+    expect(m.tomorrow?.rows.map((r) => r.title)).toEqual(['Dentist'])
+  })
+
+  it('gives tomorrow only the room today leaves, and counts what did not fit', () => {
+    const today = [0, 1, 2, 3].map((i) =>
+      event({ title: `Today ${i}`, startAt: `2026-09-14T2${i}:00:00Z`, endAt: `2026-09-14T2${i}:30:00Z` }),
+    )
+    const tomorrow = [0, 1, 2].map((i) =>
+      event({ title: `Tomorrow ${i}`, startAt: `2026-09-15T1${i}:00:00Z`, endAt: `2026-09-15T1${i}:30:00Z` }),
+    )
+    const m = buildTodayModel(input({ events: events([...today, ...tomorrow]) }))
+    expect(m.rows).toHaveLength(4)
+    expect(m.tomorrow?.rows.map((r) => r.title)).toEqual(['Tomorrow 0', 'Tomorrow 1'])
+    expect(m.tomorrow?.more).toBe(1)
+  })
+
+  it('drops the tomorrow section entirely when today already fills the panel', () => {
+    const today = [0, 1, 2, 3, 4, 5].map((i) =>
+      event({ title: `Today ${i}`, startAt: `2026-09-14T2${i % 4}:0${i}:00Z`, endAt: '2026-09-14T23:59:00Z' }),
+    )
+    const m = buildTodayModel(input({
+      events: events([...today, event({ title: 'Dentist', startAt: '2026-09-15T12:30:00Z', endAt: '2026-09-15T13:15:00Z' })]),
+    }))
+    expect(m.rows).toHaveLength(6)
+    expect(m.tomorrow).toBeNull()
+  })
+
+  it('shows an all-day event that spans both days under each, and a night-owl event only under today', () => {
+    const m = buildTodayModel(input({
+      events: events([
+        event({ title: 'Sam in Denver', startAt: '2026-09-14T04:00:00Z', endAt: '2026-09-16T04:00:00Z', allDay: true, personType: 'member', personId: SAM }),
+        event({ title: 'Late flight', startAt: '2026-09-15T02:00:00Z', endAt: '2026-09-15T05:00:00Z' }),
+      ]),
+    }))
+    expect(m.rows.map((r) => [r.title, r.time])).toEqual([
+      ['Sam in Denver', 'All day'],
+      ['Late flight', '10:00 PM – 1:00 AM'],
+    ])
+    expect(m.tomorrow?.rows.map((r) => r.title)).toEqual(['Sam in Denver'])
+  })
+
+  it('moves tomorrow’s events up to today the moment the clock passes midnight', () => {
+    const list = events([event({ title: 'Dentist', startAt: '2026-09-15T12:30:00Z', endAt: '2026-09-15T13:15:00Z' })])
+    // 00:01 in New York on the 15th: the same answer, one minute later.
+    const m = buildTodayModel(input({ events: list, now: new Date('2026-09-15T04:01:00Z') }))
+    expect(m.rows.map((r) => r.title)).toEqual(['Dentist'])
+    expect(m.tomorrow).toBeNull()
+  })
+
+  it('keeps the leave-by on a tomorrow event that is already within two hours', () => {
+    const m = buildTodayModel(input({
+      now: new Date('2026-09-15T03:00:00Z'), // 11:00 PM on the 14th
+      events: events([
+        event({ title: 'Red-eye', startAt: '2026-09-15T04:30:00Z', endAt: '2026-09-15T06:00:00Z', location: 'CLT' }),
+      ]),
+    }))
+    expect(m.rows).toEqual([])
+    expect(m.tomorrow?.rows.map((r) => [r.title, r.leave])).toEqual([['Red-eye', 'Leave in 1 h 10 min']])
+  })
+
   it('says "Nothing else today" when nothing is left, and nothing at all before the first answer', () => {
     expect(buildTodayModel(input({})).empty).toBe(true)
     const loading = buildTodayModel(input({ events: null }))

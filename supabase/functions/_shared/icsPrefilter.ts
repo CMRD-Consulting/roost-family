@@ -9,7 +9,8 @@
  *
  * What survives: the VCALENDAR header properties, every VTIMEZONE block, and the VEVENT blocks that could matter
  * today — anything with RRULE or RDATE (a series may have an instance today), anything with RECURRENCE-ID (the
- * parser needs overrides), and anything whose DTSTART/DTEND date portion falls within ±2 days of the household day.
+ * parser needs overrides), and anything whose DTSTART/DTEND date portion falls within ±2 days of the household day
+ * (of the first and last day, when a display asks for today and tomorrow: `lastDay`).
  * The comparison is textual on YYYYMMDD and deliberately generous: zones, all-day values and DURATION only have to
  * be *nearly* right here, because `parseIcsForDay` and `mergeDayEvents` still decide what is really shown. Anything
  * unparseable is kept, never dropped. VTODO, VJOURNAL and VFREEBUSY are dropped: the parser never reads them.
@@ -61,6 +62,8 @@ export interface IcsPrefilterResult extends IcsPrefilterCounts {
 export interface IcsPrefilterOptions {
   /** The household day as YYYYMMDD; without it no VEVENT is dropped. */
   day?: string | null
+  /** The last household day wanted, when that is more than `day` alone (today and tomorrow). */
+  lastDay?: string | null
   /** Stop at the first VEVENT: `calendar-connect-ics` only needs the header and X-WR-CALNAME. */
   headerOnly?: boolean
   slackDays?: number
@@ -81,6 +84,18 @@ export function icsDayKey(window: DayWindow, timeZone: string): string {
 }
 
 /** YYYYMMDD `days` after `key` (negative moves back). */
+/**
+ * The first and last household day of a window, for `day` and `lastDay`. Read 12 hours in from each end, which is
+ * inside that day whatever DST does to midnight; the midpoint `icsDayKey` uses is only a day for a one-day window.
+ */
+export function icsDayRange(window: DayWindow, timeZone: string): { day: string; lastDay: string } {
+  const key = (ms: number) => {
+    const w = wallTimeAt(ms, timeZone)
+    return `${pad(w.year, 4)}${pad(w.month, 2)}${pad(w.day, 2)}`
+  }
+  return { day: key(window.dayStartUtc.getTime() + 12 * 3_600_000), lastDay: key(window.dayEndUtc.getTime() - 12 * 3_600_000) }
+}
+
 export function shiftDay(key: string, days: number): string {
   const d = new Date(Date.UTC(Number(key.slice(0, 4)), Number(key.slice(4, 6)) - 1, Number(key.slice(6, 8)) + days))
   return `${pad(d.getUTCFullYear(), 4)}${pad(d.getUTCMonth() + 1, 2)}${pad(d.getUTCDate(), 2)}`
@@ -136,7 +151,7 @@ export async function prefilterIcsStream(body: ReadableStream<Uint8Array> | null
   const maxLine = options.maxLineBytes ?? ICS_MAX_LINE_BYTES
   const slack = options.slackDays ?? ICS_PREFILTER_SLACK_DAYS
   const lo = options.day ? shiftDay(options.day, -slack) : null
-  const hi = options.day ? shiftDay(options.day, slack) : null
+  const hi = options.day ? shiftDay(options.lastDay ?? options.day, slack) : null
 
   const header: string[] = []
   const zones: string[] = []

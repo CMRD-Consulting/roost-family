@@ -20,7 +20,7 @@
  *   error class names (never titles, locations, URLs or tokens).
  */
 import { CalendarProviderError, type ConnectionStatus } from '../_shared/calendarProvider.ts'
-import { householdDayWindow, mergeDayEvents, type DayEvent, type DayWindow, type SelectionMeta, type SourceEvent } from '../_shared/events.ts'
+import { householdDayWindow, mergeDayEvents, type DayEvent, type DayWindow, type EventDays, type SelectionMeta, type SourceEvent } from '../_shared/events.ts'
 import { IcsFetchError } from '../_shared/icsFetch.ts'
 import type { CalendarSources } from './sources.ts'
 
@@ -100,6 +100,8 @@ export interface CollectOptions {
   sources: CalendarSources
   memory: EventsMemory
   now: Date
+  /** Today (the default, and all an older client knows to ask for), or today and tomorrow. */
+  days?: EventDays
   deadlineMs?: number
   concurrency?: number
   log?: (message: string) => void
@@ -138,7 +140,7 @@ function pruneCache(cache: Map<string, CacheEntry>, nowMs: number): void {
 
 function cacheKey(connection: ConnectionRow, selections: SelectionRow[], window: DayWindow): string {
   const ids = selections.map((s) => s.id).sort().join(',')
-  return `${connection.id}|${window.dayStartUtc.toISOString()}|${ids}`
+  return `${connection.id}|${window.dayStartUtc.toISOString()}|${window.dayEndUtc.toISOString()}|${ids}`
 }
 
 async function fetchConnection(
@@ -219,7 +221,7 @@ export async function collectDayEvents(householdId: string, options: CollectOpti
 
   const data = await store.load(householdId)
   if (!data) return null
-  const window = householdDayWindow(now, data.timeZone)
+  const window = householdDayWindow(now, data.timeZone, options.days ?? 1)
   pruneCache(memory.results, nowMs)
 
   // Who each selection belongs to; a selection without a known person is not shown.

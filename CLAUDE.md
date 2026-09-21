@@ -29,6 +29,9 @@
 - Production is the hosted project `njhwxoybuxwwtdvebdou` (README "Supabase (production)"): `supabase db push` for migrations (never `--include-seed`), `bash supabase/push-production-config.sh` for auth settings through `[remotes.production]` in `config.toml` (never `supabase config push` by hand: from the wrong folder it pushes CLI defaults over production), `supabase functions deploy --use-api` for functions. Its Edge Functions get the `sb_publishable_…`/`sb_secret_…` keys as `SUPABASE_ANON_KEY`/`SUPABASE_SERVICE_ROLE_KEY`, not the legacy JWTs.
 - Status: local Supabase requires Docker; migrations can be validated without Docker via `supabase/manual-checks/validate-local.sh` (plain Postgres + `local_shim.sql`).
 
+## Calendar
+- `calendar-events` answers today only unless the caller asks for `days: 2` (today and tomorrow). Keep that default: a display that doesn't know about tomorrow would list tomorrow's events as today's. The client asks through `EVENT_DAYS` in `src/data/calendarApi.ts`; `todayPanelModel` splits the answer by the tablet's own clock, so midnight moves rows without a refetch.
+
 ## UI rules (spec §4)
 - In-the-moment surfaces: 60 pt touch targets; deliberate surfaces (Settings, wizard): 44 pt.
 - Main screen text: glanceable ≥ 24 pt, secondary ≥ 18 pt, nothing < 16 pt.

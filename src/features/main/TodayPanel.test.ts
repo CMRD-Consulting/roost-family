@@ -98,6 +98,39 @@ describe('TodayPanel', () => {
     expect(mountPanel(old, { updatedNote: null }).get('[data-testid="today-stale"]').text()).toBe('Calendar updated 45 min ago')
   })
 
+  it('shows tomorrow’s events under their own heading, below today’s', () => {
+    const w = mountPanel(
+      result([
+        event({ title: 'Swim lesson' }),
+        event({ title: 'Dentist', startAt: '2026-09-15T12:30:00Z', endAt: '2026-09-15T13:15:00Z' }),
+      ]),
+    )
+    expect(w.findAll('[data-testid="today-event"]').map((r) => r.text())).toHaveLength(1)
+    expect(w.get('[data-testid="tomorrow-heading"]').text()).toBe('Tomorrow · Tue')
+    const tomorrow = w.findAll('[data-testid="tomorrow-event"]')
+    expect(tomorrow).toHaveLength(1)
+    expect(tomorrow[0]!.text()).toContain('Dentist')
+    expect(w.find('[data-testid="tomorrow-more"]').exists()).toBe(false)
+    w.unmount()
+  })
+
+  it('has no tomorrow heading when there is nothing tomorrow', () => {
+    const w = mountPanel(result([event({})]))
+    expect(w.find('[data-testid="tomorrow-heading"]').exists()).toBe(false)
+    w.unmount()
+  })
+
+  it('still says "Nothing else today" above tomorrow’s events, and counts what did not fit', () => {
+    const many = [0, 1, 2, 3, 4, 5, 6].map((i) =>
+      event({ title: `Tomorrow ${i}`, startAt: `2026-09-15T1${i}:00:00Z`, endAt: `2026-09-15T1${i}:30:00Z` }),
+    )
+    const w = mountPanel(result(many))
+    expect(w.text()).toContain('Nothing else today')
+    expect(w.findAll('[data-testid="tomorrow-event"]')).toHaveLength(6)
+    expect(w.get('[data-testid="tomorrow-more"]').text()).toBe('+1 more tomorrow')
+    w.unmount()
+  })
+
   it('says "Nothing else today" when nothing is left', () => {
     expect(mountPanel(result([])).text()).toContain('Nothing else today')
     expect(mountPanel(null).text()).not.toContain('Nothing else today')

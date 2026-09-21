@@ -50,7 +50,39 @@ describe('calendar-events handler', () => {
     expect(res.headers.get('Cache-Control')).toBe('no-store')
     expect(await res.json()).toEqual(RESPONSE)
     expect(d.callerHousehold).toHaveBeenCalledWith(expect.any(Request), HOUSEHOLD)
-    expect(d.collect).toHaveBeenCalledWith(HOUSEHOLD, NOW)
+    expect(d.collect).toHaveBeenCalledWith(HOUSEHOLD, NOW, 1)
+  })
+
+  it('collects 2 days when asked, by GET ?days=2 or POST { days: 2 }; a client that says nothing gets today only', async () => {
+    const d = deps()
+    const handler = createEventsHandler(d)
+    const post = (body: unknown) =>
+      new Request(ENDPOINT, { method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    expect((await handler(new Request(`${ENDPOINT}?householdId=${HOUSEHOLD}&days=2`, { headers: auth }))).status).toBe(200)
+    expect((await handler(post({ householdId: HOUSEHOLD, days: 2 }))).status).toBe(200)
+    expect((await handler(post({ householdId: HOUSEHOLD }))).status).toBe(200)
+    expect((await handler(post({ householdId: HOUSEHOLD, days: 1 }))).status).toBe(200)
+    expect(vi.mocked(d.collect).mock.calls.map((c) => c[2])).toEqual([2, 2, 1, 1])
+  })
+
+  it('rejects any other number of days before looking at the caller', async () => {
+    const d = deps()
+    const handler = createEventsHandler(d)
+    const post = (body: unknown) =>
+      new Request(ENDPOINT, { method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    for (const req of [
+      new Request(`${ENDPOINT}?householdId=${HOUSEHOLD}&days=3`, { headers: auth }),
+      new Request(`${ENDPOINT}?householdId=${HOUSEHOLD}&days=0`, { headers: auth }),
+      new Request(`${ENDPOINT}?householdId=${HOUSEHOLD}&days=two`, { headers: auth }),
+      post({ householdId: HOUSEHOLD, days: 7 }),
+      post({ householdId: HOUSEHOLD, days: '2' }),
+      post({ householdId: HOUSEHOLD, days: 1.5 }),
+      post({ householdId: HOUSEHOLD, days: null }),
+    ]) {
+      expect((await handler(req)).status).toBe(400)
+    }
+    expect(d.callerHousehold).not.toHaveBeenCalled()
+    expect(d.collect).not.toHaveBeenCalled()
   })
 
   it('accepts POST { householdId }', async () => {
