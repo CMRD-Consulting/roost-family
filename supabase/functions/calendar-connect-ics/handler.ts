@@ -8,7 +8,8 @@
  *   400 { error: 'invalid_request' }  body is not { householdId: uuid, url }
  *   400 { error: 'invalid_url' }      not https/webcal, credentials in the URL, or a non-default port
  *   401/403 { error: 'forbidden' }    not a full sign-in owner or adult of the household
- *   413 { error: 'too_large' }        over 1 MB
+ *   413 { error: 'too_large' }        the server declares a body over the 20 MB download budget (all but
+ *                                     unreachable: only the header is read, and the read stops at the first VEVENT)
  *   422 { error: 'not_a_calendar' }   the response is not an iCalendar file
  *   422 { error: 'unreachable' }      network failure, timeout, an HTTP error (including a revoked link), or a host
  *                                     that is not public (deliberately the same answer, so internal names can't be
@@ -44,7 +45,10 @@ export interface ConnectIcsDeps {
   /** The caller's membership id when they are a full sign-in owner or adult; throws AuthError otherwise. */
   requireFullSignInAdult(req: Request, householdId: string): Promise<string>
   allowPrivateHosts: boolean
-  /** Fetches a normalized URL with the SSRF, size, redirect and time limits (`fetchIcsText`). */
+  /**
+   * Fetches a normalized URL with the SSRF, size, redirect and time limits (`fetchIcsFiltered`), reading only the
+   * calendar header: connecting is about the link and its name, never its events.
+   */
   fetchIcs(url: URL): Promise<string>
   /** `X-WR-CALNAME` or null; throws IcsParseError when the text is not an iCalendar. */
   readCalendarName(text: string): string | null

@@ -455,7 +455,7 @@ describe('calendarConnectMessage', () => {
   it('words each failure for the adult', () => {
     expect(calendarConnectMessage(new CalendarError('invalid_url'))).toMatch(/https:\/\/ or webcal:\/\//)
     expect(calendarConnectMessage(new CalendarError('not_a_calendar'))).toMatch(/isn’t a calendar/)
-    expect(calendarConnectMessage(new CalendarError('too_large'))).toMatch(/too big/)
+    expect(calendarConnectMessage(new CalendarError('too_large'))).toMatch(/unusually large/)
     expect(calendarConnectMessage(new CalendarError('unreachable'))).toMatch(/We couldn’t reach that calendar link/)
     expect(calendarConnectMessage(new CalendarError('expired'))).toBe('That took too long. Connect again.')
     expect(calendarConnectMessage(new CalendarError('forbidden'))).toMatch(/sign-in/)

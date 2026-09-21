@@ -5,7 +5,8 @@
  */
 import { createClient } from 'npm:@supabase/supabase-js@2'
 import { createCallerAuth, type RpcClient } from './auth.ts'
-import { fetchIcsText } from './icsFetch.ts'
+import { fetchIcsFiltered } from './icsFetch.ts'
+import type { IcsPrefilterOptions, IcsPrefilterResult } from './icsPrefilter.ts'
 import { hmacSha256Hex } from './pkce.ts'
 import { readCalendarRuntimeConfig } from './runtimeConfig.ts'
 
@@ -53,8 +54,9 @@ export async function resolveHost(hostname: string): Promise<string[]> {
   return results.flatMap((r) => (r.status === 'fulfilled' ? r.value : []))
 }
 
-export function fetchIcs(url: URL, signal?: AbortSignal): Promise<string> {
-  return fetchIcsText(url, { fetch, resolveHost, allowPrivateHosts, signal })
+/** The reduced calendar and what reading it cost; `prefilter` says which day to keep, or to stop at the header. */
+export function fetchIcs(url: URL, prefilter: IcsPrefilterOptions, signal?: AbortSignal): Promise<IcsPrefilterResult> {
+  return fetchIcsFiltered(url, { fetch, resolveHost, allowPrivateHosts, signal }, prefilter)
 }
 
 /** A PostgREST error as a thrown Error that keeps its SQLSTATE `code` (the message may echo arguments; never log it). */

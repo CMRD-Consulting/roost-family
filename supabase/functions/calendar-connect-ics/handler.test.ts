@@ -2,7 +2,7 @@ import ICAL from 'ical.js'
 import { describe, expect, it, vi } from 'vitest'
 import { AuthError } from '../_shared/auth.ts'
 import { createIcsParser } from '../_shared/ics.ts'
-import { fetchIcsText, type IcsFetchOptions } from '../_shared/icsFetch.ts'
+import { fetchIcsFiltered, type IcsFetchOptions } from '../_shared/icsFetch.ts'
 import { hmacSha256Hex } from '../_shared/pkce.ts'
 import { createConnectIcsHandler, icsLabel, type ConnectIcsDeps } from './handler.ts'
 
@@ -44,7 +44,7 @@ function deps(overrides: Partial<ConnectIcsDeps> = {}, fetchOverrides: Partial<I
   const d: ConnectIcsDeps = {
     requireFullSignInAdult: vi.fn(async () => MEMBERSHIP),
     allowPrivateHosts: false,
-    fetchIcs: vi.fn((url: URL) => fetchIcsText(url, options)),
+    fetchIcs: vi.fn(async (url: URL) => (await fetchIcsFiltered(url, options, { headerOnly: true })).text),
     readCalendarName: (text) => parser.readIcsCalendarName(text),
     fingerprint: vi.fn((value: string) => hmacSha256Hex(KEY, value)),
     recordConnectAttempt: vi.fn(async () => true),
@@ -220,17 +220,33 @@ describe('calendar-connect-ics handler', () => {
     expect(options.fetch).not.toHaveBeenCalled()
   })
 
-  it('reports an oversized calendar as too_large', async () => {
-    const big = new ReadableStream<Uint8Array>({
-      pull(controller) {
-        controller.enqueue(new Uint8Array(256_000))
-      },
-    })
-    const { d } = deps({}, { fetch: vi.fn(async () => new Response(big)) })
+  it('reports a calendar that declares more than the download budget as too_large', async () => {
+    const fetch = vi.fn(async () => new Response(ics('Ivy school'), { headers: { 'Content-Length': String(30_000_000) } }))
+    const { d } = deps({}, { fetch })
     const { res, body } = await call(d, post({ householdId: HOUSEHOLD, url: FEED }))
     expect(res.status).toBe(413)
     expect(body).toEqual({ error: 'too_large' })
     expect(d.connect).not.toHaveBeenCalled()
+  })
+
+  it('connects a calendar with years of history without reading past its header', async () => {
+    let pulled = 0
+    const head = new TextEncoder().encode('BEGIN:VCALENDAR\r\nVERSION:2.0\r\nX-WR-CALNAME:Ivy school\r\n')
+    const event = new TextEncoder().encode('BEGIN:VEVENT\r\nUID:x@t\r\nDTSTART:20100101T120000Z\r\nSUMMARY:Old\r\nEND:VEVENT\r\n'.repeat(2_000))
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(head)
+      },
+      pull(controller) {
+        pulled++
+        controller.enqueue(event.slice())
+      },
+    })
+    const { d } = deps({}, { fetch: vi.fn(async () => new Response(body)) })
+    const { res, body: answer } = await call(d, post({ householdId: HOUSEHOLD, url: FEED }))
+    expect(res.status).toBe(200)
+    expect(answer.name).toBe('Ivy school')
+    expect(pulled).toBeLessThanOrEqual(2)
   })
 
   it('reports something that is not an iCalendar as not_a_calendar', async () => {

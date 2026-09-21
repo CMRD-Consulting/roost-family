@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { IcsFetchError, fetchIcsText, isPrivateAddress, normalizeIcsUrl, type IcsFetchOptions } from './icsFetch.ts'
+import { IcsFetchError, fetchIcsFiltered, isPrivateAddress, normalizeIcsUrl, type IcsFetchOptions } from './icsFetch.ts'
 
 const ICS = 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n'
 
@@ -11,6 +11,11 @@ function codeOf(run: () => unknown): string | null {
     throw e
   }
   return null
+}
+
+/** The reduced calendar text, so the checks below read as they did before the pre-filter. */
+async function fetchIcsText(url: URL, options: IcsFetchOptions): Promise<string> {
+  return (await fetchIcsFiltered(url, options)).text
 }
 
 async function asyncCodeOf(promise: Promise<unknown>): Promise<string | null> {
@@ -123,7 +128,7 @@ describe('isPrivateAddress', () => {
   })
 })
 
-describe('fetchIcsText', () => {
+describe('fetchIcsFiltered', () => {
   const url = new URL('https://calendar.example.com/feed.ics')
 
   it('fetches the text with a manual redirect policy', async () => {
@@ -209,25 +214,74 @@ describe('fetchIcsText', () => {
     expect(await asyncCodeOf(fetchIcsText(url, options({ fetch })))).toBe('unreachable')
   })
 
-  it('refuses a declared Content-Length over the cap without reading', async () => {
-    const fetch = vi.fn(async () => new Response('x', { headers: { 'Content-Length': String(2_000_000) } }))
-    expect(await asyncCodeOf(fetchIcsText(url, options({ fetch, maxBytes: 1_000_000 })))).toBe('too_large')
+  it('refuses a declared Content-Length over the download budget without reading', async () => {
+    const fetch = vi.fn(async () => new Response('x', { headers: { 'Content-Length': String(30_000_000) } }))
+    expect(await asyncCodeOf(fetchIcsText(url, options({ fetch, maxDownloadBytes: 20_000_000 })))).toBe('too_large')
   })
 
-  it('stops streaming a body that grows past the cap and cancels it', async () => {
+  it('ignores Content-Length on a compressed response (it counts compressed bytes; the budget counts decoded ones)', async () => {
+    const fetch = vi.fn(async () => new Response(ICS, { headers: { 'Content-Length': String(30_000_000), 'Content-Encoding': 'gzip' } }))
+    expect(await fetchIcsText(url, options({ fetch, maxDownloadBytes: 20_000_000 }))).toBe(ICS)
+  })
+
+  it('stops a body that grows past the download budget, cancels it, and reports what it kept as partial', async () => {
     let pulled = 0
     const cancel = vi.fn()
+    const chunk = new TextEncoder().encode('BEGIN:VEVENT\r\nUID:x@t\r\nDTSTART:19990101T120000Z\r\nSUMMARY:Old\r\nEND:VEVENT\r\n'.repeat(1_000))
     const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('BEGIN:VCALENDAR\r\nVERSION:2.0\r\n'))
+      },
       pull(controller) {
         pulled++
-        controller.enqueue(new Uint8Array(100_000))
+        controller.enqueue(chunk.slice())
       },
       cancel,
     })
     const fetch = vi.fn(async () => new Response(body))
-    expect(await asyncCodeOf(fetchIcsText(url, options({ fetch, maxBytes: 1_000_000 })))).toBe('too_large')
-    expect(pulled).toBeLessThan(15)
+    const out = await fetchIcsFiltered(url, options({ fetch, maxDownloadBytes: 1_000_000 }), { day: '20260921' })
+    expect(out.partial).toBe(true)
+    expect(out.downloadLimitHit).toBe(true)
+    expect(out.eventsKept).toBe(0)
+    expect(out.text).toBe(ICS)
+    expect(pulled).toBeLessThan(25)
     expect(cancel).toHaveBeenCalled()
+  })
+
+  it('reduces the body to the household day as it streams', async () => {
+    const feed = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'BEGIN:VEVENT',
+      'UID:old@t',
+      'DTSTART:19990101T120000Z',
+      'DTEND:19990101T130000Z',
+      'SUMMARY:Ancient',
+      'END:VEVENT',
+      'BEGIN:VEVENT',
+      'UID:now@t',
+      'DTSTART:20260921T150000Z',
+      'DTEND:20260921T160000Z',
+      'SUMMARY:Swim',
+      'END:VEVENT',
+      'END:VCALENDAR',
+      '',
+    ].join('\r\n')
+    const fetch = vi.fn(async () => new Response(feed))
+    const out = await fetchIcsFiltered(url, options({ fetch }), { day: '20260921' })
+    expect(out.eventsSeen).toBe(2)
+    expect(out.eventsKept).toBe(1)
+    expect(out.text).toContain('SUMMARY:Swim')
+    expect(out.text).not.toContain('Ancient')
+    expect(out.partial).toBe(false)
+  })
+
+  it('stops at the first VEVENT for headerOnly', async () => {
+    const feed = `BEGIN:VCALENDAR\r\nVERSION:2.0\r\nX-WR-CALNAME:Ivy school\r\n${'BEGIN:VEVENT\r\nUID:x@t\r\nEND:VEVENT\r\n'.repeat(5_000)}END:VCALENDAR\r\n`
+    const fetch = vi.fn(async () => new Response(feed))
+    const out = await fetchIcsFiltered(url, options({ fetch }), { headerOnly: true })
+    expect(out.eventsSeen).toBe(0)
+    expect(out.text).toBe('BEGIN:VCALENDAR\r\nVERSION:2.0\r\nX-WR-CALNAME:Ivy school\r\nEND:VCALENDAR\r\n')
   })
 
   it('times out a server that never finishes', async () => {

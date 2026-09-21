@@ -138,7 +138,7 @@ describe('CalendarsSection', () => {
     it.each([
       ['invalid_url', 'That doesn’t look like a calendar link. Paste the whole link, starting with https:// or webcal://.'],
       ['not_a_calendar', 'That link isn’t a calendar. Copy the secret iCal address (it usually ends in .ics) and try again.'],
-      ['too_large', 'That calendar is too big to show. Try a calendar with fewer events.'],
+      ['too_large', 'That calendar is unusually large. Try a link with fewer calendars in it.'],
       ['unreachable', 'We couldn’t reach that calendar link. Check the link and try again.'],
       ['forbidden', 'Roost Family didn’t accept your sign-in. Sign in again.'],
       ['rate_limited', 'Too many calendar links added recently. Try again in an hour.'],

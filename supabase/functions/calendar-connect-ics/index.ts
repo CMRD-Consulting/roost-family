@@ -13,7 +13,9 @@ const parser = createIcsParser(ical)
 const handler = createConnectIcsHandler({
   requireFullSignInAdult: (req, householdId) => callerAuth.requireFullSignInAdult(req, householdId),
   allowPrivateHosts,
-  fetchIcs: (url) => fetchIcs(url),
+  // Only the header is needed (X-WR-CALNAME), so the read stops before the first VEVENT: connecting a calendar with
+  // ten years of history costs a few KB and cannot hit a size limit.
+  fetchIcs: async (url) => (await fetchIcs(url, { headerOnly: true })).text,
   readCalendarName: (text) => parser.readIcsCalendarName(text),
   fingerprint,
   recordConnectAttempt: (membershipId) => svc<boolean>('svc_record_calendar_connect_attempt', { p_membership_id: membershipId }),

@@ -15,7 +15,7 @@ import { createIcsSource, createOAuthSource, type CalendarSources } from './sour
 const memory = createEventsMemory()
 
 const sources: CalendarSources = {
-  ics: createIcsSource((url, signal) => fetchIcs(url, signal), createIcsParser(ical)),
+  ics: createIcsSource((url, day, signal) => fetchIcs(url, { day }, signal), createIcsParser(ical)),
   google: createOAuthSource('google', fetch, oauthClient('google')),
   microsoft: createOAuthSource('microsoft', fetch, oauthClient('microsoft')),
 }

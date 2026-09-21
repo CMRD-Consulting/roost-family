@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { CalendarProviderError, type ConnectionStatus } from '../_shared/calendarProvider.ts'
 import { createIcsParser } from '../_shared/ics.ts'
 import { IcsFetchError } from '../_shared/icsFetch.ts'
+import type { IcsPrefilterResult } from '../_shared/icsPrefilter.ts'
 import {
   collectDayEvents,
   createEventsMemory,
@@ -83,8 +84,30 @@ function fakeStore(data: Partial<HouseholdCalendars> = {}, secrets: Record<strin
   return { store, calls }
 }
 
-function icsSources(fetchIcs: (url: URL, signal: AbortSignal) => Promise<string> = async () => FIXTURE): CalendarSources {
-  return { ics: createIcsSource(fetchIcs, parser), google: null, microsoft: null }
+/** What the streaming pre-filter hands back for an already-small fixture. */
+function prefiltered(text: string, partial = false): IcsPrefilterResult {
+  return {
+    text,
+    bytesRead: text.length,
+    eventsSeen: 0,
+    eventsKept: 0,
+    retainedBytes: text.length,
+    linesDropped: 0,
+    downloadLimitHit: partial,
+    retainedLimitHit: false,
+    partial,
+  }
+}
+
+function icsSources(
+  fetchIcs: (url: URL, day: string, signal: AbortSignal) => Promise<string> = async () => FIXTURE,
+  partial = false,
+): CalendarSources {
+  return {
+    ics: createIcsSource(async (url, day, signal) => prefiltered(await fetchIcs(url, day, signal), partial), parser),
+    google: null,
+    microsoft: null,
+  }
 }
 
 const collect = (store: CalendarStore, sources: CalendarSources, memory: EventsMemory = createEventsMemory(), extra: Record<string, unknown> = {}) =>
@@ -124,12 +147,20 @@ describe('collectDayEvents: ICS', () => {
       partial: false,
       generatedAt: NOW.toISOString(),
     })
-    expect(fetchIcs).toHaveBeenCalledWith(new URL('https://calendar.example.com/conn-ics.ics'), expect.any(AbortSignal))
+    expect(fetchIcs).toHaveBeenCalledWith(new URL('https://calendar.example.com/conn-ics.ics'), '20260914', expect.any(AbortSignal))
     for (const event of result!.events) {
       expect(Object.keys(event).sort()).toEqual(['allDay', 'calendarColor', 'endAt', 'location', 'personId', 'personType', 'startAt', 'title'])
     }
     const serialized = JSON.stringify(result)
     for (const leaked of ['goggles', '4321', 'coach@example.com', 'school@example.com', 'secret-link']) expect(serialized).not.toContain(leaked)
+  })
+
+  it('reports a calendar the pre-filter had to cut short as partial, with the events it did read', async () => {
+    const { store } = fakeStore()
+    const result = await collect(store, icsSources(async () => FIXTURE, true))
+    expect(result!.partial).toBe(true)
+    expect(result!.events.length).toBe(2)
+    expect(result!.connections[0]!.status).toBe('ok')
   })
 
   it('serves a connection from memory within 5 minutes and fetches again after', async () => {
@@ -273,7 +304,7 @@ describe('collectDayEvents: Google and Microsoft', () => {
       )
     })
     const { store, calls } = fakeStore({ connections: [googleConnection], selections: [samCalendar, ivyCalendar] })
-    const sources: CalendarSources = { ics: createIcsSource(async () => FIXTURE, parser), google: createOAuthSource('google', fetch, { clientId: 'id', clientSecret: 'secret' }), microsoft: null }
+    const sources: CalendarSources = { ics: createIcsSource(async () => prefiltered(FIXTURE), parser), google: createOAuthSource('google', fetch, { clientId: 'id', clientSecret: 'secret' }), microsoft: null }
     const result = await collect(store, sources)
     expect(calls.gone).toEqual(['sel-ivy'])
     expect(calls.setStatus).toEqual([])
@@ -296,7 +327,7 @@ describe('collectDayEvents: Google and Microsoft', () => {
         url.startsWith('https://login.microsoftonline.com/') ? tokenResponse({ refresh_token: issued }) : new Response(JSON.stringify({ value: [] })),
       )
       const { store, calls } = fakeStore({ connections: [msConnection], selections: [msCalendar] })
-      const sources: CalendarSources = { ics: createIcsSource(async () => FIXTURE, parser), google: null, microsoft: createOAuthSource('microsoft', fetch, { clientId: 'id', clientSecret: 's' }) }
+      const sources: CalendarSources = { ics: createIcsSource(async () => prefiltered(FIXTURE), parser), google: null, microsoft: createOAuthSource('microsoft', fetch, { clientId: 'id', clientSecret: 's' }) }
       expect((await collect(store, sources))!.connections[0]!.status).toBe('ok')
       expect(calls.updateSecret).toEqual(expected)
     }
@@ -305,7 +336,7 @@ describe('collectDayEvents: Google and Microsoft', () => {
   it('marks a revoked grant auth_expired and hides that connection\'s events', async () => {
     const fetch = vi.fn(async () => new Response(JSON.stringify({ error: 'invalid_grant' }), { status: 400 }))
     const { store, calls } = fakeStore({ connections: [googleConnection], selections: [samCalendar] })
-    const sources: CalendarSources = { ics: createIcsSource(async () => FIXTURE, parser), google: createOAuthSource('google', fetch, { clientId: 'id', clientSecret: 's' }), microsoft: null }
+    const sources: CalendarSources = { ics: createIcsSource(async () => prefiltered(FIXTURE), parser), google: createOAuthSource('google', fetch, { clientId: 'id', clientSecret: 's' }), microsoft: null }
     expect(await collect(store, sources)).toMatchObject({ events: [], partial: true, connections: [{ status: 'auth_expired' }] })
     expect(calls.setStatus).toEqual([['conn-g', 'auth_expired']])
   })
@@ -328,7 +359,7 @@ describe('collectDayEvents: concurrency and deadline', () => {
       selections: [selection({ id: 'sel-slow', connectionId: 'conn-slow', externalCalendarId: 'x' }), selection()],
     })
     const started = Date.now()
-    const result = await collect(store, { ics: createIcsSource(async () => FIXTURE, parser), google: slow, microsoft: null }, createEventsMemory(), { deadlineMs: 50 })
+    const result = await collect(store, { ics: createIcsSource(async () => prefiltered(FIXTURE), parser), google: slow, microsoft: null }, createEventsMemory(), { deadlineMs: 50 })
     expect(Date.now() - started).toBeLessThan(2000)
     expect(result!.connections).toEqual([
       { id: 'conn-slow', ownerName: 'Alex', status: 'unreachable' },
@@ -355,7 +386,7 @@ describe('collectDayEvents: concurrency and deadline', () => {
       connections: [connection({ id: 'conn-ms', provider: 'microsoft' })],
       selections: [selection({ id: 'sel-ms', connectionId: 'conn-ms', externalCalendarId: 'cal' })],
     })
-    const result = await collect(store, { ics: createIcsSource(async () => FIXTURE, parser), google: null, microsoft: late }, createEventsMemory(), {
+    const result = await collect(store, { ics: createIcsSource(async () => prefiltered(FIXTURE), parser), google: null, microsoft: late }, createEventsMemory(), {
       deadlineMs: 20,
       waitUntil,
     })

@@ -8,7 +8,9 @@
  *   and 6to4 forms); single-label names, `localhost` and names under `.localhost`, `.internal`, `.local`,
  *   `.localdomain` and `.home.arpa` are refused without resolving.
  * - Fetching: a 10 s timeout for the whole exchange (redirects and body), at most 3 redirects with every hop checked
- *   the same way, and a 1 MB body cap enforced while streaming.
+ *   the same way, and a 20 MB download budget enforced while streaming. The body is never held: `icsPrefilter.ts`
+ *   reduces it to the blocks today could need as it arrives (spec §5.5), so a years-deep personal export costs tens
+ *   of KB of memory instead of failing.
  *
  * `allowPrivateHosts` (the `CALENDAR_ALLOW_PRIVATE_HOSTS=1` environment variable, off by default) skips the host
  * checks and also allows `http://` and non-default ports, so a local `supabase functions serve` can subscribe to a
@@ -20,6 +22,7 @@
  * Error messages never contain the URL (a subscription link is a secret).
  */
 import type { FetchLike } from './calendarProvider.ts'
+import { ICS_MAX_DOWNLOAD_BYTES, prefilterIcsStream, type IcsPrefilterOptions, type IcsPrefilterResult } from './icsPrefilter.ts'
 
 export type IcsFetchErrorCode =
   /** Not an acceptable URL (scheme, credentials, port, syntax). */
@@ -30,6 +33,10 @@ export type IcsFetchErrorCode =
   | 'unreachable'
   /** 401, 403, 404 or 410: the link was revoked or deleted. */
   | 'gone'
+  /**
+   * The server declares a body larger than the whole download budget. Nearly unreachable since the streaming
+   * pre-filter arrived: a body that merely grows past the budget is read as far as it goes and marked `partial`.
+   */
   | 'too_large'
 
 export class IcsFetchError extends Error {
@@ -50,14 +57,14 @@ export interface IcsFetchOptions {
   resolveHost: ResolveHost
   allowPrivateHosts: boolean
   timeoutMs?: number
-  maxBytes?: number
+  /** Decoded bytes to read before giving up on the rest (default `ICS_MAX_DOWNLOAD_BYTES`). */
+  maxDownloadBytes?: number
   maxRedirects?: number
   /** Aborts the fetch early (e.g. the events request's overall deadline). */
   signal?: AbortSignal
 }
 
 export const ICS_TIMEOUT_MS = 10_000
-export const ICS_MAX_BYTES = 1_000_000
 export const ICS_MAX_REDIRECTS = 3
 const URL_MAX = 2048
 const GONE_STATUSES = new Set([401, 403, 404, 410])
@@ -198,44 +205,35 @@ async function assertPublicHost(url: URL, options: IcsFetchOptions): Promise<voi
 
 // ---- Fetching ----
 
-async function readCapped(res: Response, maxBytes: number): Promise<string> {
+/**
+ * Reduces the body to what today could need, without ever holding it. A declared `Content-Length` over the whole
+ * download budget is refused before reading — but only when the response is not encoded, since a compressed
+ * response's declared length counts compressed bytes while the budget counts the decoded ones the runtime hands us
+ * (Google serves these feeds gzipped, usually with no `Content-Length` at all).
+ */
+async function readFiltered(res: Response, maxDownloadBytes: number, prefilter: IcsPrefilterOptions): Promise<IcsPrefilterResult> {
+  const encoded = !!res.headers.get('Content-Encoding')
   const declared = Number(res.headers.get('Content-Length'))
-  if (Number.isFinite(declared) && declared > maxBytes) {
+  if (!encoded && Number.isFinite(declared) && declared > maxDownloadBytes) {
     await res.body?.cancel().catch(() => {})
     throw new IcsFetchError('too_large', 'the calendar is too large')
   }
-  if (!res.body) return ''
-  const reader = res.body.getReader()
-  const chunks: Uint8Array[] = []
-  let total = 0
   try {
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      total += value.byteLength
-      if (total > maxBytes) {
-        await reader.cancel().catch(() => {})
-        throw new IcsFetchError('too_large', 'the calendar is too large')
-      }
-      chunks.push(value)
-    }
+    return await prefilterIcsStream(res.body, { ...prefilter, maxDownloadBytes })
   } catch (e) {
     if (e instanceof IcsFetchError) throw e
     throw new IcsFetchError('unreachable', `reading the calendar failed: ${e instanceof Error ? e.name : 'error'}`)
   }
-  const bytes = new Uint8Array(total)
-  let offset = 0
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset)
-    offset += chunk.byteLength
-  }
-  return new TextDecoder('utf-8').decode(bytes)
 }
 
-/** Fetches an already-normalized subscription URL and returns its text. Throws `IcsFetchError`. */
-export async function fetchIcsText(url: URL, options: IcsFetchOptions): Promise<string> {
+/**
+ * Fetches an already-normalized subscription URL and returns the reduced calendar with what it cost to get there.
+ * `prefilter.day` (YYYYMMDD, the household's) keeps only today's blocks; `prefilter.headerOnly` stops at the first
+ * VEVENT, which is all `calendar-connect-ics` needs. Throws `IcsFetchError`.
+ */
+export async function fetchIcsFiltered(url: URL, options: IcsFetchOptions, prefilter: IcsPrefilterOptions = {}): Promise<IcsPrefilterResult> {
   const timeoutMs = options.timeoutMs ?? ICS_TIMEOUT_MS
-  const maxBytes = options.maxBytes ?? ICS_MAX_BYTES
+  const maxDownloadBytes = options.maxDownloadBytes ?? ICS_MAX_DOWNLOAD_BYTES
   const maxRedirects = options.maxRedirects ?? ICS_MAX_REDIRECTS
   const timeout = new AbortController()
   const timer = setTimeout(() => timeout.abort(), timeoutMs)
@@ -247,7 +245,7 @@ export async function fetchIcsText(url: URL, options: IcsFetchOptions): Promise<
   })
   aborted.catch(() => {})
 
-  const run = async (): Promise<string> => {
+  const run = async (): Promise<IcsPrefilterResult> => {
     let current = url
     for (let hop = 0; ; hop++) {
       await assertPublicHost(current, options)
@@ -286,7 +284,7 @@ export async function fetchIcsText(url: URL, options: IcsFetchOptions): Promise<
         await res.body?.cancel().catch(() => {})
         throw new IcsFetchError('unreachable', `the calendar server answered HTTP ${res.status}`)
       }
-      return await readCapped(res, maxBytes)
+      return await readFiltered(res, maxDownloadBytes, { ...prefilter, signal })
     }
   }
 

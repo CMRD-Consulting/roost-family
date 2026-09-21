@@ -536,7 +536,9 @@ export function calendarConnectMessage(error: unknown, context: 'ics' | 'oauth' 
     case 'not_a_calendar':
       return 'That link isn’t a calendar. Copy the secret iCal address (it usually ends in .ics) and try again.'
     case 'too_large':
-      return 'That calendar is too big to show. Try a calendar with fewer events.'
+      // Size alone no longer stops a calendar working: the feed is reduced to today's events while it downloads,
+      // and this is only reached when the server declares more than the whole 20 MB download budget.
+      return 'That calendar is unusually large. Try a link with fewer calendars in it.'
     case 'unreachable':
       return 'We couldn’t reach that calendar link. Check the link and try again.'
     case 'forbidden':
