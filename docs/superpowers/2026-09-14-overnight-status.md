@@ -51,11 +51,12 @@
 **Phase 3c: Settings** (hold the gear, then enter an adult PIN)
 - **Sections:** Household, Sitter info, Children, Medicines, Stickers, Routines (editor and today's routine), Logs history (edit and delete entries), Inbox, My account, Members, Displays, Photos, Delete household, About.
 - **How changes are saved:** every change goes through an RPC that checks the PIN and is written to the audit log.
-- **Owner-only actions:** members, displays, adding an adult and deleting the household need the owner's full email sign-in.
+- **Owner-only actions:** members, displays, adding an adult and deleting the household are for owners only. On the tablet the **adult PIN authorises all of them** — there is no second, emailed sign-in — and the server re-checks on every call that the PIN belongs to an owner of the household. An adult who isn't an owner sees "Only an owner can …" instead of buttons.
+- **In a browser at `/manage`** there is no PIN pad, so those same actions run on the adult's email sign-in, as before.
 - **Hardening after review:**
-  - Wrong PINs get a server-side delay.
+  - Wrong PINs get a server-side delay, including on the owner-only actions.
   - Adding an adult hands the tablet over full screen and ends Settings.
-  - Deleting a household deletes its PINs at once and purges its display accounts.
+  - Deleting a household deletes its PINs at once and purges its display accounts. It still needs the household name typed exactly.
 
 **Phase 4a: Take list, weather, photos, error tracking, critical updates**
 - **Take list:** a QR code opens a 24-hour grocery checklist on a phone at `/list/:token`. Only a hash of the token is stored.
@@ -162,15 +163,16 @@ Earlier decisions (palette, `orange-deep`, the 18 h wake window, stale sleep, ro
 | **Adults can see the Members and Displays lists on `/manage`; only owners can change them** | Members already see these on the tablet; the server enforces changes | settings RPCs |
 | **Photos per household are capped at 300 (200 slideshow + 100 child and routine-step photos)** | The spec only limits the slideshow to 200 | migration 13 |
 | **Photo deletion keeps the file record until the sweep erases the bytes; the files become unreadable at once** | SQL can't erase Storage files, so deleting the record would lose track of them | migration 7 |
+| **On a display the adult PIN now authorises every Settings action, including deleting the household** | A one-owner household had to enter three separate emailed codes to visit Members, Displays and Delete household in one sitting, which pushed people to leave a browser signed in instead. **The weaker guard is real:** a 4-digit PIN, not an emailed code, now stands in front of household deletion. What still guards it: owner-only, the household name typed exactly, a 30-day soft delete that support can undo, the 0.75 s wrong-PIN delay, and an audit row. `/manage` in a browser keeps the email sign-in. | migration 14, `usePinOwner.ts` |
 
 ## Verification
 
 - **Automated checks at HEAD:**
-  - `pnpm test`: 1,860 tests in 127 files, all passing.
+  - `pnpm test`: 1,885 tests in 127 files, all passing.
   - `pnpm typecheck` and `pnpm build`: clean.
   - `deno check` on every Edge Function: clean.
 - **Database checks on local Supabase:**
-  - `rls_smoke.sql`: `ALL RLS SMOKE CHECKS PASSED` (119 labelled sections).
+  - `rls_smoke.sql`: `ALL RLS SMOKE CHECKS PASSED` (124 labelled sections).
   - `anon_api_check.sh`: every check OK.
 - **Independent reviews** after every phase and feature: calendar parsing, calendar schema, calendar functions, Today and calendar UI, Manage household, export, Phase 3c and Phase 4a. Every finding was fixed and re-verified.
 - **Browser runs on local Supabase, controlled by me:**

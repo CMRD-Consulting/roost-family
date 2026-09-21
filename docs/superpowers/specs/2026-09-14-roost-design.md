@@ -184,7 +184,9 @@ It starts as one family's app (household #1, the author's) but is built as a mul
 
 - The display normally runs on its device credential. No adult is signed in.
 - A **full sign-in** on the display starts a temporary adult session. It ends after **5 minutes without a touch** or when the adult leaves the screen that required it, whichever comes first.
-- Actions that need a **full sign-in**: connecting or disconnecting a calendar, adding or removing members, adding or revoking displays, export, deleting the household, and resetting a forgotten PIN.
+- **On a display, the adult PIN authorises every Settings action** ([7.9](#79-settings)) — adding, removing and re-roling members, renaming and revoking displays, and **deleting the household**. The tablet has a PIN pad and a household that trusts whoever is standing at it; asking for an emailed code per section meant three sign-ins in one visit. The server re-checks the PIN on every call, and that the membership is an **Owner** of a live household; wrong PINs are slowed as everywhere else ([7.3](#73-toddler-guard--pins)). Owner-only sections tell an Adult that the action is an Owner's rather than offering buttons that would fail.
+- Actions that still need a **full sign-in** on a display: connecting or disconnecting a calendar, and resetting a forgotten PIN.
+- **In a browser** at `/manage` ([7.10](#710-manage-household-any-browser)) there is no PIN pad and no PIN: the adult signs in with an **email code**, and that sign-in authorises members, displays, export and deletion there.
 - Everything else that's protected uses the adult's **PIN** ([7.3](#73-toddler-guard--pins)).
 
 ### 6.4 Adding Adults and Displays
@@ -192,7 +194,7 @@ It starts as one family's app (household #1, the author's) but is built as a mul
 **Add an adult** (on a display):
 1. An Owner enters their PIN → Settings → Members → **Add adult**.
 2. The Owner picks the role (Owner or Adult).
-3. The Owner's sign-in and Settings end, and the tablet shows a full-screen hand-off (no Settings navigation). The new adult signs in on the display with their own account and accepts the terms and health-data consent.
+3. The invite is made on the Owner's PIN; the Settings session ends and the tablet shows a full-screen hand-off (no Settings navigation). The new adult signs in on the display with their own account and accepts the terms and health-data consent.
 4. They choose a color and set a 4-digit PIN.
 5. Optionally, they connect their calendar and pick which calendars to show.
 6. They're signed out; the display returns to the main screen. Cancelling at any step does the same.
@@ -268,7 +270,8 @@ Defaults are re-evaluated daily, so a feature turns on the day a child reaches i
 | Acknowledge a dose-conflict alert | Adult PIN |
 | Open Settings; start or exit Sitter Mode | **Adult PIN** (any adult's own 4-digit PIN) |
 | Exit Kids' Corner | Long-press 2 s in a corner, then adult PIN |
-| Sensitive actions ([6.3](#63-adult-sessions-on-a-display)) | Full sign-in |
+| Every Settings action on a display, including Members, Displays and Delete household ([6.3](#63-adult-sessions-on-a-display)) | **Adult PIN** (an Owner's own, for the Owner-only ones) |
+| Connect or disconnect a calendar; reset a forgotten PIN ([6.3](#63-adult-sessions-on-a-display)) | Full sign-in |
 
 - **PIN pad** shows adult avatars first; the adult taps theirs, then enters their PIN.
 - **No lockout** after wrong attempts. Wrong PINs are slowed on the server (each wrong answer waits 0.75 s), so guessing is slow.
@@ -397,7 +400,7 @@ The page shows **groceries only**. It never includes children's names, health da
 
 ### 7.9 Settings
 
-Opened with an adult PIN. Sections marked 🔐 require a full sign-in ([6.3](#63-adult-sessions-on-a-display)).
+Opened with an adult PIN, which authorises every section, including the Owner-only ones ([6.3](#63-adult-sessions-on-a-display)). Sections marked 👑 are **Owners only**; the few things marked 🔐 still need a full sign-in.
 
 - **Children:** name, birthday, color, photo, allergies, food rules, night-sleep window (defaults to household), per-feature overrides of age-based defaults
 - **Routines:** per child; create and edit routines and steps (icon library or photo); default routine per weekday; switch today's routine
@@ -409,15 +412,15 @@ Opened with an adult PIN. Sections marked 🔐 require a full sign-in ([6.3](#63
 - **Logs:** history per child and type; edit or delete entries; void doses
 - **Inbox:** jots (check off or delete)
 - **My account:** my color, change my PIN, 🔐 connect/disconnect my calendars and assign each to a person, leave household
-- 🔐 **Members** (Owners): add adult, change role, remove member
-- 🔐 **Displays** (Owners): list with last-seen time, rename, revoke, add display
-- 🔐 **Export** (Owners): request export ([11.3](#113-data-export--deletion))
-- 🔐 **Delete household** (Owners)
+- 👑 **Members:** add adult, change role, remove member
+- 👑 **Displays:** list with last-seen time, rename, revoke, add display
+- 👑 🔐 **Export:** request export ([11.3](#113-data-export--deletion)); offered in the browser at [7.10](#710-manage-household-any-browser)
+- 👑 **Delete household:** typed confirmation of the household name, then the PIN that opened Settings
 - **About:** app version, privacy policy, terms
 
 ### 7.10 Manage Household (any browser)
 
-- **roost.cmrd.dev/manage**, opened in any browser (laptop, borrowed phone), offers **Manage household** after a full sign-in.
+- **roost.cmrd.dev/manage**, opened in any browser (laptop, borrowed phone), offers **Manage household** after a full sign-in. A browser is not a display and has no PIN pad, so the **email-code sign-in** is what authorises every action here — including deleting the household — and it ends after 5 minutes without a touch.
 - Uses the tablet layout; it isn't designed for phones, but works on them.
 - **Owners:** Displays (revoke), Members (remove), Export, Delete household.
 - **Adults:** My account (disconnect calendars, leave household).
@@ -470,7 +473,7 @@ Native iOS/Android apps · open source or self-hosting · voice control · budge
 ### 11.3 Data Export & Deletion
 
 - **Export** (Owner, full sign-in): an email goes to the Owner's account address with a download link that works for 24 hours and **requires signing in again**. Contents: one CSV per log type, plus a complete JSON export including photos.
-- **Delete household** (Owner, full sign-in, typed confirmation): immediately revokes all displays and calendar connections. All data, photos and tokens are purged within **30 days, including backups**.
+- **Delete household** (Owner, typed confirmation of the household name; the adult PIN on a display, a full sign-in at `/manage`): immediately revokes all displays and calendar connections. All data, photos and tokens are purged within **30 days, including backups**.
 - **Leaving a household:** the member's calendars disconnect; their entries stay, attributed as former member.
 
 ### 11.4 Medicine Safety Rules (summary)
@@ -588,6 +591,7 @@ All household-owned tables are scoped to a household, directly through `househol
 | "Who?" row on every log | Kid logs only; jots and groceries attributed to the display |
 | Nap Mode behavior under taps unspecified | Dim but fully usable; only the moon or automatic rules end it; sticker celebrations shown silently |
 | — | Added from the design: grocery ✕ delete and 24-hour auto-clear of checked items, "Done shopping — end link" on the display, PIN to acknowledge a dose-conflict alert, 6-box invite code |
+| Members, Displays and Delete household each needed their own emailed sign-in code on the display | On a display the **adult PIN authorises every Settings action, including deleting the household** ([6.3](#63-adult-sessions-on-a-display)). Trade-off: a 4-digit PIN now guards household deletion, where a code emailed to the Owner's account used to. What stays: only an **Owner** can do it, the household name must be **typed exactly**, the deletion is a 30-day soft delete that support can reverse, every wrong PIN waits 0.75 s server-side, and the change is audited. A one-owner household was otherwise asked for three separate codes in a single Settings visit, which pushed people to keep a browser signed in instead — a weaker guard than the PIN. In a **browser** at `/manage`, where there is no PIN, the email code still authorises everything. |
 
 **Design gaps:** screens and states the v2 design doesn't show (email-code entry, Diaper sheet body, empty/error/stale states, Add-adult flow, Manage household Members and My account panes, per-child routines and age overrides in Settings, voided doses, Night Mode tap-to-peek) are built from this spec using the v2 design system. Claude Design is asked only for final routine icon artwork (`docs/design/2026-09-14-claude-design-update-2.md`).
 
@@ -603,7 +607,7 @@ All household-owned tables are scoped to a household, directly through `househol
 | Entries tagged "caregiver" | "Who?" attribution (required for medicine); named sitter |
 | Medicine: minimum interval; phone blocked offline dose logging | Adds optional max doses per 24 h; offline dose logging on any display requires confirmation; doses voided, never deleted |
 | Photos chosen from the iPad library | Resized, metadata stripped, private storage, 200-photo cap; built-in routine icon library |
-| Settings on the iPad | Settings on the display with adult PIN; sensitive actions need full sign-in; Manage household from any browser |
+| Settings on the iPad | Settings on the display with adult PIN, which authorises every action there; Manage household from any browser after an email sign-in |
 | Stack left to the plan | Supabase + Vue 3 installable web app on Netlify; dev/prod; Supabase Pro |
 | Calendar: Google, connection unspecified | Per-adult connections, server-side proxy, events never stored |
 | Testing: broad automated list | Unit tests + manual now; RLS, Playwright and Fire checks before launch |

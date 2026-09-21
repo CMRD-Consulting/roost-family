@@ -9,12 +9,14 @@
 - `src/data/supabase.ts` — `displayClient` (persisted anonymous device identity) and `createAdultClient()` (in-memory, temporary). Never persist an adult session.
 - `src/session/` — display state (`displayStore`: `unregistered | registered | revoked | offline`), adult email-code sign-in, idle expiry (`useAdultSessionIdle`). Adult sessions end after 5 min idle, on replacement and on unmount; `end()` never throws.
 - `src/features/<feature>/` — screens and feature logic; `src/ui/` — shared components (`R*` prefix).
+- Who authorises what (spec §6.3): **on a display the adult PIN authorises every Settings action**, including Members, Displays and Delete household — there is no second, emailed sign-in there. Those sections run on `settingsSession` through `usePinOwner`; a full sign-in is left only for connecting a calendar and resetting a forgotten PIN. **In a browser at `/manage`** there is no PIN, so the same actions run on the adult's email sign-in (`useOwnerSignIn` / `OwnerSignInPanel`, kept for that host). A `SettingsApi` method taking `SettingsAuth` is the PIN path; one taking an `AdultClient` is the browser path — most owner actions have both (`removeMember` / `removeMemberPin`).
 
 ## Database
 - Migrations in `supabase/migrations/`; regenerate types with `pnpm db:types` after schema changes. Until Docker works, `src/data/database.types.ts` is hand-maintained in Supabase CLI shape: update Args/Returns for every RPC change.
 - Helpers live in the `private` schema (not exposed by the API): `private.is_household_member(household_id)`, `private.is_household_owner`, `private.require_adult`, and write helpers such as `private.create_household_for` that only security-definer RPCs call (never grant those to a client role).
 - Every household-owned table has RLS through `private.is_household_member(household_id)`. New tables: enable RLS, add policies, and re-run `revoke all on <table> from anon` (default privileges grant anon).
 - New RPCs: `security definer set search_path = ''`, then `revoke execute on function … from public, anon` and `grant execute on function … to authenticated` (add it to the final grant list in the RLS migration).
+- PIN-checked RPCs take `(p_membership_id, p_pin, …)` and start from `private.require_settings_pin` (any adult) or `private.require_settings_owner` (owners only, migration 14); both re-use `private.pin_ok`, and so its 0.75 s wrong-PIN delay. Auth failures are `42501`, invalid input `22023`, and every write appends a `settings_audit` row via `private.audit_setting`.
 - Configuration tables (households, children, medicines, routines, sticker categories, …) are read directly but written only through RPCs; don't add insert/update policies for them.
 - Setup is one call: `setup_household` creates the household, kids and owner PIN in a single transaction.
 - Validate RLS changes with `supabase/manual-checks/rls_smoke.sql` (must print `ALL RLS SMOKE CHECKS PASSED`).
