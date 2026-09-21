@@ -272,7 +272,8 @@ Defaults are re-evaluated daily, so a feature turns on the day a child reaches i
 | Open Settings; start or exit Sitter Mode | **Adult PIN** (any adult's own 4-digit PIN) |
 | Exit Kids' Corner | Long-press 2 s in a corner, then adult PIN |
 | Every Settings action on a display, including Members, Displays and Delete household ([6.3](#63-adult-sessions-on-a-display)) | **Adult PIN** (an Owner's own, for the Owner-only ones) |
-| Connect or disconnect a calendar; reset a forgotten PIN ([6.3](#63-adult-sessions-on-a-display)) | Full sign-in |
+| Connect, assign or disconnect a calendar on a display ([5.5](#55-calendars)) | **Adult PIN** (the adult's own; a calendar belongs to whoever connected it) |
+| Reset a forgotten PIN ([6.3](#63-adult-sessions-on-a-display)) | Full sign-in |
 
 - **PIN pad** shows adult avatars first; the adult taps theirs, then enters their PIN.
 - **No lockout** after wrong attempts. Wrong PINs are slowed on the server (each wrong answer waits 0.75 s), so guessing is slow.
