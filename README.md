@@ -49,7 +49,7 @@ pnpm dev               # http://localhost:5173
 
 ## Hosting (production)
 
-The app is a static build (`dist/`) hosted on Netlify (site `roost-family`, https://roost-family.netlify.app), linked
+The app is a static build (`dist/`) hosted on Netlify (site `roost-family` on the `crishellco` team, https://roost-family.netlify.app), linked
 to this repository through the Netlify GitHub App. `netlify.toml` holds the build, headers and redirects:
 
 - **A merge to `main` builds and publishes production.** A pull request gets a Deploy Preview, which always runs on the
@@ -60,7 +60,7 @@ to this repository through the Netlify GitHub App. `netlify.toml` holds the buil
   (`netlify env:set VITE_SUPABASE_URL <url> --context production`). Vite inlines them at build time, so changing one
   needs a new deploy.
 - A critical update (spec §5.8): set `ROOST_CRITICAL=1` on the site, deploy, then unset it.
-- The Netlify CLI needs Node 22 (`nvm use`); link a checkout with `netlify link --id e9a118d6-bcbf-4ec7-9d87-930f436811db`.
+- The Netlify CLI needs Node 22 (`nvm use`); link a checkout with `netlify link --id 52d25665-ea46-4376-9b04-a7a2f0c8814f`.
 
 The headers `netlify.toml` sends, and any other host must too:
 
