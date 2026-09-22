@@ -68,6 +68,7 @@ async function mountMain() {
     routes: [
       { path: '/', component: { render: () => null } },
       { path: '/home', component: MainScreen },
+      { path: '/kitchen', component: { render: () => null } },
       { path: '/removed', component: { render: () => null } },
       { path: '/settings', component: { render: () => null } },
     ],
@@ -191,6 +192,33 @@ describe('MainScreen (demo source)', () => {
     const nap = header.get('button[aria-label="Nap Mode"]').element
     expect(nap.compareDocumentPosition(weather.element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     for (const cls of ['flex-row-reverse', 'flex-wrap', 'overflow-hidden']) expect(actions.classes()).toContain(cls)
+    wrapper.unmount()
+  })
+
+  it('offers the Kitchen beside the other mode controls, badged with the to-dos due', async () => {
+    const wrapper = await mountMain()
+    const button = wrapper.get('[data-testid="kitchen-button"]')
+    // The demo household has one overdue to-do and one due today (kitchen spec §4.2).
+    expect(button.attributes('aria-label')).toBe('Kitchen, 2 due')
+    for (const cls of ['h-[60px]', 'w-[60px]']) expect(button.classes()).toContain(cls)
+    const badge = button.get('[data-testid="kitchen-due-badge"]')
+    expect(badge.text()).toBe('2')
+    expect(badge.classes()).toContain('text-[16px]')
+    // Same group as Nap Mode and Kids' Corner, right of the weather.
+    const header = wrapper.get('header')
+    expect(button.element.parentElement).toBe(header.get('button[aria-label="Kids\' Corner"]').element.parentElement)
+
+    await button.trigger('click')
+    await flushPromises()
+    expect(wrapper.vm.$router.currentRoute.value.path).toBe('/kitchen')
+    wrapper.unmount()
+  })
+
+  it('drops the Kitchen badge when nothing is overdue or due today', async () => {
+    mutateDemo((s) => ({ ...s, tasks: (s.tasks ?? []).map((t) => ({ ...t, dueOn: null })) }))
+    const wrapper = await mountMain()
+    expect(wrapper.get('[data-testid="kitchen-button"]').attributes('aria-label')).toBe('Kitchen')
+    expect(wrapper.find('[data-testid="kitchen-due-badge"]').exists()).toBe(false)
     wrapper.unmount()
   })
 
@@ -526,6 +554,7 @@ describe('MainScreen (demo source)', () => {
       expect(wrapper.find('button[aria-label="Settings"]').exists()).toBe(false)
       expect(wrapper.find('button[aria-label="Sitter Mode"]').exists()).toBe(false)
       expect(wrapper.find('button[aria-label="Kids\' Corner"]').exists()).toBe(true)
+      expect(wrapper.find('[data-testid="kitchen-button"]').exists()).toBe(false)
       const end = buttonIn(wrapper, 'End Sitter Mode')
       expect(end.classes()).toContain('h-[60px]')
       wrapper.unmount()

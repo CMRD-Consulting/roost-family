@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
+import { tabFromQuery } from '@/features/kitchen/kitchenModel'
 import { isPublicRoute, resolveDisplayRoute, resolveJoinAdultRoute, resolveSettingsRoute, router } from './router'
 
 vi.mock('@/data/supabase', () => ({ displayClient: {} }))
@@ -56,6 +57,24 @@ describe('resolveJoinAdultRoute', () => {
 
   it('ignores other routes', () => {
     expect(resolveJoinAdultRoute(router.resolve('/home'), false)).toBe(true)
+  })
+})
+
+describe('the Kitchen screen', () => {
+  it('serves /kitchen lazily to a registered display, with the tab in the query', () => {
+    const route = router.resolve('/kitchen?tab=todo')
+    expect(route.matched).toHaveLength(1)
+    expect(route.meta.requires).toBe('registered')
+    expect(route.meta.settingsSession).toBeUndefined()
+    expect(isPublicRoute(route)).toBe(false)
+    // Lazy, unlike /home and /corner: it isn't needed cold-offline.
+    expect(typeof route.matched[0]!.components!.default).toBe('function')
+    expect(tabFromQuery(route.query.tab)).toBe('todo')
+  })
+
+  it('falls back to the Shopping tab for a missing or unknown ?tab=', () => {
+    expect(tabFromQuery(router.resolve('/kitchen').query.tab)).toBe('shopping')
+    expect(tabFromQuery(router.resolve('/kitchen?tab=laundry').query.tab)).toBe('shopping')
   })
 })
 

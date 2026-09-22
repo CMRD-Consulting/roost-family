@@ -4,6 +4,8 @@ import { useRouter } from 'vue-router'
 import { useNow } from '@/composables/useNow'
 import { useTodayEvents } from '@/data/calendarApi'
 import { weatherToShow } from '@/data/weatherApi'
+import { householdDate } from '@/domain/time'
+import { dueTaskCount } from '@/features/kitchen/kitchenModel'
 import DiaperSheet from '@/features/logs/DiaperSheet.vue'
 import DinnerSheet from '@/features/logs/DinnerSheet.vue'
 import DosePinDialog from '@/features/logs/DosePinDialog.vue'
@@ -102,6 +104,13 @@ const cacheBadge = computed(() => {
   return savedInfoLabel(new Date(store.snapshot.loadedAt), now.value, store.snapshot.household.timeZone)
 })
 
+
+// The Kitchen button's badge (kitchen spec §4.2): open to-dos that are overdue or due today. Read from the
+// household's own date, so it rolls over at household midnight without a refetch.
+const dueCount = computed(() =>
+  dueTaskCount(store.view?.tasks, householdDate(now.value, store.view?.household.timeZone ?? 'UTC')),
+)
+const kitchenLabel = computed(() => (dueCount.value > 0 ? `Kitchen, ${dueCount.value} due` : 'Kitchen'))
 
 /** The log sheet opened from the log row. */
 const openLog = ref<LogKind | null>(null)
@@ -370,6 +379,39 @@ const SETTINGS_BUTTON = {
               <span>End Sitter Mode</span>
             </RLongPress>
             <template v-else>
+              <!-- Kitchen (kitchen spec §2): a mode control like Kids' Corner, but adult-only, so it is
+                   hidden during Sitter Mode. The badge counts to-dos overdue or due today (§4.2). -->
+              <button
+                type="button"
+                data-testid="kitchen-button"
+                :aria-label="kitchenLabel"
+                class="relative flex h-[60px] w-[60px] items-center justify-center rounded-2xl bg-surface-2 text-ink focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-ink"
+                @click="router.push('/kitchen')"
+              >
+                <svg
+                  width="26"
+                  height="26"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M3 9h18l-1.7 9.6a2 2 0 0 1-2 1.4H6.7a2 2 0 0 1-2-1.4z" />
+                  <path d="M9 9L7.5 4M15 9l1.5-5" />
+                  <path d="M9.5 13v3.5M14.5 13v3.5" />
+                </svg>
+                <span
+                  v-if="dueCount > 0"
+                  data-testid="kitchen-due-badge"
+                  aria-hidden="true"
+                  class="absolute -right-1 -top-1 flex h-[24px] min-w-[24px] items-center justify-center rounded-full bg-orange-deep px-1 text-[16px] font-bold leading-none text-surface"
+                >
+                  {{ dueCount }}
+                </span>
+              </button>
               <RLongPress
                 aria-label="Sitter Mode"
                 class="flex h-[60px] w-[60px] items-center justify-center rounded-2xl bg-surface-2 text-ink focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-ink"

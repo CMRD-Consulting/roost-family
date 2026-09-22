@@ -41,6 +41,14 @@ export const router = createRouter({
     // network even if its service worker precache were missing (spec §13).
     { path: '/home', component: MainScreen, meta: { requires: 'registered' } },
     { path: '/corner', component: KidsCorner, meta: { requires: 'registered' } },
+    // The Kitchen screen (kitchen spec §7.4): lazily imported — unlike /home and /corner it isn't a screen a
+    // tablet must reach cold with no network. Its tab is in the query (`?tab=todo`), so a reload comes back
+    // to the same one.
+    {
+      path: '/kitchen',
+      component: () => import('@/features/kitchen/KitchenScreen.vue'),
+      meta: { requires: 'registered' },
+    },
     {
       path: '/settings/:section?',
       component: () => import('@/features/settings/SettingsShell.vue'),
