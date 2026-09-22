@@ -363,7 +363,14 @@ describe('MainScreen (demo source)', () => {
     setOnline(false)
     await flushPromises()
 
-    await useLogStore(pinia).submit({ kind: 'dinner.set', householdId: HOUSEHOLD_ID, text: 'Pizza', previous: 'Tacos' })
+    await useLogStore(pinia).submit({
+      kind: 'meal.set',
+      householdId: HOUSEHOLD_ID,
+      day: '2026-09-14',
+      text: 'Pizza',
+      recipeId: null,
+      previous: { text: 'Tacos', recipeId: 'recipe-tacos' },
+    })
     await flushPromises()
 
     expect(wrapper.get('[data-testid="undo-toast"]').text()).toContain('Saved offline — will sync')
@@ -456,7 +463,12 @@ describe('MainScreen (demo source)', () => {
     wrapper.unmount()
   })
 
-  it("long-pressing tonight's dinner edits it", async () => {
+  it("long-pressing tonight's dinner edits today's meal plan", async () => {
+    // The fixture plans today from a recipe; free text is the other half of the sheet (spec §5.5).
+    mutateDemo((s) => ({
+      ...s,
+      mealPlan: (s.mealPlan ?? []).map((m) => (m.day === '2026-09-14' ? { ...m, text: 'Tacos', recipeId: null } : m)),
+    }))
     const wrapper = await mountMain()
     await hold(wrapper.get('[data-testid="dinner-line"]').element)
     const dialog = wrapper.get('[role="dialog"]')
@@ -467,6 +479,20 @@ describe('MainScreen (demo source)', () => {
     await settle()
 
     expect(wrapper.get('[data-testid="dinner-line"]').text()).toContain('Pasta')
+    wrapper.unmount()
+  })
+
+  it("long-pressing a dinner planned from a recipe offers only Clear", async () => {
+    const wrapper = await mountMain()
+    await hold(wrapper.get('[data-testid="dinner-line"]').element)
+    const dialog = wrapper.get('[role="dialog"]')
+    expect(dialog.text()).toContain('Planned from the recipe box')
+    expect(dialog.find('input').exists()).toBe(false)
+
+    await buttonIn(wrapper, 'Clear').trigger('click')
+    await settle()
+
+    expect(wrapper.get('[data-testid="dinner-line"]').text()).toContain('Not planned')
     wrapper.unmount()
   })
 

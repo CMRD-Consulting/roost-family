@@ -33,6 +33,13 @@ export interface MedicineLineModel {
 
 export interface ConflictModel { doseId: string; childName: string; medicineName: string; message: string }
 
+/**
+ * Tonight's dinner, resolved from the meal plan (spec §5.5). `text` is the label to show — a meal-plan entry
+ * always carries it, so a day planned from an archived recipe still reads. `fromRecipe` is true when the day
+ * was planned from the recipe box, which the dinner sheet shows read-only.
+ */
+export interface DinnerModel { text: string; fromRecipe: boolean }
+
 export interface MainScreenModel {
   clock: string
   dateLabel: string
@@ -40,7 +47,8 @@ export interface MainScreenModel {
   kidCards: KidCardModel[]
   medicine: MedicineLineModel[]
   conflicts: ConflictModel[]
-  dinner: string | null
+  /** Today's meal-plan entry, or null when the day isn't planned (spec §5.5). */
+  dinner: DinnerModel | null
   logButtons: LogKind[]
   /** The doses shown may be out of date (saved info, or realtime down for a while): no line reads as allowed. */
   medicineStale: boolean
@@ -206,6 +214,14 @@ export function buildMainScreenModel(s: HouseholdSnapshot, now: Date, options: M
     }
   })
 
+  // The meal plan is the source of truth for the dinner line (spec §5.5): `households.dinner_tonight` is never
+  // read. `today` is the household's own calendar day and the model is rebuilt every minute, so the plan rolls
+  // over at household midnight on its own. A device-cached snapshot from an older build has no `mealPlan`.
+  const plannedToday = s.mealPlan?.find((e) => e.day === today) ?? null
+  const plannedText = plannedToday?.text.trim() ?? ''
+  const dinner: DinnerModel | null =
+    plannedToday && plannedText ? { text: plannedText, fromRecipe: plannedToday.recipeId !== null } : null
+
   // A device-cached snapshot from before sitter sessions were loaded may not have the field.
   const sitterActive = (s.activeSitterSession ?? null) !== null
   const logButtons: LogKind[] = sitterActive
@@ -220,7 +236,7 @@ export function buildMainScreenModel(s: HouseholdSnapshot, now: Date, options: M
     kidCards,
     medicine,
     conflicts,
-    dinner: s.household.dinnerTonight?.trim() || null,
+    dinner,
     logButtons,
     medicineStale,
     sitterActive,

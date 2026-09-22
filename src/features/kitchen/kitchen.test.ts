@@ -99,10 +99,11 @@ describe('KitchenScreen (demo source)', () => {
       wrapper.unmount()
     })
 
-    it('comes back to the tab in the query, and leaves the other two panels to their slots', async () => {
+    it('comes back to the tab in the query', async () => {
       const { wrapper } = await mountKitchen('/kitchen?tab=meals')
       expect(wrapper.findAll('[role="tab"]')[2]!.attributes('aria-selected')).toBe('true')
-      expect(wrapper.get('[role="tabpanel"]').text()).toContain('The meal plan arrives here.')
+      // The Meals panel itself is covered by kitchenRecipes.test.ts; here it only has to be the one showing.
+      expect(wrapper.get('[role="tabpanel"]').text()).toContain('Not planned')
       wrapper.unmount()
     })
 

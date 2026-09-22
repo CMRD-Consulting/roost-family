@@ -18,6 +18,8 @@ import { useNightPeekTaps } from '@/features/modes/useNightPeekTaps'
 import { useHouseholdStore } from '@/stores/householdStore'
 import { useModesStore } from '@/stores/modesStore'
 import RLogo from '@/ui/RLogo.vue'
+import MealsTab from './MealsTab.vue'
+import RecipesTab from './RecipesTab.vue'
 import ShoppingTab from './ShoppingTab.vue'
 import TodoTab from './TodoTab.vue'
 import { KITCHEN_TABS, KITCHEN_TAB_LABELS, tabFromQuery, type KitchenTab } from './kitchenModel'
@@ -65,11 +67,15 @@ const nightClock = computed(() => (view.value ? formatClock(now.value, view.valu
 const nightDate = computed(() => (view.value ? formatDateLabel(now.value, view.value.household.timeZone) : ''))
 
 // Night Mode never interrupts an adult mid-task: each tab reports whether one of its sheets is open, and
-// Night Mode takes over once the last one closes. Agent D: add a flag here for the Meals and Recipes sheets.
+// Night Mode takes over once the last one closes.
 const shoppingSheet = ref(false)
 const todoSheet = ref(false)
+const mealsSheet = ref(false)
+const recipesSheet = ref(false)
 const NIGHT_HOLD = 'kitchen-sheet'
-const anythingOpen = computed(() => shoppingSheet.value || todoSheet.value)
+const anythingOpen = computed(
+  () => shoppingSheet.value || todoSheet.value || mealsSheet.value || recipesSheet.value,
+)
 watch(
   anythingOpen,
   (open) => (open ? modes.holdNight(NIGHT_HOLD) : modes.releaseNight(NIGHT_HOLD)),
@@ -142,14 +148,8 @@ useNightPeekTaps()
       <div :id="PANEL_ID" role="tabpanel" :aria-labelledby="tabId(tab)" class="min-h-0 overflow-y-auto pb-4">
         <ShoppingTab v-if="tab === 'shopping'" @sheet-open="shoppingSheet = $event" />
         <TodoTab v-else-if="tab === 'todo'" @sheet-open="todoSheet = $event" />
-        <!-- Agent D: replace with <MealsTab /> -->
-        <slot v-else-if="tab === 'meals'" name="meals">
-          <p class="text-[24px] text-ink-2">The meal plan arrives here.</p>
-        </slot>
-        <!-- Agent D: replace with <RecipesTab /> -->
-        <slot v-else name="recipes">
-          <p class="text-[24px] text-ink-2">The recipe box arrives here.</p>
-        </slot>
+        <MealsTab v-else-if="tab === 'meals'" @sheet-open="mealsSheet = $event" />
+        <RecipesTab v-else @sheet-open="recipesSheet = $event" />
       </div>
     </div>
 

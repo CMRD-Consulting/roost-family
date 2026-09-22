@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { buildDemoSnapshot } from '@/data/demo/demoFixture'
-import type { HouseholdSnapshot, SnapshotChild } from '@/data/snapshot'
+import type { HouseholdSnapshot, MealPlanEntry, SnapshotChild } from '@/data/snapshot'
 import { ageLabel, buildMainScreenModel, savedInfoLabel } from './mainScreenModel'
 
 const now = new Date('2026-09-14T19:00:00Z') // 3:00 PM EDT, Monday
@@ -251,19 +251,53 @@ describe('buildMainScreenModel', () => {
   })
 
   describe('dinner', () => {
-    it('shows dinnerTonight', () => {
-      const model = buildMainScreenModel(buildDemoSnapshot(now), now)
-      expect(model.dinner).toBe('Tacos')
+    const entry = (over: Partial<MealPlanEntry> = {}): MealPlanEntry => ({
+      id: 'meal1',
+      day: '2026-09-14',
+      text: 'Tacos',
+      recipeId: null,
+      createdAt: now.toISOString(),
+      ...over,
     })
 
-    it('is null when dinnerTonight is null', () => {
-      const snapshot = minimalSnapshot({ household: { ...minimalSnapshot().household, dinnerTonight: null } })
+    it("reads today's meal-plan entry as free text", () => {
+      const model = buildMainScreenModel(minimalSnapshot({ mealPlan: [entry()] }), now)
+      expect(model.dinner).toEqual({ text: 'Tacos', fromRecipe: false })
+    })
+
+    it('flags a day planned from the recipe box, showing the label the entry carries', () => {
+      const snapshot = minimalSnapshot({ mealPlan: [entry({ text: 'Sheet-pan chicken', recipeId: 'r1' })] })
+      expect(buildMainScreenModel(snapshot, now).dinner).toEqual({ text: 'Sheet-pan chicken', fromRecipe: true })
+    })
+
+    it('is null when nothing is planned, and ignores another day', () => {
+      expect(buildMainScreenModel(minimalSnapshot(), now).dinner).toBeNull()
+      expect(buildMainScreenModel(minimalSnapshot({ mealPlan: [] }), now).dinner).toBeNull()
+      const other = minimalSnapshot({ mealPlan: [entry({ day: '2026-09-15', text: 'Leftovers' })] })
+      expect(buildMainScreenModel(other, now).dinner).toBeNull()
+    })
+
+    it('is null when the entry is blank', () => {
+      expect(buildMainScreenModel(minimalSnapshot({ mealPlan: [entry({ text: '   ' })] }), now).dinner).toBeNull()
+    })
+
+    it('ignores households.dinnerTonight', () => {
+      const snapshot = minimalSnapshot({ household: { ...minimalSnapshot().household, dinnerTonight: 'Pizza' } })
       expect(buildMainScreenModel(snapshot, now).dinner).toBeNull()
     })
 
-    it('is null when dinnerTonight is blank', () => {
-      const snapshot = minimalSnapshot({ household: { ...minimalSnapshot().household, dinnerTonight: '   ' } })
-      expect(buildMainScreenModel(snapshot, now).dinner).toBeNull()
+    it('rolls over at household midnight', () => {
+      const snapshot = minimalSnapshot({
+        mealPlan: [entry({ day: '2026-09-14' }), entry({ id: 'meal2', day: '2026-09-15', text: 'Leftovers' })],
+      })
+      const beforeMidnight = new Date('2026-09-15T03:59:00Z') // 11:59 PM Monday in New York
+      const afterMidnight = new Date('2026-09-15T04:01:00Z') // 12:01 AM Tuesday
+      expect(buildMainScreenModel(snapshot, beforeMidnight).dinner?.text).toBe('Tacos')
+      expect(buildMainScreenModel(snapshot, afterMidnight).dinner?.text).toBe('Leftovers')
+    })
+
+    it("reads the demo household's plan", () => {
+      expect(buildMainScreenModel(buildDemoSnapshot(now), now).dinner).toEqual({ text: 'Tacos', fromRecipe: true })
     })
   })
 

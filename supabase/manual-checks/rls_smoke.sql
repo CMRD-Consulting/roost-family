@@ -3749,6 +3749,9 @@ select pg_temp.expect('no client role can execute a private trigger function', n
 \echo '[137] An item with no list lands on the household''s default list: the oldest un-archived one'
 set local role authenticated;
 select set_config('request.jwt.claims', :'KA', true);
+-- The whole script is one transaction, so now() is identical for every row in it and Groceries would tie with
+-- the list added below. In a real household the first list predates the second, so age it by a day first.
+update public.shopping_lists set created_at = created_at - interval '1 day' where id = :'list_ka';
 insert into public.shopping_lists (household_id, name) values (:'household_ka', 'Costco') returning id as list_ka2 \gset
 select set_config('smoke.list_ka2', :'list_ka2', true);
 insert into public.grocery_items (household_id, text) values (:'household_ka', 'Eggs') returning id as item_ka1 \gset

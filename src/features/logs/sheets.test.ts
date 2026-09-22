@@ -563,9 +563,16 @@ describe('log sheets', () => {
     })
   })
 
+  // The sheet edits today's meal-plan entry, not `households.dinner_tonight` (spec §5.5). The demo household
+  // plans today from the recipe box, so the free-text tests replace that entry.
   describe('DinnerSheet', () => {
-    it("prefills tonight's dinner and saves a new one", async () => {
-      await setup('2026-09-14T19:00:00Z')
+    const TODAY = '2026-09-14' // the household day (New York) at 2026-09-14T19:00:00Z
+    const freeText = (s: HouseholdSnapshot) => {
+      s.mealPlan = [{ id: 'meal-today', day: TODAY, text: 'Tacos', recipeId: null, createdAt: '2026-09-13T19:00:00Z' }]
+    }
+
+    it("prefills today's plan and saves new free text", async () => {
+      await setup('2026-09-14T19:00:00Z', freeText)
       const w = mountSheet(DinnerSheet)
       await flushPromises()
 
@@ -574,17 +581,56 @@ describe('log sheets', () => {
       expect(button(w, 'Save').attributes('disabled')).toBeDefined() // unchanged
       await input.setValue(' Pizza ')
       await click(button(w, 'Save'))
-      expect(writer.calls).toEqual([{ kind: 'dinner.set', householdId: HOUSEHOLD_ID, text: 'Pizza', previous: 'Tacos' }])
+      expect(writer.calls).toEqual([
+        { kind: 'meal.set', householdId: HOUSEHOLD_ID, day: TODAY, text: 'Pizza', recipeId: null, previous: { text: 'Tacos', recipeId: null } },
+      ])
       expect(w.emitted('close')).toHaveLength(1)
     })
 
-    it('clears the dinner', async () => {
-      await setup('2026-09-14T19:00:00Z')
+    it('plans a day that had nothing, with no previous', async () => {
+      await setup('2026-09-14T19:00:00Z', (s) => {
+        s.mealPlan = []
+      })
+      const w = mountSheet(DinnerSheet)
+      await flushPromises()
+
+      expect((w.get('input').element as HTMLInputElement).value).toBe('')
+      expect(button(w, 'Clear').attributes('disabled')).toBeDefined() // nothing to clear
+      await w.get('input').setValue('Soup')
+      await click(button(w, 'Save'))
+      expect(writer.calls).toEqual([
+        { kind: 'meal.set', householdId: HOUSEHOLD_ID, day: TODAY, text: 'Soup', recipeId: null, previous: null },
+      ])
+    })
+
+    it("clears today's plan", async () => {
+      await setup('2026-09-14T19:00:00Z', freeText)
       const w = mountSheet(DinnerSheet)
       await flushPromises()
 
       await click(button(w, 'Clear'))
-      expect(writer.calls).toEqual([{ kind: 'dinner.set', householdId: HOUSEHOLD_ID, text: null, previous: 'Tacos' }])
+      expect(writer.calls).toEqual([
+        { kind: 'meal.clear', householdId: HOUSEHOLD_ID, day: TODAY, previous: { text: 'Tacos', recipeId: null } },
+      ])
+      expect(w.emitted('close')).toHaveLength(1)
+    })
+
+    it('shows a day planned from the recipe box read-only, offering Clear only', async () => {
+      await setup('2026-09-14T19:00:00Z', (s) => {
+        s.mealPlan = [{ id: 'meal-today', day: TODAY, text: 'Sheet-pan chicken', recipeId: 'r1', createdAt: '2026-09-13T19:00:00Z' }]
+      })
+      const w = mountSheet(DinnerSheet)
+      await flushPromises()
+
+      expect(w.find('input').exists()).toBe(false)
+      expect(w.findAll('button').some((b) => b.text() === 'Save')).toBe(false)
+      expect(w.text()).toContain('Sheet-pan chicken')
+      expect(w.text()).toContain('Planned from the recipe box. Change it on the Kitchen screen.')
+
+      await click(button(w, 'Clear'))
+      expect(writer.calls).toEqual([
+        { kind: 'meal.clear', householdId: HOUSEHOLD_ID, day: TODAY, previous: { text: 'Sheet-pan chicken', recipeId: 'r1' } },
+      ])
     })
   })
 })
