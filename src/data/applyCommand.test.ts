@@ -164,11 +164,32 @@ describe('applyCommand', () => {
     })
 
     it('grocery.add appends and is idempotent', () => {
-      const item = { id: 'new-grocery', text: 'Eggs', createdAt: now.toISOString(), checkedAt: null }
+      const item = { id: 'new-grocery', listId: 'list-costco', text: 'Eggs', createdAt: now.toISOString(), checkedAt: null }
       const cmd: LogCommand = { kind: 'grocery.add', householdId: base.household.id, item, displayId: 'demo-display' }
       const next = applyCommand(base, cmd, now)
       expect(next.groceries).toContainEqual(item)
       expectIdempotent(base, cmd)
+    })
+
+    it('grocery.add without a list puts the item on the default (oldest un-archived) list', () => {
+      const item = { id: 'new-grocery-2', listId: '', text: 'Eggs', createdAt: now.toISOString(), checkedAt: null }
+      const cmd: LogCommand = { kind: 'grocery.add', householdId: base.household.id, item, displayId: null }
+      const next = applyCommand(base, cmd, now)
+      expect(next.groceries.find((g) => g.id === 'new-grocery-2')?.listId).toBe(base.shoppingLists![0]!.id)
+      expectIdempotent(base, cmd)
+    })
+
+    it('grocery.add without a list skips the archived ones, and leaves the list empty when none is known', () => {
+      const item = { id: 'new-grocery-3', listId: '', text: 'Eggs', createdAt: now.toISOString(), checkedAt: null }
+      const cmd: LogCommand = { kind: 'grocery.add', householdId: base.household.id, item, displayId: null }
+      const archivedFirst = {
+        ...base,
+        shoppingLists: base.shoppingLists!.map((l, i) => (i === 0 ? { ...l, archivedAt: now.toISOString() } : l)),
+      }
+      expect(applyCommand(archivedFirst, cmd, now).groceries.find((g) => g.id === 'new-grocery-3')?.listId).toBe(base.shoppingLists![1]!.id)
+      // A device-cached snapshot from before the Kitchen screen has no lists at all: the server's trigger decides.
+      const noLists = { ...base, shoppingLists: undefined }
+      expect(applyCommand(noLists, cmd, now).groceries.find((g) => g.id === 'new-grocery-3')?.listId).toBe('')
     })
 
     it('grocery.check sets checkedAt', () => {
@@ -183,6 +204,162 @@ describe('applyCommand', () => {
       const cmd: LogCommand = { kind: 'grocery.delete', householdId: base.household.id, item, displayId: 'demo-display' }
       const next = applyCommand(base, cmd, now)
       expect(next.groceries.some((g) => g.id === item.id)).toBe(false)
+    })
+  })
+
+  describe('list.add / list.rename / list.archive / list.restore', () => {
+    const householdId = base.household.id
+    const list = { id: 'list-hardware', name: 'Hardware', createdAt: now.toISOString(), archivedAt: null }
+    const archivedAt = '2026-09-14T20:00:00.000Z'
+
+    it('list.add appends and is idempotent', () => {
+      const cmd: LogCommand = { kind: 'list.add', householdId, list }
+      const next = applyCommand(base, cmd, now)
+      expect(next.shoppingLists).toContainEqual(list)
+      expect(base.shoppingLists!.some((l) => l.id === list.id)).toBe(false)
+      expectIdempotent(base, cmd)
+    })
+
+    it('list.add starts the array on a snapshot cached before the Kitchen screen', () => {
+      const cmd: LogCommand = { kind: 'list.add', householdId, list }
+      expect(applyCommand({ ...base, shoppingLists: undefined }, cmd, now).shoppingLists).toEqual([list])
+    })
+
+    it('list.rename renames the matching list only', () => {
+      const target = base.shoppingLists![1]!
+      const cmd: LogCommand = { kind: 'list.rename', householdId, listId: target.id, name: 'Warehouse', previousName: target.name }
+      const next = applyCommand(base, cmd, now)
+      expect(next.shoppingLists!.find((l) => l.id === target.id)?.name).toBe('Warehouse')
+      expect(next.shoppingLists![0]).toEqual(base.shoppingLists![0])
+      expectIdempotent(base, cmd)
+    })
+
+    it('list.archive sets archivedAt, list.restore clears it', () => {
+      const target = base.shoppingLists![1]!
+      const archive: LogCommand = { kind: 'list.archive', householdId, listId: target.id, archivedAt, previousArchivedAt: null }
+      const archived = applyCommand(base, archive, now)
+      expect(archived.shoppingLists!.find((l) => l.id === target.id)?.archivedAt).toBe(archivedAt)
+      expectIdempotent(base, archive)
+
+      const restore: LogCommand = { kind: 'list.restore', householdId, listId: target.id, previousArchivedAt: archivedAt }
+      const restored = applyCommand(archived, restore, now)
+      expect(restored.shoppingLists!.find((l) => l.id === target.id)?.archivedAt).toBeNull()
+      expectIdempotent(archived, restore)
+    })
+
+    it('is a no-op for a list that is not in the snapshot', () => {
+      const cmd: LogCommand = { kind: 'list.rename', householdId, listId: 'no-such-list', name: 'x', previousName: 'y' }
+      expect(applyCommand(base, cmd, now)).toEqual(base)
+    })
+  })
+
+  describe('task.add / task.check / task.update / task.delete', () => {
+    const householdId = base.household.id
+    const task = {
+      id: 'task-new', text: 'Water the plants', assignedMembershipId: null, dueOn: '2026-09-15',
+      createdAt: now.toISOString(), doneAt: null,
+    }
+
+    it('task.add appends and is idempotent', () => {
+      const cmd: LogCommand = { kind: 'task.add', householdId, task, displayId: 'demo-display' }
+      const next = applyCommand(base, cmd, now)
+      expect(next.tasks).toContainEqual(task)
+      expectIdempotent(base, cmd)
+    })
+
+    it('task.add starts the array on a snapshot cached before the Kitchen screen', () => {
+      const cmd: LogCommand = { kind: 'task.add', householdId, task, displayId: null }
+      expect(applyCommand({ ...base, tasks: undefined }, cmd, now).tasks).toEqual([task])
+    })
+
+    it('task.check sets doneAt, and clears it again', () => {
+      const open = base.tasks!.find((t) => t.doneAt === null)!
+      const doneAt = now.toISOString()
+      const check: LogCommand = { kind: 'task.check', householdId, taskId: open.id, doneAt, previousDoneAt: null }
+      const checked = applyCommand(base, check, now)
+      expect(checked.tasks!.find((t) => t.id === open.id)?.doneAt).toBe(doneAt)
+      expectIdempotent(base, check)
+
+      const uncheck: LogCommand = { kind: 'task.check', householdId, taskId: open.id, doneAt: null, previousDoneAt: doneAt }
+      expect(applyCommand(checked, uncheck, now).tasks!.find((t) => t.id === open.id)?.doneAt).toBeNull()
+    })
+
+    it('task.update replaces the text, assignee and due date, leaving the rest alone', () => {
+      const target = base.tasks![0]!
+      const cmd: LogCommand = {
+        kind: 'task.update', householdId, taskId: target.id, text: 'Refill both prescriptions',
+        assignedMembershipId: null, dueOn: null,
+        previous: { text: target.text, assignedMembershipId: target.assignedMembershipId, dueOn: target.dueOn },
+      }
+      const next = applyCommand(base, cmd, now)
+      expect(next.tasks!.find((t) => t.id === target.id)).toEqual({
+        ...target, text: 'Refill both prescriptions', assignedMembershipId: null, dueOn: null,
+      })
+      expectIdempotent(base, cmd)
+    })
+
+    it('task.delete removes the task and is idempotent', () => {
+      const target = base.tasks![0]!
+      const cmd: LogCommand = { kind: 'task.delete', householdId, task: target, displayId: null }
+      const next = applyCommand(base, cmd, now)
+      expect(next.tasks!.some((t) => t.id === target.id)).toBe(false)
+      expectIdempotent(base, cmd)
+    })
+
+    it('is a no-op for a task that is not in the snapshot', () => {
+      const cmd: LogCommand = { kind: 'task.check', householdId, taskId: 'no-such-task', doneAt: null, previousDoneAt: null }
+      expect(applyCommand(base, cmd, now)).toEqual(base)
+    })
+  })
+
+  describe('meal.set / meal.clear', () => {
+    const householdId = base.household.id
+    const planned = base.mealPlan![0]!
+    const emptyDay = '2026-09-30'
+
+    it('meal.set adds an entry for a day with no plan, and is idempotent', () => {
+      const cmd: LogCommand = { kind: 'meal.set', householdId, day: emptyDay, text: 'Soup', recipeId: null, previous: null }
+      const next = applyCommand(base, cmd, now)
+      expect(next.mealPlan!.filter((e) => e.day === emptyDay)).toEqual([
+        { id: `meal-${emptyDay}`, day: emptyDay, text: 'Soup', recipeId: null, createdAt: now.toISOString() },
+      ])
+      expectIdempotent(base, cmd)
+    })
+
+    it('meal.set replaces the day that is already planned, keeping one entry per day', () => {
+      const cmd: LogCommand = {
+        kind: 'meal.set', householdId, day: planned.day, text: 'Pizza', recipeId: null,
+        previous: { text: planned.text, recipeId: planned.recipeId },
+      }
+      const next = applyCommand(base, cmd, now)
+      expect(next.mealPlan!.filter((e) => e.day === planned.day)).toEqual([{ ...planned, text: 'Pizza', recipeId: null }])
+      expect(next.mealPlan).toHaveLength(base.mealPlan!.length)
+      expectIdempotent(base, cmd)
+    })
+
+    it('meal.set carries the recipe when the day was planned from the recipe box', () => {
+      const recipe = base.recipes![0]!
+      const cmd: LogCommand = { kind: 'meal.set', householdId, day: emptyDay, text: recipe.title, recipeId: recipe.id, previous: null }
+      expect(applyCommand(base, cmd, now).mealPlan!.find((e) => e.day === emptyDay)).toMatchObject({
+        text: recipe.title, recipeId: recipe.id,
+      })
+    })
+
+    it('meal.clear removes the day and is idempotent', () => {
+      const cmd: LogCommand = {
+        kind: 'meal.clear', householdId, day: planned.day, previous: { text: planned.text, recipeId: planned.recipeId },
+      }
+      const next = applyCommand(base, cmd, now)
+      expect(next.mealPlan!.some((e) => e.day === planned.day)).toBe(false)
+      expectIdempotent(base, cmd)
+    })
+
+    it('works on a snapshot cached before the Kitchen screen', () => {
+      const noPlan = { ...base, mealPlan: undefined }
+      const set: LogCommand = { kind: 'meal.set', householdId, day: emptyDay, text: 'Soup', recipeId: null, previous: null }
+      expect(applyCommand(noPlan, set, now).mealPlan).toHaveLength(1)
+      const clear: LogCommand = { kind: 'meal.clear', householdId, day: emptyDay, previous: { text: 'Soup', recipeId: null } }
+      expect(applyCommand(noPlan, clear, now).mealPlan).toEqual([])
     })
   })
 

@@ -2,7 +2,8 @@
 /**
  * Take list phone page (spec §7.8, §13) at /list/:token. Opened from the display's QR code on any phone, so it
  * uses nothing of the display: no display session, no household store, only the token and a session-less anon
- * client. Groceries only; items can be checked off but not added or deleted. Check-offs show at once and are
+ * client. Groceries only, grouped under each shopping list's name (spec §3.3), so one scan covers every stop;
+ * items can be checked off but not added or deleted. Check-offs show at once and are
  * sent in the background; one made without a connection is kept and sent on the next poll. Polls every 10 s
  * while the page is visible.
  */
@@ -25,10 +26,32 @@ const finishing = ref(false)
 /** Counts check-offs, so a list fetched while one was made (and may predate it) is not applied. */
 let toggles = 0
 
-const items = computed(() => {
+/** One shopping list's items, in the order the lists came back. */
+interface ListGroup {
+  id: string
+  name: string
+  items: TakeListItem[]
+}
+
+/** Items grouped by their list, each group unchecked first (oldest first, as queried) then checked. */
+const groups = computed<ListGroup[]>(() => {
   const merged = serverItems.value.map((i) => (pending.has(i.id) ? { ...i, checked: pending.get(i.id)! } : i))
-  return [...merged.filter((i) => !i.checked), ...merged.filter((i) => i.checked)]
+  const byList = new Map<string, TakeListItem[]>()
+  const order: ListGroup[] = []
+  for (const item of merged) {
+    let items = byList.get(item.listId)
+    if (!items) {
+      items = []
+      byList.set(item.listId, items)
+      order.push({ id: item.listId, name: item.listName, items })
+    }
+    items.push(item)
+  }
+  return order.map((g) => ({ ...g, items: [...g.items.filter((i) => !i.checked), ...g.items.filter((i) => i.checked)] }))
 })
+
+/** A single unnamed list (one household list, or an older server that sends no name) needs no heading. */
+const showHeadings = computed(() => groups.value.length > 1 || (groups.value[0]?.name ?? '') !== '')
 
 const ended = () => phase.value === 'expired' || phase.value === 'done'
 
@@ -178,27 +201,32 @@ onBeforeUnmount(() => {
     <section v-else-if="phase === 'list'" class="flex flex-1 flex-col gap-3.5 pt-1.5">
       <h1 class="px-1 text-[28px] font-semibold">Grocery list</h1>
 
-      <p v-if="items.length === 0" class="rounded-[16px] bg-surface px-4 py-5 text-[19px] text-ink-3">Nothing on the list</p>
-      <ul v-else class="flex flex-col overflow-hidden rounded-[16px] bg-surface" aria-label="Grocery items">
-        <li v-for="item in items" :key="item.id" class="border-b border-surface-2 last:border-b-0">
-          <button
-            type="button"
-            role="checkbox"
-            :aria-checked="item.checked"
-            class="flex min-h-[56px] w-full items-center gap-3.5 px-4 py-2 text-left"
-            @click="toggle(item)"
-          >
-            <span
-              aria-hidden="true"
-              class="flex size-[28px] shrink-0 items-center justify-center rounded-[9px] border-2 text-[15px] font-bold text-surface"
-              :class="item.checked ? 'border-green-deep bg-green-deep' : 'border-ink-3 bg-transparent'"
-            >
-              {{ item.checked ? '✓' : '' }}
-            </span>
-            <span class="flex-1 text-[19px] break-words" :class="item.checked ? 'text-ink-3 line-through' : 'text-ink'">{{ item.text }}</span>
-          </button>
-        </li>
-      </ul>
+      <p v-if="groups.length === 0" class="rounded-[16px] bg-surface px-4 py-5 text-[19px] text-ink-3">Nothing on the list</p>
+      <template v-else>
+        <section v-for="group in groups" :key="group.id" class="flex flex-col gap-1.5">
+          <h2 v-if="showHeadings" class="px-1 text-[20px] font-semibold text-ink-2">{{ group.name }}</h2>
+          <ul class="flex flex-col overflow-hidden rounded-[16px] bg-surface" :aria-label="group.name || 'Grocery items'">
+            <li v-for="item in group.items" :key="item.id" class="border-b border-surface-2 last:border-b-0">
+              <button
+                type="button"
+                role="checkbox"
+                :aria-checked="item.checked"
+                class="flex min-h-[56px] w-full items-center gap-3.5 px-4 py-2 text-left"
+                @click="toggle(item)"
+              >
+                <span
+                  aria-hidden="true"
+                  class="flex size-[28px] shrink-0 items-center justify-center rounded-[9px] border-2 text-[15px] font-bold text-surface"
+                  :class="item.checked ? 'border-green-deep bg-green-deep' : 'border-ink-3 bg-transparent'"
+                >
+                  {{ item.checked ? '✓' : '' }}
+                </span>
+                <span class="flex-1 text-[19px] break-words" :class="item.checked ? 'text-ink-3 line-through' : 'text-ink'">{{ item.text }}</span>
+              </button>
+            </li>
+          </ul>
+        </section>
+      </template>
 
       <div class="flex-1" />
       <p class="text-center text-[13px] text-ink-3">Check-offs sync to the kitchen display. Items can only be added at home.</p>

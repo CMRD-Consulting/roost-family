@@ -4,7 +4,7 @@
  * - Display side (`TakeListDisplayApi`): runs on the display's own client; any household member or display can
  *   create the link (which revokes the previous one) or end it.
  * - Phone page (`TakeListPageApi`): runs on a separate anon client with no session; every call carries the token,
- *   and the server only ever returns grocery items.
+ *   and the server only ever returns grocery items, each with the list it is on (spec §3.3).
  */
 import { isDemo } from './householdSource'
 import type { RoostClient } from './supabase'
@@ -32,6 +32,9 @@ export interface TakeListItem {
   id: string
   text: string
   checked: boolean
+  /** The shopping list the item is on; the phone page groups by it (spec §3.3). */
+  listId: string
+  listName: string
 }
 
 export interface TakeListDisplayApi {
@@ -92,10 +95,12 @@ export function createTakeListDisplayApi(client: RoostClient): TakeListDisplayAp
 export function createTakeListPageApi(client: RoostClient): TakeListPageApi {
   return {
     async items(token) {
-      const rows = await run<{ out_id: string; out_text: string; out_checked: boolean }[] | null>(() =>
-        client.rpc('take_list_items', { p_token: token }),
-      )
-      return (rows ?? []).map((r) => ({ id: r.out_id, text: r.out_text, checked: r.out_checked }))
+      const rows = await run<
+        { out_id: string; out_text: string; out_checked: boolean; out_list_id: string; out_list_name: string }[] | null
+      >(() => client.rpc('take_list_items', { p_token: token }))
+      return (rows ?? []).map((r) => ({
+        id: r.out_id, text: r.out_text, checked: r.out_checked, listId: r.out_list_id, listName: r.out_list_name,
+      }))
     },
     async setChecked(token, itemId, checked) {
       await run(() => client.rpc('take_list_set_checked', { p_token: token, p_item_id: itemId, p_checked: checked }))

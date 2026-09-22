@@ -1,10 +1,11 @@
 import { personColor } from '@/ui/personPalette'
 import { householdDate } from '@/domain/time'
 import type { Medicine, Routine, RoutineStep } from '@/domain/types'
-import type { HouseholdPhoto, HouseholdSnapshot, Member, SitterSession, SnapshotChild } from '../snapshot'
+import type { HouseholdPhoto, HouseholdSnapshot, Member, Recipe, SitterSession, SnapshotChild } from '../snapshot'
 
 const HOUR_MS = 3_600_000
 const MIN_MS = 60_000
+const DAY_MS = 24 * HOUR_MS
 
 export interface DemoOptions {
   conflict?: boolean
@@ -40,6 +41,9 @@ function samplePhotos(now: Date): HouseholdPhoto[] {
   }))
 }
 
+/** Ingredient or step lines, numbered from 0 in the order given. */
+const recipeLines = (prefix: string, texts: string[]) => texts.map((text, sort) => ({ id: `${prefix}-${sort}`, text, sort }))
+
 const step = (iconKey: string | null, label: string, time: string | null): RoutineStep => ({
   iconKey,
   photoId: null,
@@ -53,6 +57,8 @@ export function buildDemoSnapshot(now: Date, options: DemoOptions = {}): Househo
   const householdId = 'aaaaaaaa-0000-0000-0000-000000000001'
   const timeZone = 'America/New_York'
   const today = householdDate(now, timeZone)
+  /** The household's date `offset` days from today. */
+  const day = (offset: number) => householdDate(new Date(now.getTime() + offset * DAY_MS), timeZone)
 
   const sam: Member = {
     id: 'bbbbbbbb-0000-0000-0000-000000000001',
@@ -276,9 +282,66 @@ export function buildDemoSnapshot(now: Date, options: DemoOptions = {}): Househo
     { id: 'jot-1', text: "Call pediatrician about Theo's rash", createdAt: ago(2 * HOUR_MS), doneAt: null },
   ]
 
+  // Two shopping lists (spec §3.1); the oldest un-archived one is the household's default.
+  const shoppingLists: HouseholdSnapshot['shoppingLists'] = [
+    { id: 'list-groceries', name: 'Groceries', createdAt: ago(30 * DAY_MS), archivedAt: null },
+    { id: 'list-costco', name: 'Costco', createdAt: ago(10 * DAY_MS), archivedAt: null },
+  ]
+
   const groceries: HouseholdSnapshot['groceries'] = [
-    { id: 'grocery-1', text: 'Whole milk', createdAt: ago(20 * HOUR_MS), checkedAt: null },
-    { id: 'grocery-2', text: 'Bananas', createdAt: ago(20 * HOUR_MS), checkedAt: null },
+    { id: 'grocery-1', listId: 'list-groceries', text: 'Whole milk', createdAt: ago(20 * HOUR_MS), checkedAt: null },
+    { id: 'grocery-2', listId: 'list-costco', text: 'Bananas', createdAt: ago(20 * HOUR_MS), checkedAt: null },
+  ]
+
+  // One task per state the To-do tab groups by: overdue, due today, no date, and done in the last 24 h.
+  const tasks: HouseholdSnapshot['tasks'] = [
+    {
+      id: 'task-prescription', text: "Refill Theo's prescription", assignedMembershipId: sam.id,
+      dueOn: day(-1), createdAt: ago(3 * DAY_MS), doneAt: null,
+    },
+    {
+      id: 'task-field-trip', text: "Sign Ivy's field trip form", assignedMembershipId: alex.id,
+      dueOn: today, createdAt: ago(2 * DAY_MS), doneAt: null,
+    },
+    {
+      id: 'task-sitter', text: 'Book the sitter for Saturday', assignedMembershipId: null,
+      dueOn: null, createdAt: ago(6 * HOUR_MS), doneAt: null,
+    },
+    {
+      id: 'task-recycling', text: 'Take out the recycling', assignedMembershipId: null,
+      dueOn: today, createdAt: ago(26 * HOUR_MS), doneAt: ago(2 * HOUR_MS),
+    },
+  ]
+
+  const tacos: Recipe = {
+    id: 'recipe-tacos',
+    title: 'Weeknight tacos',
+    sourceUrl: null,
+    servings: 4,
+    notes: null,
+    createdAt: ago(40 * DAY_MS),
+    archivedAt: null,
+    ingredients: recipeLines('tacos-i', ['Ground beef', 'Taco shells', 'Cheddar', 'Salsa', 'Shredded lettuce']),
+    steps: recipeLines('tacos-s', ['Brown the beef with the spice mix.', 'Warm the shells in the oven for 5 minutes.', 'Put everything on the table and let everyone build their own.']),
+  }
+  const sheetPan: Recipe = {
+    id: 'recipe-sheet-pan',
+    title: 'Sheet-pan chicken',
+    sourceUrl: 'https://example.com/sheet-pan-chicken',
+    servings: 4,
+    notes: 'Ivy eats this one without complaining.',
+    createdAt: ago(12 * DAY_MS),
+    archivedAt: null,
+    ingredients: recipeLines('sheet-i', ['Chicken thighs', 'Baby potatoes', 'Green beans', 'Olive oil', 'Lemon']),
+    steps: recipeLines('sheet-s', ['Heat the oven to 425°F.', 'Toss everything with oil and salt on one pan.', 'Roast 35 minutes, squeeze the lemon over it.']),
+  }
+  const recipes: HouseholdSnapshot['recipes'] = [sheetPan, tacos]
+
+  // Today is planned from the recipe box, so the main screen's dinner line reads "Tacos" from the plan.
+  const mealPlan: HouseholdSnapshot['mealPlan'] = [
+    { id: 'meal-today', day: today, text: 'Tacos', recipeId: tacos.id, createdAt: ago(DAY_MS) },
+    { id: 'meal-tomorrow', day: day(1), text: 'Leftovers', recipeId: null, createdAt: ago(DAY_MS) },
+    { id: 'meal-day-after', day: day(2), text: sheetPan.title, recipeId: sheetPan.id, createdAt: ago(DAY_MS) },
   ]
 
   return {
@@ -316,7 +379,11 @@ export function buildDemoSnapshot(now: Date, options: DemoOptions = {}): Househo
     routineProgress,
     routineOverrides: [],
     jots,
+    shoppingLists,
     groceries,
+    tasks,
+    recipes,
+    mealPlan,
     activeSitterSession,
     recentSitterSession: null,
     unseenSitterSessions: [],

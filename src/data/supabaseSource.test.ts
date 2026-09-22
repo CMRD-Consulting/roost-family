@@ -177,6 +177,12 @@ function baseTableData(): Record<string, QueryResultSpec> {
     sitter_sessions: { data: [], error: null },
     household_weather: { data: [], error: null },
     photos: { data: [], error: null },
+    shopping_lists: { data: [], error: null },
+    tasks: { data: [], error: null },
+    recipes: { data: [], error: null },
+    recipe_ingredients: { data: [], error: null },
+    recipe_steps: { data: [], error: null },
+    meal_plan_entries: { data: [], error: null },
   }
 }
 
@@ -277,6 +283,25 @@ describe('createSupabaseSource load', () => {
     ])
     expect(calls.find((c) => c.table === 'grocery_items')?.ops).toEqual([
       'select:*', 'eq:household_id=h1', `or:checked_at.is.null,checked_at.gte.${cutoff24h}`,
+    ])
+    expect(calls.find((c) => c.table === 'shopping_lists')?.ops).toEqual([
+      'select:*', 'eq:household_id=h1', 'is:archived_at=null', 'order:created_at:asc',
+    ])
+    expect(calls.find((c) => c.table === 'tasks')?.ops).toEqual([
+      'select:*', 'eq:household_id=h1', `or:done_at.is.null,done_at.gte.${cutoff24h}`,
+    ])
+    expect(calls.find((c) => c.table === 'recipes')?.ops).toEqual([
+      'select:*', 'eq:household_id=h1', 'is:archived_at=null', 'order:created_at:desc',
+    ])
+    expect(calls.find((c) => c.table === 'recipe_ingredients')?.ops).toEqual([
+      'select:*', 'eq:household_id=h1', 'order:sort:asc',
+    ])
+    expect(calls.find((c) => c.table === 'recipe_steps')?.ops).toEqual([
+      'select:*', 'eq:household_id=h1', 'order:sort:asc',
+    ])
+    // The 14 days around today, in the household's own time zone.
+    expect(calls.find((c) => c.table === 'meal_plan_entries')?.ops).toEqual([
+      'select:*', 'eq:household_id=h1', 'gte:day=2026-09-07', 'lte:day=2026-09-21',
     ])
     const cutoff12h = new Date(now.getTime() - 12 * 3_600_000).toISOString()
     expect(calls.filter((c) => c.table === 'sitter_sessions').map((c) => c.ops)).toEqual([
@@ -512,6 +537,120 @@ describe('createSupabaseSource load', () => {
     })
   })
 
+  describe('kitchen tables', () => {
+    const listRow = { id: 'sl1', household_id: 'h1', name: 'Groceries', created_at: '2026-09-01T10:00:00Z', archived_at: null }
+    const groceryRow = {
+      id: 'g1', household_id: 'h1', list_id: 'sl1', text: 'Whole milk', display_id: null,
+      created_at: '2026-09-14T10:00:00Z', checked_at: null,
+    }
+    const taskRow = {
+      id: 't1', household_id: 'h1', text: 'Book the sitter', assigned_membership_id: 'mem1', due_on: '2026-09-15',
+      display_id: null, created_at: '2026-09-14T10:00:00Z', done_at: null,
+    }
+    const recipeRow = {
+      id: 'rec1', household_id: 'h1', title: 'Weeknight tacos', source_url: null, servings: 4, notes: null,
+      created_at: '2026-09-01T10:00:00Z', archived_at: null,
+    }
+    const mealRow = {
+      id: 'mp1', household_id: 'h1', day: '2026-09-14', text: 'Tacos', recipe_id: 'rec1', created_at: '2026-09-13T10:00:00Z',
+    }
+
+    it('maps shopping lists, grocery items with their list, tasks and the meal plan', async () => {
+      const { client } = createFakeClient({
+        ...baseTableData(),
+        shopping_lists: { data: [listRow], error: null },
+        grocery_items: { data: [groceryRow], error: null },
+        tasks: { data: [taskRow], error: null },
+        meal_plan_entries: { data: [mealRow], error: null },
+      })
+      const snapshot = await createSupabaseSource(client).load('h1', now)
+
+      expect(snapshot.shoppingLists).toEqual([
+        { id: 'sl1', name: 'Groceries', createdAt: '2026-09-01T10:00:00Z', archivedAt: null },
+      ])
+      expect(snapshot.groceries).toEqual([
+        { id: 'g1', listId: 'sl1', text: 'Whole milk', createdAt: '2026-09-14T10:00:00Z', checkedAt: null },
+      ])
+      expect(snapshot.tasks).toEqual([
+        {
+          id: 't1', text: 'Book the sitter', assignedMembershipId: 'mem1', dueOn: '2026-09-15',
+          createdAt: '2026-09-14T10:00:00Z', doneAt: null,
+        },
+      ])
+      expect(snapshot.mealPlan).toEqual([
+        { id: 'mp1', day: '2026-09-14', text: 'Tacos', recipeId: 'rec1', createdAt: '2026-09-13T10:00:00Z' },
+      ])
+    })
+
+    it('groups ingredients and steps onto their own recipe, in sort order', async () => {
+      const otherRecipe = { ...recipeRow, id: 'rec2', title: 'Sheet-pan chicken' }
+      const { client } = createFakeClient({
+        ...baseTableData(),
+        recipes: { data: [recipeRow, otherRecipe], error: null },
+        recipe_ingredients: {
+          data: [
+            { id: 'ri1', household_id: 'h1', recipe_id: 'rec1', text: 'Ground beef', sort: 0 },
+            { id: 'ri2', household_id: 'h1', recipe_id: 'rec1', text: 'Taco shells', sort: 1 },
+            { id: 'ri3', household_id: 'h1', recipe_id: 'rec2', text: 'Chicken thighs', sort: 0 },
+          ],
+          error: null,
+        },
+        recipe_steps: {
+          data: [{ id: 'rs1', household_id: 'h1', recipe_id: 'rec1', text: 'Brown the beef.', sort: 0 }],
+          error: null,
+        },
+      })
+      const snapshot = await createSupabaseSource(client).load('h1', now)
+
+      expect(snapshot.recipes).toEqual([
+        {
+          id: 'rec1', title: 'Weeknight tacos', sourceUrl: null, servings: 4, notes: null,
+          createdAt: '2026-09-01T10:00:00Z', archivedAt: null,
+          ingredients: [
+            { id: 'ri1', text: 'Ground beef', sort: 0 },
+            { id: 'ri2', text: 'Taco shells', sort: 1 },
+          ],
+          steps: [{ id: 'rs1', text: 'Brown the beef.', sort: 0 }],
+        },
+        {
+          id: 'rec2', title: 'Sheet-pan chicken', sourceUrl: null, servings: 4, notes: null,
+          createdAt: '2026-09-01T10:00:00Z', archivedAt: null,
+          ingredients: [{ id: 'ri3', text: 'Chicken thighs', sort: 0 }],
+          steps: [],
+        },
+      ])
+    })
+
+    it.each(['recipes', 'recipe_ingredients', 'recipe_steps'])(
+      'hides the recipe box instead of failing the whole load when %s errors',
+      async (table) => {
+        const { client } = createFakeClient({
+          ...baseTableData(),
+          recipes: { data: [recipeRow], error: null },
+          [table]: { data: null, error: { message: 'nope' } },
+        })
+        const snapshot = await createSupabaseSource(client).load('h1', now)
+        expect(snapshot.recipes).toEqual([])
+        expect(snapshot.household.id).toBe('h1')
+      },
+    )
+
+    it.each(['shopping_lists', 'tasks', 'meal_plan_entries'])('rejects when %s errors', async (table) => {
+      const { client } = createFakeClient({ ...baseTableData(), [table]: { data: null, error: { message: `${table} failed` } } })
+      await expect(createSupabaseSource(client).load('h1', now)).rejects.toThrow(`${table} failed`)
+    })
+
+    it("computes the meal-plan window from the household's own date across a DST transition", async () => {
+      // 2026-11-01 00:30 EDT: the window is simply the 7 calendar days either side of 2026-11-01.
+      const { client, calls } = createFakeClient(baseTableData())
+      await createSupabaseSource(client).load('h1', new Date('2026-11-01T04:30:00Z'))
+
+      expect(calls.find((c) => c.table === 'meal_plan_entries')?.ops).toEqual([
+        'select:*', 'eq:household_id=h1', 'gte:day=2026-10-25', 'lte:day=2026-11-08',
+      ])
+    })
+  })
+
   describe('conflict doses never age out', () => {
     const doseRow = (over: Record<string, unknown>) => ({
       id: 'd0', household_id: 'h1', child_id: 'c1', medicine_id: 'm1',
@@ -650,6 +789,7 @@ describe('createSupabaseSource subscribe', () => {
       'memberships', 'medicines', 'dose_entries', 'sleep_entries', 'feeding_entries',
       'diaper_entries', 'sticker_categories', 'sticker_entries', 'routines', 'routine_progress',
       'routine_day_overrides', 'jots', 'grocery_items', 'sitter_sessions', 'household_weather', 'photos',
+      'shopping_lists', 'tasks', 'recipes', 'recipe_ingredients', 'recipe_steps', 'meal_plan_entries',
     ]) {
       expect(byTable.get(table)).toBe(`household_id=eq.h1`)
     }

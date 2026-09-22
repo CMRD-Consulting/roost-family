@@ -334,8 +334,8 @@ begin
     checked := checked + 1;
   end loop;
   -- take_list_links is not client-readable since the take list migration, so it is no longer scanned.
-  if checked < 18 then
-    raise exception 'FAIL: expected to scan at least 18 household-scoped tables, scanned %', checked;
+  if checked < 24 then
+    raise exception 'FAIL: expected to scan at least 24 household-scoped tables, scanned %', checked;
   end if;
   if exists (select 1 from public.households where id = pg_temp.v('household_a'))
      or exists (select 1 from public.children where id = pg_temp.v('kid_a'))
@@ -1270,6 +1270,9 @@ reset role;
 insert into auth.users (id, instance_id, aud, role, email, raw_app_meta_data, raw_user_meta_data, is_anonymous, created_at, updated_at)
 values ('00000000-0000-0000-0000-000000000013', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', null, '{}', '{}', true, now(), now());
 insert into public.households (name, time_zone) values ('K family', 'America/New_York') returning id as household_k \gset
+-- A grocery item needs a list to land on, and K was inserted here rather than made by an RPC (which would have
+-- given it one). The households below take their "Groceries" list from create_household / setup_household.
+insert into public.shopping_lists (household_id, name) values (:'household_k', 'Groceries');
 insert into public.grocery_items (household_id, text, created_at, checked_at) values
   (:'household_f', 'Milk', now() - interval '3 hours', null) returning id as grocery_milk \gset
 insert into public.grocery_items (household_id, text, created_at, checked_at) values
@@ -1308,7 +1311,9 @@ set local role authenticated;
 select set_config('request.jwt.claims', :'NO_CLAIMS', true);
 select pg_temp.expect('items are Milk, Eggs (unchecked, oldest first), then Apples (checked)', (
   select array_agg(out_text || ':' || out_checked order by ord) from public.take_list_items(pg_temp.v_text('take_token_1'))
-    with ordinality as t (out_id, out_text, out_checked, ord)) = array['Milk:false', 'Eggs:false', 'Apples:true']);
+    with ordinality as t (out_id, out_text, out_checked, out_list_id, out_list_name, ord)) = array['Milk:false', 'Eggs:false', 'Apples:true']);
+select pg_temp.expect('every item names the household''s only list', (
+  select array_agg(distinct out_list_name) from public.take_list_items(pg_temp.v_text('take_token_1'))) = array['Groceries']);
 select pg_temp.expect_error('unknown token rejected',
   $q$select * from public.take_list_items('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')$q$, '42501');
 select pg_temp.expect_error('malformed token rejected',
@@ -3676,6 +3681,210 @@ select set_config('request.jwt.claims', :'RNEW', true);
 select pg_temp.expect('the signed-out tablet reconnects as R kitchen', (
   select out_display_id = pg_temp.v('display_r') from public.claim_display(:'r_token_3')));
 reset role;
+
+-- ─── Kitchen: shopping lists, to-dos, recipes, meal plan (kitchen spec §3–§6) ───
+-- Households A2 and B2, both made through create_household, so the "Groceries" list each one starts with is the
+-- one the RPC created. A2 is where the Kitchen fills up; B2 stays small, for the last-list and take-list rules.
+reset role;
+\set KA '{"sub":"00000000-0000-0000-0000-000000000050","role":"authenticated","is_anonymous":false}'
+\set KB '{"sub":"00000000-0000-0000-0000-000000000051","role":"authenticated","is_anonymous":false}'
+insert into auth.users (id, instance_id, aud, role, email, raw_app_meta_data, raw_user_meta_data, is_anonymous, created_at, updated_at)
+values
+  ('00000000-0000-0000-0000-000000000050', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'ka@roost.test', '{}', '{}', false, now(), now()),
+  ('00000000-0000-0000-0000-000000000051', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'kb@roost.test', '{}', '{}', false, now(), now());
+insert into public.invite_codes (code) values ('SMOKE7'), ('SMOKE8');
+set local role authenticated;
+select set_config('request.jwt.claims', :'KA', true);
+select public.record_consent('2026-09-14', true);
+select public.create_household('Kitchen A family', 'America/New_York', '28202', null, null, 'SMOKE7', 'Kit', '#2F86A6') as household_ka \gset
+insert into public.recipes (household_id, title, servings) values (:'household_ka', 'Kitchen A stew', 4) returning id as recipe_ka \gset
+select set_config('request.jwt.claims', :'KB', true);
+select public.record_consent('2026-09-14', true);
+select public.create_household('Kitchen B family', 'America/Chicago', '60601', null, null, 'SMOKE8', 'Kim', '#8A56AC') as household_kb \gset
+reset role;
+select l.id as list_ka from public.shopping_lists l where l.household_id = :'household_ka' \gset
+select l.id as list_kb from public.shopping_lists l where l.household_id = :'household_kb' \gset
+select set_config('smoke.household_ka', :'household_ka', true), set_config('smoke.household_kb', :'household_kb', true),
+       set_config('smoke.list_ka', :'list_ka', true), set_config('smoke.list_kb', :'list_kb', true),
+       set_config('smoke.recipe_ka', :'recipe_ka', true);
+
+\echo '[136] Kitchen tables: RLS on with one member-all policy, realtime with full replica identity, composite keys, no anon'
+select pg_temp.expect('a new household comes with one un-archived Groceries list', (
+  select count(*) from public.shopping_lists where household_id = pg_temp.v('household_ka')) = 1
+  and (select name = 'Groceries' and archived_at is null from public.shopping_lists where id = pg_temp.v('list_ka')));
+select pg_temp.expect('RLS on, and exactly one ALL policy for authenticated on each table', not exists (
+  select 1 from unnest(array['shopping_lists', 'tasks', 'recipes', 'recipe_ingredients', 'recipe_steps', 'meal_plan_entries']) as t (name)
+  where not (select relrowsecurity from pg_class where oid = ('public.' || t.name)::regclass)
+     or (select array_agg(cmd) from pg_policies where schemaname = 'public' and tablename = t.name) <> array['ALL']
+     or (select array_agg(roles::text) from pg_policies where schemaname = 'public' and tablename = t.name) <> array['{authenticated}']));
+select pg_temp.expect('all six published to realtime with full replica identity', (
+  select count(*) from pg_publication_tables where pubname = 'supabase_realtime'
+    and tablename = any (array['shopping_lists', 'tasks', 'recipes', 'recipe_ingredients', 'recipe_steps', 'meal_plan_entries'])) = 6
+  and not exists (
+    select 1 from unnest(array['shopping_lists', 'tasks', 'recipes', 'recipe_ingredients', 'recipe_steps', 'meal_plan_entries']) as t (name)
+    where (select relreplident from pg_class where oid = ('public.' || t.name)::regclass) <> 'f'));
+select pg_temp.expect('anon has nothing; authenticated reads and writes rows and nothing more', not exists (
+  select 1 from unnest(array['shopping_lists', 'tasks', 'recipes', 'recipe_ingredients', 'recipe_steps', 'meal_plan_entries']) as t (name)
+  where has_table_privilege('anon', ('public.' || t.name)::regclass, 'select, insert, update, delete, truncate, references, trigger')
+     or has_table_privilege('authenticated', ('public.' || t.name)::regclass, 'truncate, references, trigger')
+     or not (has_table_privilege('authenticated', ('public.' || t.name)::regclass, 'select')
+             and has_table_privilege('authenticated', ('public.' || t.name)::regclass, 'insert')
+             and has_table_privilege('authenticated', ('public.' || t.name)::regclass, 'update')
+             and has_table_privilege('authenticated', ('public.' || t.name)::regclass, 'delete'))));
+select pg_temp.expect('every reference inside a household is a composite (id, household_id) key', (
+  select count(*) from pg_constraint c
+  where c.contype = 'f' and array_length(c.conkey, 1) = 2
+    and c.conrelid in ('public.tasks'::regclass, 'public.recipe_ingredients'::regclass,
+                       'public.recipe_steps'::regclass, 'public.meal_plan_entries'::regclass)) = 5);
+select pg_temp.expect('a grocery item''s list is a list of its own household, and required', exists (
+  select 1 from pg_constraint c
+  where c.contype = 'f' and c.conrelid = 'public.grocery_items'::regclass
+    and c.confrelid = 'public.shopping_lists'::regclass and array_length(c.conkey, 1) = 2)
+  and (select attnotnull from pg_attribute where attrelid = 'public.grocery_items'::regclass and attname = 'list_id'));
+select pg_temp.expect('no client role can execute a private trigger function', not exists (
+  select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'private' and p.prorettype = 'trigger'::regtype
+    and (has_function_privilege('authenticated', p.oid, 'execute') or has_function_privilege('anon', p.oid, 'execute'))));
+
+\echo '[137] An item with no list lands on the household''s default list: the oldest un-archived one'
+set local role authenticated;
+select set_config('request.jwt.claims', :'KA', true);
+insert into public.shopping_lists (household_id, name) values (:'household_ka', 'Costco') returning id as list_ka2 \gset
+select set_config('smoke.list_ka2', :'list_ka2', true);
+insert into public.grocery_items (household_id, text) values (:'household_ka', 'Eggs') returning id as item_ka1 \gset
+select pg_temp.expect('a list-less item (an older build''s queued grocery.add) lands on Groceries',
+  (select list_id from public.grocery_items where id = :'item_ka1') = pg_temp.v('list_ka'));
+update public.shopping_lists set archived_at = now() where id = :'list_ka';
+insert into public.grocery_items (household_id, text) values (:'household_ka', 'Bread') returning id as item_ka2 \gset
+select pg_temp.expect('with Groceries archived the default moves to the next oldest list',
+  (select list_id from public.grocery_items where id = :'item_ka2') = pg_temp.v('list_ka2'));
+update public.shopping_lists set archived_at = null where id = :'list_ka';
+
+\echo '[138] Another household''s Kitchen is invisible, unwritable, and unreachable through a foreign key'
+select set_config('request.jwt.claims', :'KB', true);
+select pg_temp.expect('B sees none of A''s Kitchen',
+  (select count(*) from public.shopping_lists where household_id = pg_temp.v('household_ka')) = 0
+  and (select count(*) from public.grocery_items where household_id = pg_temp.v('household_ka')) = 0
+  and (select count(*) from public.recipes where household_id = pg_temp.v('household_ka')) = 0);
+select pg_temp.expect_error('a list in another household',
+  $q$insert into public.shopping_lists (household_id, name) values (pg_temp.v('household_ka'), 'Sneak')$q$, '42501');
+select pg_temp.expect_error('a task in another household',
+  $q$insert into public.tasks (household_id, text) values (pg_temp.v('household_ka'), 'Sneak')$q$, '42501');
+select pg_temp.expect_error('a recipe in another household',
+  $q$insert into public.recipes (household_id, title) values (pg_temp.v('household_ka'), 'Sneak')$q$, '42501');
+select pg_temp.expect_error('a meal plan in another household',
+  $q$insert into public.meal_plan_entries (household_id, day, text) values (pg_temp.v('household_ka'), current_date, 'Sneak')$q$, '42501');
+select pg_temp.expect_error('an item of B''s on one of A''s lists',
+  $q$insert into public.grocery_items (household_id, list_id, text) values (pg_temp.v('household_kb'), pg_temp.v('list_ka'), 'Sneak')$q$, '23503');
+select pg_temp.expect_error('an ingredient of B''s on one of A''s recipes',
+  $q$insert into public.recipe_ingredients (household_id, recipe_id, text, sort) values (pg_temp.v('household_kb'), pg_temp.v('recipe_ka'), 'Sneak', 0)$q$, '23503');
+update public.shopping_lists set name = 'Hacked' where id = :'list_ka';
+delete from public.grocery_items where household_id = :'household_ka';
+reset role;
+select pg_temp.expect('A''s list and items are untouched by B''s update and delete',
+  (select name from public.shopping_lists where id = :'list_ka') = 'Groceries'
+  and (select count(*) from public.grocery_items where household_id = :'household_ka') = 2);
+
+\echo '[139] Per-household limits: 6 lists, 200 items a list, 200 open tasks, 300 recipes, 50 ingredients, 40 steps'
+set local role authenticated;
+select set_config('request.jwt.claims', :'KA', true);
+-- Rows already there when a statement starts are what a limit counts, so each bulk insert below stops at the
+-- limit and the single insert after it is the one that must fail.
+insert into public.shopping_lists (household_id, name)
+select pg_temp.v('household_ka'), 'List ' || i from generate_series(1, 4) i;
+select pg_temp.expect_error('a seventh shopping list',
+  $q$insert into public.shopping_lists (household_id, name) values (pg_temp.v('household_ka'), 'Seventh')$q$, '22023');
+update public.shopping_lists set archived_at = now() where id = :'list_ka2';
+insert into public.shopping_lists (household_id, name) values (:'household_ka', 'Sixth again');
+select pg_temp.expect_error('restoring a list that would be the seventh',
+  $q$update public.shopping_lists set archived_at = null where id = pg_temp.v('list_ka2')$q$, '22023');
+
+insert into public.grocery_items (household_id, list_id, text)
+select pg_temp.v('household_ka'), pg_temp.v('list_ka'), 'Item ' || i from generate_series(1, 199) i;
+select pg_temp.expect('the list holds 200 open items',
+  (select count(*) from public.grocery_items where list_id = pg_temp.v('list_ka') and checked_at is null) = 200);
+select pg_temp.expect_error('a 201st item on the list',
+  $q$insert into public.grocery_items (household_id, list_id, text) values (pg_temp.v('household_ka'), pg_temp.v('list_ka'), 'Too much')$q$, '22023');
+update public.grocery_items set checked_at = now() where id = :'item_ka1';
+insert into public.grocery_items (household_id, list_id, text) values (:'household_ka', :'list_ka', 'Room again');
+select pg_temp.expect('a checked item does not count against the list',
+  (select count(*) from public.grocery_items where list_id = pg_temp.v('list_ka') and checked_at is null) = 200);
+
+insert into public.tasks (household_id, text) select pg_temp.v('household_ka'), 'Task ' || i from generate_series(1, 200) i;
+select pg_temp.expect_error('a 201st open task',
+  $q$insert into public.tasks (household_id, text) values (pg_temp.v('household_ka'), 'Too much')$q$, '22023');
+update public.tasks set done_at = now() where household_id = :'household_ka' and text = 'Task 1';
+insert into public.tasks (household_id, text) values (:'household_ka', 'Room again');
+select pg_temp.expect('a finished task does not count against the household',
+  (select count(*) from public.tasks where household_id = pg_temp.v('household_ka') and done_at is null) = 200);
+
+insert into public.recipes (household_id, title) select pg_temp.v('household_ka'), 'Recipe ' || i from generate_series(1, 299) i;
+select pg_temp.expect_error('a 301st recipe',
+  $q$insert into public.recipes (household_id, title) values (pg_temp.v('household_ka'), 'Too much')$q$, '22023');
+update public.recipes set archived_at = now() where household_id = :'household_ka' and title = 'Recipe 1';
+insert into public.recipes (household_id, title) values (:'household_ka', 'Room again');
+select pg_temp.expect('an archived recipe does not count against the household',
+  (select count(*) from public.recipes where household_id = pg_temp.v('household_ka') and archived_at is null) = 300);
+
+insert into public.recipe_ingredients (household_id, recipe_id, text, sort)
+select pg_temp.v('household_ka'), pg_temp.v('recipe_ka'), 'Ingredient ' || i, i from generate_series(0, 49) i;
+select pg_temp.expect_error('a 51st ingredient',
+  $q$insert into public.recipe_ingredients (household_id, recipe_id, text, sort) values (pg_temp.v('household_ka'), pg_temp.v('recipe_ka'), 'Too much', 50)$q$, '22023');
+insert into public.recipe_steps (household_id, recipe_id, text, sort)
+select pg_temp.v('household_ka'), pg_temp.v('recipe_ka'), 'Step ' || i, i from generate_series(0, 39) i;
+select pg_temp.expect_error('a 41st step',
+  $q$insert into public.recipe_steps (household_id, recipe_id, text, sort) values (pg_temp.v('household_ka'), pg_temp.v('recipe_ka'), 'Too much', 40)$q$, '22023');
+
+\echo '[140] A household keeps at least one shopping list'
+select set_config('request.jwt.claims', :'KB', true);
+select pg_temp.expect_error('archiving B''s only list',
+  $q$update public.shopping_lists set archived_at = now() where id = pg_temp.v('list_kb')$q$, '22023');
+insert into public.shopping_lists (household_id, name) values (:'household_kb', 'Hardware') returning id as list_kb2 \gset
+select set_config('smoke.list_kb2', :'list_kb2', true);
+update public.shopping_lists set archived_at = now() where id = :'list_kb';
+select pg_temp.expect('with a second list the first archives',
+  (select archived_at is not null from public.shopping_lists where id = pg_temp.v('list_kb')));
+select pg_temp.expect_error('archiving the last un-archived list',
+  $q$update public.shopping_lists set archived_at = now() where id = pg_temp.v('list_kb2')$q$, '22023');
+update public.shopping_lists set archived_at = null where id = :'list_kb';
+
+\echo '[141] take_list_items carries each item''s list; the purge clears old plans, checked items and done tasks'
+insert into public.shopping_lists (household_id, name) values (:'household_kb', 'Old store') returning id as list_kb3 \gset
+insert into public.grocery_items (household_id, list_id, text, created_at, checked_at) values
+  (:'household_kb', :'list_kb', 'B milk', now() - interval '3 hours', null),
+  (:'household_kb', :'list_kb', 'B apples', now() - interval '4 hours', now() - interval '1 hour'),
+  (:'household_kb', :'list_kb', 'B old bread', now() - interval '3 days', now() - interval '25 hours'),
+  (:'household_kb', :'list_kb2', 'B nails', now() - interval '2 hours', null),
+  (:'household_kb', :'list_kb3', 'B forgotten', now() - interval '2 hours', null);
+update public.shopping_lists set archived_at = now() where id = :'list_kb3';
+select out_token as take_token_kb from public.create_take_list_link(:'household_kb') \gset
+select set_config('smoke.take_token_kb', :'take_token_kb', true);
+select pg_temp.expect('one list''s items stay together, oldest list first, checked last, archived lists left out', (
+  select array_agg(x.out_text order by x.n) from public.take_list_items(pg_temp.v_text('take_token_kb'))
+  with ordinality as x (out_id, out_text, out_checked, out_list_id, out_list_name, n)) = array['B milk', 'B apples', 'B nails']);
+select pg_temp.expect('each item carries its list''s id and name', (
+  select array_agg(x.out_list_name order by x.n) from public.take_list_items(pg_temp.v_text('take_token_kb'))
+  with ordinality as x (out_id, out_text, out_checked, out_list_id, out_list_name, n)) = array['Groceries', 'Groceries', 'Hardware']
+  and (select bool_and(i.out_list_id = pg_temp.v('list_kb')) from public.take_list_items(pg_temp.v_text('take_token_kb')) i
+       where i.out_list_name = 'Groceries'));
+reset role;
+insert into public.meal_plan_entries (household_id, day, text) values
+  (:'household_kb', current_date - 61, 'Old stew'), (:'household_kb', current_date - 59, 'Newer stew');
+insert into public.tasks (household_id, text, done_at) values
+  (:'household_kb', 'Long done', now() - interval '91 days'), (:'household_kb', 'Recently done', now() - interval '89 days');
+insert into public.grocery_items (household_id, list_id, text, checked_at) values
+  (:'household_kb', :'list_kb', 'Long checked', now() - interval '31 days'),
+  (:'household_kb', :'list_kb', 'Recently checked', now() - interval '29 days');
+select private.purge_deleted_households();
+select pg_temp.expect('plans over 60 days, items checked over 30 days and tasks done over 90 days ago are gone',
+  not exists (select 1 from public.meal_plan_entries where household_id = :'household_kb' and text = 'Old stew')
+  and not exists (select 1 from public.tasks where household_id = :'household_kb' and text = 'Long done')
+  and not exists (select 1 from public.grocery_items where household_id = :'household_kb' and text = 'Long checked'));
+select pg_temp.expect('anything inside those windows is kept',
+  exists (select 1 from public.meal_plan_entries where household_id = :'household_kb' and text = 'Newer stew')
+  and exists (select 1 from public.tasks where household_id = :'household_kb' and text = 'Recently done')
+  and exists (select 1 from public.grocery_items where household_id = :'household_kb' and text = 'Recently checked')
+  and exists (select 1 from public.grocery_items where household_id = :'household_kb' and text = 'B milk'));
 
 \o
 \echo 'ALL RLS SMOKE CHECKS PASSED'

@@ -80,9 +80,9 @@ describe('TakeListPage', () => {
 
   it('shows loading, then the groceries with checked items at the bottom', async () => {
     const api = fakeApi([
-      { id: 'g1', text: 'Milk', checked: false },
-      { id: 'g2', text: 'Eggs', checked: false },
-      { id: 'g3', text: 'Apples', checked: true },
+      { id: 'g1', text: 'Milk', checked: false, listId: 'sl1', listName: 'Groceries' },
+      { id: 'g2', text: 'Eggs', checked: false, listId: 'sl1', listName: 'Groceries' },
+      { id: 'g3', text: 'Apples', checked: true, listId: 'sl1', listName: 'Groceries' },
     ])
     let release: () => void = () => {}
     const gate = new Promise<void>((r) => (release = r))
@@ -102,8 +102,8 @@ describe('TakeListPage', () => {
 
   it('checks an item off at once, sends it with the token, and moves it to the bottom', async () => {
     const api = fakeApi([
-      { id: 'g1', text: 'Milk', checked: false },
-      { id: 'g2', text: 'Eggs', checked: false },
+      { id: 'g1', text: 'Milk', checked: false, listId: 'sl1', listName: 'Groceries' },
+      { id: 'g2', text: 'Eggs', checked: false, listId: 'sl1', listName: 'Groceries' },
     ])
     const w = await mountPage(api)
 
@@ -116,6 +116,43 @@ describe('TakeListPage', () => {
     await flushPromises()
     expect(api.calls).toContain(`setChecked:${TOKEN}:g1:false`)
     expect(names(w)).toEqual(['Milk:false', 'Eggs:false'])
+  })
+
+  it('groups items under each list name, in the order the lists came back', async () => {
+    const costco = { listId: 'sl2', listName: 'Costco' }
+    const api = fakeApi([
+      { id: 'g1', text: 'Milk', checked: false, listId: 'sl1', listName: 'Groceries' },
+      { id: 'g2', text: 'Paper towels', checked: false, ...costco },
+      { id: 'g3', text: 'Apples', checked: true, listId: 'sl1', listName: 'Groceries' },
+      { id: 'g4', text: 'Coffee beans', checked: false, ...costco },
+    ])
+    const w = await mountPage(api)
+
+    expect(w.findAll('h2').map((h) => h.text())).toEqual(['Groceries', 'Costco'])
+    expect(w.findAll('ul').map((u) => u.attributes('aria-label'))).toEqual(['Groceries', 'Costco'])
+    // Each list keeps its own unchecked-then-checked order.
+    expect(names(w)).toEqual(['Milk:false', 'Apples:true', 'Paper towels:false', 'Coffee beans:false'])
+  })
+
+  it('checks an item off within its own group', async () => {
+    const api = fakeApi([
+      { id: 'g1', text: 'Milk', checked: false, listId: 'sl1', listName: 'Groceries' },
+      { id: 'g2', text: 'Bread', checked: false, listId: 'sl1', listName: 'Groceries' },
+      { id: 'g3', text: 'Paper towels', checked: false, listId: 'sl2', listName: 'Costco' },
+    ])
+    const w = await mountPage(api)
+
+    await w.findAll('[role="checkbox"]')[0]!.trigger('click')
+    await flushPromises()
+    expect(api.calls).toContain(`setChecked:${TOKEN}:g1:true`)
+    expect(names(w)).toEqual(['Bread:false', 'Milk:true', 'Paper towels:false'])
+  })
+
+  it('renders a single unnamed list without a heading', async () => {
+    const w = await mountPage(fakeApi([{ id: 'g1', text: 'Milk', checked: false, listId: 'sl1', listName: '' }]))
+    expect(w.findAll('h2')).toHaveLength(0)
+    expect(w.get('ul').attributes('aria-label')).toBe('Grocery items')
+    expect(names(w)).toEqual(['Milk:false'])
   })
 
   it('shows an empty state', async () => {
@@ -136,7 +173,7 @@ describe('TakeListPage', () => {
   })
 
   it('becomes expired when a check-off finds the link ended', async () => {
-    const api = fakeApi([{ id: 'g1', text: 'Milk', checked: false }])
+    const api = fakeApi([{ id: 'g1', text: 'Milk', checked: false, listId: 'sl1', listName: 'Groceries' }])
     const w = await mountPage(api)
     api.failNext.setChecked = denied()
     await w.get('[role="checkbox"]').trigger('click')
@@ -145,7 +182,7 @@ describe('TakeListPage', () => {
   })
 
   it('ends the link with Done shopping', async () => {
-    const api = fakeApi([{ id: 'g1', text: 'Milk', checked: false }])
+    const api = fakeApi([{ id: 'g1', text: 'Milk', checked: false, listId: 'sl1', listName: 'Groceries' }])
     const w = await mountPage(api)
     await buttonNamed(w, 'Done shopping').trigger('click')
     await flushPromises()
@@ -159,11 +196,11 @@ describe('TakeListPage', () => {
   })
 
   it('polls every 10 seconds while visible, and refreshes when shown again', async () => {
-    const api = fakeApi([{ id: 'g1', text: 'Milk', checked: false }])
+    const api = fakeApi([{ id: 'g1', text: 'Milk', checked: false, listId: 'sl1', listName: 'Groceries' }])
     const w = await mountPage(api)
     expect(api.calls).toEqual([`items:${TOKEN}`])
 
-    api.list = [...api.list, { id: 'g2', text: 'Bread', checked: false }]
+    api.list = [...api.list, { id: 'g2', text: 'Bread', checked: false, listId: 'sl1', listName: 'Groceries' }]
     await vi.advanceTimersByTimeAsync(10_000)
     expect(api.calls).toHaveLength(2)
     expect(names(w)).toEqual(['Milk:false', 'Bread:false'])
@@ -179,8 +216,8 @@ describe('TakeListPage', () => {
 
   it('keeps a check-off made offline, shows the offline banner, and sends it on the next poll', async () => {
     const api = fakeApi([
-      { id: 'g1', text: 'Milk', checked: false },
-      { id: 'g2', text: 'Eggs', checked: false },
+      { id: 'g1', text: 'Milk', checked: false, listId: 'sl1', listName: 'Groceries' },
+      { id: 'g2', text: 'Eggs', checked: false, listId: 'sl1', listName: 'Groceries' },
     ])
     const w = await mountPage(api)
     api.failNext.setChecked = network()
@@ -199,7 +236,7 @@ describe('TakeListPage', () => {
   })
 
   it('shows the offline banner when the first load fails and loads on the next poll', async () => {
-    const api = fakeApi([{ id: 'g1', text: 'Milk', checked: false }])
+    const api = fakeApi([{ id: 'g1', text: 'Milk', checked: false, listId: 'sl1', listName: 'Groceries' }])
     api.failNext.items = network()
     const w = await mountPage(api)
     expect(w.text()).toContain('offline')

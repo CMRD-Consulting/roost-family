@@ -77,11 +77,62 @@ export interface Jot {
   doneAt: IsoTimestamp | null
 }
 
+/** A named shopping list (spec §3.1). A household always has at least one; archived lists are not loaded. */
+export interface ShoppingList {
+  id: string
+  name: string
+  createdAt: IsoTimestamp
+  archivedAt: IsoTimestamp | null
+}
+
 export interface GroceryItem {
   id: string
+  /** The list this item is on (spec §3.1). Every item belongs to exactly one. */
+  listId: string
   text: string
   createdAt: IsoTimestamp
   checkedAt: IsoTimestamp | null
+}
+
+/** A household to-do (spec §4.1). Assigned to one adult membership, or to nobody ("Family"). */
+export interface Task {
+  id: string
+  text: string
+  assignedMembershipId: string | null
+  /** The household-local day it is due, or null for no date. */
+  dueOn: HouseholdDate | null
+  createdAt: IsoTimestamp
+  doneAt: IsoTimestamp | null
+}
+
+/** One ingredient or step of a recipe (spec §5.1): free text in an explicit order. */
+export interface RecipeLine {
+  id: string
+  text: string
+  sort: number
+}
+
+export interface Recipe {
+  id: string
+  title: string
+  sourceUrl: string | null
+  servings: number | null
+  notes: string | null
+  createdAt: IsoTimestamp
+  archivedAt: IsoTimestamp | null
+  /** Both in `sort` order. */
+  ingredients: RecipeLine[]
+  steps: RecipeLine[]
+}
+
+/** One planned dinner, at most one per household per day (spec §5.1). `text` is always the label shown, so an
+ *  archived recipe never empties a plan; `recipeId` is set when the day was planned from the recipe box. */
+export interface MealPlanEntry {
+  id: string
+  day: HouseholdDate
+  text: string
+  recipeId: string | null
+  createdAt: IsoTimestamp
 }
 
 export interface SitterSession {
@@ -150,5 +201,17 @@ export interface HouseholdSnapshot {
   /** Every photo of the household, oldest first. Optional: a device-cached snapshot from before photos were loaded
    *  won't have it. */
   photos?: HouseholdPhoto[]
+  /** The household's un-archived shopping lists, oldest first (spec §7.3); the first is its default list.
+   *  Optional: a device-cached snapshot from before the Kitchen screen won't have it. */
+  shoppingLists?: ShoppingList[]
+  /** Open tasks plus those completed in the last 24 hours (spec §7.3). Optional: a device-cached snapshot from
+   *  before the Kitchen screen won't have it. */
+  tasks?: Task[]
+  /** Un-archived recipes with their ingredients and steps (spec §7.3). Optional: a device-cached snapshot from
+   *  before the Kitchen screen won't have it. */
+  recipes?: Recipe[]
+  /** Planned dinners for the 14 days around today (spec §7.3). Optional: a device-cached snapshot from before the
+   *  Kitchen screen won't have it. */
+  mealPlan?: MealPlanEntry[]
   loadedAt: IsoTimestamp
 }

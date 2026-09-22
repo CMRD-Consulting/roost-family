@@ -168,10 +168,10 @@ describe('feedingAmounts', () => {
 describe('visibleGroceries', () => {
   it('lists unchecked first, then items checked within 24 h, hiding older checked items', () => {
     const items = [
-      { id: 'a', text: 'A', createdAt: ago(5 * H), checkedAt: ago(H) },
-      { id: 'b', text: 'B', createdAt: ago(4 * H), checkedAt: null },
-      { id: 'c', text: 'C', createdAt: ago(30 * H), checkedAt: ago(25 * H) },
-      { id: 'd', text: 'D', createdAt: ago(6 * H), checkedAt: null },
+      { id: 'a', listId: 'list-1', text: 'A', createdAt: ago(5 * H), checkedAt: ago(H) },
+      { id: 'b', listId: 'list-1', text: 'B', createdAt: ago(4 * H), checkedAt: null },
+      { id: 'c', listId: 'list-1', text: 'C', createdAt: ago(30 * H), checkedAt: ago(25 * H) },
+      { id: 'd', listId: 'list-1', text: 'D', createdAt: ago(6 * H), checkedAt: null },
     ]
     expect(visibleGroceries(items, now).map((i) => i.id)).toEqual(['d', 'b', 'a'])
   })

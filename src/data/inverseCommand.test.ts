@@ -57,13 +57,13 @@ describe('inverseCommand', () => {
   })
 
   it('grocery.add -> grocery.delete with the same item', () => {
-    const item = { id: 'g1', text: 'Milk', createdAt: now.toISOString(), checkedAt: null }
+    const item = { id: 'g1', listId: 'list-1', text: 'Milk', createdAt: now.toISOString(), checkedAt: null }
     const cmd: LogCommand = { kind: 'grocery.add', householdId, item, displayId: 'demo-display' }
     expect(inverseCommand(cmd)).toEqual({ kind: 'grocery.delete', householdId, item, displayId: 'demo-display' })
   })
 
   it('grocery.delete -> grocery.add with the same item', () => {
-    const item = { id: 'g1', text: 'Milk', createdAt: now.toISOString(), checkedAt: null }
+    const item = { id: 'g1', listId: 'list-1', text: 'Milk', createdAt: now.toISOString(), checkedAt: null }
     const cmd: LogCommand = { kind: 'grocery.delete', householdId, item, displayId: 'demo-display' }
     expect(inverseCommand(cmd)).toEqual({ kind: 'grocery.add', householdId, item, displayId: 'demo-display' })
   })
@@ -71,6 +71,97 @@ describe('inverseCommand', () => {
   it('grocery.check -> grocery.check with checkedAt/previousCheckedAt swapped', () => {
     const cmd: LogCommand = { kind: 'grocery.check', householdId, itemId: 'g1', checkedAt: '2026-09-14T20:00:00Z', previousCheckedAt: null }
     expect(inverseCommand(cmd)).toEqual({ kind: 'grocery.check', householdId, itemId: 'g1', checkedAt: null, previousCheckedAt: '2026-09-14T20:00:00Z' })
+  })
+
+  describe('shopping lists', () => {
+    const list = { id: 'list-1', name: 'Hardware', createdAt: '2026-09-14T18:00:00Z', archivedAt: null }
+
+    it('list.add -> list.archive of the new list', () => {
+      const cmd: LogCommand = { kind: 'list.add', householdId, list }
+      expect(inverseCommand(cmd)).toEqual({
+        kind: 'list.archive', householdId, listId: 'list-1', archivedAt: list.createdAt, previousArchivedAt: null,
+      })
+    })
+
+    it('list.rename -> list.rename with the names swapped, and round-trips', () => {
+      const cmd: LogCommand = { kind: 'list.rename', householdId, listId: 'list-1', name: 'Warehouse', previousName: 'Costco' }
+      const undo = inverseCommand(cmd)
+      expect(undo).toEqual({ kind: 'list.rename', householdId, listId: 'list-1', name: 'Costco', previousName: 'Warehouse' })
+      expect(inverseCommand(undo!)).toEqual(cmd)
+    })
+
+    it('list.archive -> list.restore, and back again', () => {
+      const cmd: LogCommand = {
+        kind: 'list.archive', householdId, listId: 'list-1', archivedAt: '2026-09-14T20:00:00Z', previousArchivedAt: null,
+      }
+      const undo = inverseCommand(cmd)
+      expect(undo).toEqual({ kind: 'list.restore', householdId, listId: 'list-1', previousArchivedAt: '2026-09-14T20:00:00Z' })
+      expect(inverseCommand(undo!)).toEqual(cmd)
+    })
+  })
+
+  describe('tasks', () => {
+    const task = {
+      id: 't1', text: 'Book the sitter', assignedMembershipId: sam.id, dueOn: '2026-09-15',
+      createdAt: now.toISOString(), doneAt: null,
+    }
+
+    it('task.add -> task.delete with the same task, and back again', () => {
+      const cmd: LogCommand = { kind: 'task.add', householdId, task, displayId: 'demo-display' }
+      const undo = inverseCommand(cmd)
+      expect(undo).toEqual({ kind: 'task.delete', householdId, task, displayId: 'demo-display' })
+      expect(inverseCommand(undo!)).toEqual(cmd)
+    })
+
+    it('task.check -> task.check with doneAt/previousDoneAt swapped', () => {
+      const cmd: LogCommand = { kind: 'task.check', householdId, taskId: 't1', doneAt: '2026-09-14T20:00:00Z', previousDoneAt: null }
+      expect(inverseCommand(cmd)).toEqual({
+        kind: 'task.check', householdId, taskId: 't1', doneAt: null, previousDoneAt: '2026-09-14T20:00:00Z',
+      })
+    })
+
+    it('task.update -> task.update putting the previous fields back, and round-trips', () => {
+      const cmd: LogCommand = {
+        kind: 'task.update', householdId, taskId: 't1', text: 'Book the sitter for Saturday',
+        assignedMembershipId: null, dueOn: '2026-09-20',
+        previous: { text: 'Book the sitter', assignedMembershipId: sam.id, dueOn: null },
+      }
+      const undo = inverseCommand(cmd)
+      expect(undo).toEqual({
+        kind: 'task.update', householdId, taskId: 't1', text: 'Book the sitter', assignedMembershipId: sam.id, dueOn: null,
+        previous: { text: 'Book the sitter for Saturday', assignedMembershipId: null, dueOn: '2026-09-20' },
+      })
+      expect(inverseCommand(undo!)).toEqual(cmd)
+    })
+  })
+
+  describe('meal plan', () => {
+    const day = '2026-09-14'
+
+    it('meal.set on an unplanned day -> meal.clear, and back again', () => {
+      const cmd: LogCommand = { kind: 'meal.set', householdId, day, text: 'Tacos', recipeId: 'rec-1', previous: null }
+      const undo = inverseCommand(cmd)
+      expect(undo).toEqual({ kind: 'meal.clear', householdId, day, previous: { text: 'Tacos', recipeId: 'rec-1' } })
+      expect(inverseCommand(undo!)).toEqual(cmd)
+    })
+
+    it('meal.set over an existing plan -> meal.set putting the old one back', () => {
+      const cmd: LogCommand = {
+        kind: 'meal.set', householdId, day, text: 'Pizza', recipeId: null, previous: { text: 'Tacos', recipeId: 'rec-1' },
+      }
+      const undo = inverseCommand(cmd)
+      expect(undo).toEqual({
+        kind: 'meal.set', householdId, day, text: 'Tacos', recipeId: 'rec-1', previous: { text: 'Pizza', recipeId: null },
+      })
+      expect(inverseCommand(undo!)).toEqual(cmd)
+    })
+
+    it('meal.clear -> meal.set with what was planned', () => {
+      const cmd: LogCommand = { kind: 'meal.clear', householdId, day, previous: { text: 'Leftovers', recipeId: null } }
+      expect(inverseCommand(cmd)).toEqual({
+        kind: 'meal.set', householdId, day, text: 'Leftovers', recipeId: null, previous: null,
+      })
+    })
   })
 
   it('dinner.set -> dinner.set with text/previous swapped', () => {

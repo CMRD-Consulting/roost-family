@@ -25,6 +25,8 @@ const CATEGORY = 'ffffffff-0000-4000-8000-000000000001'
 const DISPLAY = '99999999-0000-4000-8000-000000000001'
 const SITTER = '88888888-0000-4000-8000-000000000001'
 const PHOTO = '77777777-0000-4000-8000-000000000001'
+const LIST = '66666666-0000-4000-8000-000000000001'
+const RECIPE = '55555555-0000-4000-8000-000000000001'
 
 const attribution = {
   household_id: HOUSEHOLD,
@@ -97,7 +99,17 @@ function sampleInput(): ExportInput {
     stickers: [{ ...attribution, id: 'st1', child_id: KID, category_id: CATEGORY, at: '2026-09-14T15:00:00+00:00' }],
     diapers: [{ ...attribution, logged_by_membership_id: null, sitter_session_id: SITTER, logged_by_name: 'Sam', id: 'di1', child_id: KID, at: '2026-09-14T15:30:00+00:00', kind: 'wet' }],
     jots: [{ id: 'j1', household_id: HOUSEHOLD, text: 'Call pediatrician', display_id: DISPLAY, created_at: '2026-09-14T11:00:00+00:00', done_at: null }],
-    groceries: [{ id: 'g1', household_id: HOUSEHOLD, text: 'Milk', display_id: DISPLAY, created_at: '2026-09-14T11:00:00+00:00', checked_at: null }],
+    shoppingLists: [{ id: LIST, household_id: HOUSEHOLD, name: 'Groceries', created_at: '2026-09-01T12:00:00+00:00', archived_at: null }],
+    groceries: [{ id: 'g1', household_id: HOUSEHOLD, list_id: LIST, text: 'Milk', display_id: DISPLAY, created_at: '2026-09-14T11:00:00+00:00', checked_at: null }],
+    tasks: [
+      { id: 't1', household_id: HOUSEHOLD, text: 'Return the library books', assigned_membership_id: ADULT, due_on: '2026-09-16', display_id: DISPLAY, created_at: '2026-09-14T11:00:00+00:00', done_at: null },
+    ],
+    recipes: [
+      { id: RECIPE, household_id: HOUSEHOLD, title: 'Sheet-pan tacos', source_url: 'https://example.test/tacos', servings: 4, notes: null, created_at: '2026-09-01T12:00:00+00:00', archived_at: null },
+    ],
+    recipeIngredients: [{ id: 'ri1', household_id: HOUSEHOLD, recipe_id: RECIPE, text: 'Corn tortillas', sort: 0 }],
+    recipeSteps: [{ id: 'rs1', household_id: HOUSEHOLD, recipe_id: RECIPE, text: 'Heat the oven to 425F.', sort: 0 }],
+    mealPlan: [{ id: 'mp1', household_id: HOUSEHOLD, day: '2026-09-14', text: 'Sheet-pan tacos', recipe_id: RECIPE, created_at: '2026-09-13T12:00:00+00:00' }],
     sitterSessions: [{ id: SITTER, household_id: HOUSEHOLD, display_id: DISPLAY, sitter_name: 'Sam', started_at: '2026-09-14T15:00:00+00:00', ended_at: '2026-09-14T19:00:00+00:00', summary_shown_at: null, started_by: OWNER, ended_by: ADULT }],
     settingsAudit: [{ id: 1, household_id: HOUSEHOLD, membership_id: OWNER, change: { section: 'household', action: 'update' }, at: '2026-09-14T10:00:00+00:00' }],
     photos: [{ id: PHOTO, household_id: HOUSEHOLD, storage_path: `${HOUSEHOLD}/${PHOTO}.jpg`, kind: 'avatar', added_at: '2026-09-01T12:00:00+00:00' }],

@@ -48,7 +48,9 @@ async function add(): Promise<void> {
   const text = draft.value.trim().slice(0, MAX_LENGTH)
   if (!view.value || text.length === 0) return
   draft.value = ''
-  const item: GroceryItem = { id: newId(), text, createdAt: new Date().toISOString(), checkedAt: null }
+  // No list: the sheet adds to the household's default list, which applyCommand and the server's insert
+  // trigger both resolve (spec §3.1).
+  const item: GroceryItem = { id: newId(), listId: '', text, createdAt: new Date().toISOString(), checkedAt: null }
   const ok = await run({ kind: 'grocery.add', householdId: view.value.household.id, item, displayId: displayId.value })
   if (!ok && draft.value === '') draft.value = text
 }

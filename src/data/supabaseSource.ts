@@ -1,13 +1,13 @@
 import { TZDate } from '@date-fns/tz'
 import { householdDate } from '@/domain/time'
 import type { HouseholdSource } from './householdSource'
-import type { HouseholdSnapshot } from './snapshot'
+import type { HouseholdSnapshot, Recipe, RecipeLine } from './snapshot'
 import type { RoostClient } from './supabase'
 import type { Tables } from './database.types'
 import {
-  toChild, toDiaper, toDose, toFeeding, toGrocery, toHousehold, toJot, toMedicine, toMember,
-  toRoutine, toRoutineOverride, toRoutineProgress, toSitterSession, toSleep, toSticker,
-  toPhoto, toStickerCategory, toWeather,
+  toChild, toDiaper, toDose, toFeeding, toGrocery, toHousehold, toJot, toMealPlanEntry, toMedicine, toMember,
+  toRecipe, toRecipeLine, toRoutine, toRoutineOverride, toRoutineProgress, toShoppingList, toSitterSession,
+  toSleep, toSticker, toPhoto, toStickerCategory, toTask, toWeather,
 } from './mappers'
 
 const HOUR_MS = 3_600_000
@@ -19,12 +19,15 @@ const RECENT_SITTER_SESSION_MS = 12 * HOUR_MS
 const UNSEEN_SITTER_SESSIONS_MAX = 3
 /** How far around the oldest unresolved conflict dose to pull context doses for checkDose(). */
 const CONFLICT_CONTEXT_WINDOW_MS = 72 * HOUR_MS
+/** How many days either side of today the meal plan is loaded for (spec §7.3). */
+const MEAL_PLAN_WINDOW_DAYS = 7
 
 /** Household-scoped tables whose changes should trigger a snapshot reload. */
 const HOUSEHOLD_FILTERED_TABLES = [
   'memberships', 'medicines', 'dose_entries', 'sleep_entries', 'feeding_entries',
   'diaper_entries', 'sticker_categories', 'sticker_entries', 'routines', 'routine_progress',
   'routine_day_overrides', 'jots', 'grocery_items', 'sitter_sessions', 'household_weather', 'photos',
+  'shopping_lists', 'tasks', 'recipes', 'recipe_ingredients', 'recipe_steps', 'meal_plan_entries',
 ] as const
 
 /** Tables that lack a `household_id` column; RLS scopes them instead. */
@@ -34,6 +37,42 @@ function unwrap<T>(result: { data: T | null; error: { message: string } | null }
   if (result.error) throw new Error(result.error.message)
   if (result.data === null) throw new Error('No data returned')
   return result.data
+}
+
+/** The household's own calendar date `days` away from `now`. */
+function householdDayOffset(now: Date, timeZone: string, days: number): string {
+  const shifted = new TZDate(now.getTime(), timeZone)
+  shifted.setDate(shifted.getDate() + days)
+  return householdDate(new Date(shifted.getTime()), timeZone)
+}
+
+type Rows<T> = { data: T[] | null; error: { message: string } | null }
+
+/** Recipe lines grouped by their recipe, keeping the order they were queried in (by `sort`). */
+function linesByRecipe(rows: Tables<'recipe_ingredients'>[] | Tables<'recipe_steps'>[]): Map<string, RecipeLine[]> {
+  const byRecipe = new Map<string, RecipeLine[]>()
+  for (const row of rows) {
+    const lines = byRecipe.get(row.recipe_id) ?? []
+    lines.push(toRecipeLine(row))
+    byRecipe.set(row.recipe_id, lines)
+  }
+  return byRecipe
+}
+
+/**
+ * Recipes with their ingredients and steps. The three tables are queried separately (the lines filtered by
+ * household, not by recipe) and joined here. Recipes are never essential: a failed read hides the recipe box
+ * rather than failing the whole load, exactly as weather and photos do.
+ */
+function toRecipes(
+  recipeResult: Rows<Tables<'recipes'>>,
+  ingredientResult: Rows<Tables<'recipe_ingredients'>>,
+  stepResult: Rows<Tables<'recipe_steps'>>,
+): Recipe[] {
+  if (recipeResult.error || ingredientResult.error || stepResult.error || !recipeResult.data) return []
+  const ingredients = linesByRecipe(ingredientResult.data ?? [])
+  const steps = linesByRecipe(stepResult.data ?? [])
+  return recipeResult.data.map((row) => toRecipe(row, ingredients.get(row.id) ?? [], steps.get(row.id) ?? []))
 }
 
 /**
@@ -152,9 +191,9 @@ export function createSupabaseSource(client: RoostClient): HouseholdSource {
     const today = householdDate(now, household.timeZone)
     // Also load tomorrow's routine progress/overrides so they're ready the instant the
     // household's day rolls over, without waiting on a fresh load past midnight.
-    const tomorrowTZDate = new TZDate(now.getTime(), household.timeZone)
-    tomorrowTZDate.setDate(tomorrowTZDate.getDate() + 1)
-    const tomorrow = householdDate(new Date(tomorrowTZDate.getTime()), household.timeZone)
+    const tomorrow = householdDayOffset(now, household.timeZone, 1)
+    const mealPlanFrom = householdDayOffset(now, household.timeZone, -MEAL_PLAN_WINDOW_DAYS)
+    const mealPlanTo = householdDayOffset(now, household.timeZone, MEAL_PLAN_WINDOW_DAYS)
     const cutoff48h = new Date(now.getTime() - 2 * DAY_MS).toISOString()
     const cutoff8d = new Date(now.getTime() - 8 * DAY_MS).toISOString()
     const cutoff24h = new Date(now.getTime() - DAY_MS).toISOString()
@@ -165,6 +204,7 @@ export function createSupabaseSource(client: RoostClient): HouseholdSource {
       feedingResult, diaperResult, stickerCategoryResult, stickerResult, routineResult,
       routineProgressResult, routineOverrideResult, jotResult, groceryResult, sitterSessionResult,
       recentSitterSessionResult, unseenSitterSessionResult, weatherResult, photoResult,
+      shoppingListResult, taskResult, recipeResult, ingredientResult, stepResult, mealPlanResult,
     ] = await Promise.all([
       client.from('memberships').select('id, display_name, color, role').eq('household_id', householdId).is('left_at', null),
       loadChildrenAndOverrides(client, householdId),
@@ -215,6 +255,12 @@ export function createSupabaseSource(client: RoostClient): HouseholdSource {
         .eq('household_id', householdId)
         .maybeSingle(),
       client.from('photos').select('id, storage_path, kind, added_at').eq('household_id', householdId).order('added_at', { ascending: true }),
+      client.from('shopping_lists').select('*').eq('household_id', householdId).is('archived_at', null).order('created_at', { ascending: true }),
+      client.from('tasks').select('*').eq('household_id', householdId).or(`done_at.is.null,done_at.gte.${cutoff24h}`),
+      client.from('recipes').select('*').eq('household_id', householdId).is('archived_at', null).order('created_at', { ascending: false }),
+      client.from('recipe_ingredients').select('*').eq('household_id', householdId).order('sort', { ascending: true }),
+      client.from('recipe_steps').select('*').eq('household_id', householdId).order('sort', { ascending: true }),
+      client.from('meal_plan_entries').select('*').eq('household_id', householdId).gte('day', mealPlanFrom).lte('day', mealPlanTo),
     ])
 
     if (sitterSessionResult.error) throw new Error(sitterSessionResult.error.message)
@@ -249,6 +295,10 @@ export function createSupabaseSource(client: RoostClient): HouseholdSource {
       weather: weatherResult.error ? null : toWeather(weatherResult.data),
       // Photos are never essential either: without them Night Mode shows the clock alone (spec §7.7).
       photos: photoResult.error || !photoResult.data ? [] : photoResult.data.map(toPhoto),
+      shoppingLists: unwrap(shoppingListResult).map(toShoppingList),
+      tasks: unwrap(taskResult).map(toTask),
+      recipes: toRecipes(recipeResult, ingredientResult, stepResult),
+      mealPlan: unwrap(mealPlanResult).map(toMealPlanEntry),
       loadedAt: now.toISOString(),
     }
   }

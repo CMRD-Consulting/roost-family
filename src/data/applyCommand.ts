@@ -1,4 +1,4 @@
-import type { HouseholdSnapshot } from './snapshot'
+import type { HouseholdSnapshot, MealPlanEntry } from './snapshot'
 import type { Attribution, LogCommand } from './logCommands'
 
 function upsertById<T extends { id: string }>(list: T[], item: T): T[] {
@@ -16,6 +16,12 @@ function updateById<T extends { id: string }>(list: T[], id: string, fn: (x: T) 
   const copy = list.slice()
   copy[index] = fn(list[index]!)
   return copy
+}
+
+/** The household's default list: its oldest un-archived one, mirroring the `grocery_items` insert trigger
+ *  (spec §3.1). Empty when no list is known, which only happens on a snapshot cached before the Kitchen screen. */
+function defaultListId(snapshot: HouseholdSnapshot): string {
+  return (snapshot.shoppingLists ?? []).find((l) => l.archivedAt === null)?.id ?? ''
 }
 
 /** The entry as the server will store it: its sitter session comes from the command's attribution. */
@@ -59,12 +65,56 @@ export function applyCommand(snapshot: HouseholdSnapshot, cmd: LogCommand, now: 
     case 'jot.add':
       return { ...snapshot, jots: upsertById(snapshot.jots, cmd.jot) }
 
-    case 'grocery.add':
-      return { ...snapshot, groceries: upsertById(snapshot.groceries, cmd.item) }
+    case 'grocery.add': {
+      // An item queued without a list (an older build, or the Grocery sheet) lands on the default list.
+      const item = cmd.item.listId ? cmd.item : { ...cmd.item, listId: defaultListId(snapshot) }
+      return { ...snapshot, groceries: upsertById(snapshot.groceries, item) }
+    }
     case 'grocery.check':
       return { ...snapshot, groceries: updateById(snapshot.groceries, cmd.itemId, (g) => ({ ...g, checkedAt: cmd.checkedAt })) }
     case 'grocery.delete':
       return { ...snapshot, groceries: removeById(snapshot.groceries, cmd.item.id) }
+
+    // Shopping lists, tasks and the meal plan are optional on the snapshot (a device-cached one from before the
+    // Kitchen screen has none), so each case starts from `?? []`.
+    case 'list.add':
+      return { ...snapshot, shoppingLists: upsertById(snapshot.shoppingLists ?? [], cmd.list) }
+    case 'list.rename':
+      return { ...snapshot, shoppingLists: updateById(snapshot.shoppingLists ?? [], cmd.listId, (l) => ({ ...l, name: cmd.name })) }
+    case 'list.archive':
+      return { ...snapshot, shoppingLists: updateById(snapshot.shoppingLists ?? [], cmd.listId, (l) => ({ ...l, archivedAt: cmd.archivedAt })) }
+    case 'list.restore':
+      return { ...snapshot, shoppingLists: updateById(snapshot.shoppingLists ?? [], cmd.listId, (l) => ({ ...l, archivedAt: null })) }
+
+    case 'task.add':
+      return { ...snapshot, tasks: upsertById(snapshot.tasks ?? [], cmd.task) }
+    case 'task.check':
+      return { ...snapshot, tasks: updateById(snapshot.tasks ?? [], cmd.taskId, (t) => ({ ...t, doneAt: cmd.doneAt })) }
+    case 'task.update':
+      return {
+        ...snapshot,
+        tasks: updateById(snapshot.tasks ?? [], cmd.taskId, (t) => ({
+          ...t, text: cmd.text, assignedMembershipId: cmd.assignedMembershipId, dueOn: cmd.dueOn,
+        })),
+      }
+    case 'task.delete':
+      return { ...snapshot, tasks: removeById(snapshot.tasks ?? [], cmd.task.id) }
+
+    case 'meal.set': {
+      // One entry per day, so the day is the key. The server generates the row's id; until the next load this
+      // optimistic row stands in for it, keyed by the day so a replay updates it instead of adding a second one.
+      const plan = snapshot.mealPlan ?? []
+      const index = plan.findIndex((e) => e.day === cmd.day)
+      if (index === -1) {
+        const entry: MealPlanEntry = { id: `meal-${cmd.day}`, day: cmd.day, text: cmd.text, recipeId: cmd.recipeId, createdAt: now.toISOString() }
+        return { ...snapshot, mealPlan: [...plan, entry] }
+      }
+      const copy = plan.slice()
+      copy[index] = { ...copy[index]!, text: cmd.text, recipeId: cmd.recipeId }
+      return { ...snapshot, mealPlan: copy }
+    }
+    case 'meal.clear':
+      return { ...snapshot, mealPlan: (snapshot.mealPlan ?? []).filter((e) => e.day !== cmd.day) }
 
     case 'entry.delete':
       switch (cmd.table) {

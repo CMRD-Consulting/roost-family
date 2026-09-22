@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import type { Tables } from './database.types'
 import {
-  toChild, toDiaper, toDose, toFeeding, toGrocery, toHousehold, toJot, toMedicine, toMember,
-  toRoutine, toRoutineOverride, toRoutineProgress, toSitterInfo, toSitterSession, toSleep, toSticker,
-  toPhoto, toStickerCategory, toWeather,
+  toChild, toDiaper, toDose, toFeeding, toGrocery, toHousehold, toJot, toMealPlanEntry, toMedicine, toMember,
+  toRecipe, toRecipeLine, toRoutine, toRoutineOverride, toRoutineProgress, toShoppingList, toSitterInfo,
+  toSitterSession, toSleep, toSticker, toPhoto, toStickerCategory, toTask, toWeather,
 } from './mappers'
 
 const household = (over: Partial<Tables<'households'>> = {}): Tables<'households'> => ({
@@ -195,10 +195,72 @@ const jotRow = (over: Partial<Tables<'jots'>> = {}): Tables<'jots'> => ({
 const groceryRow = (over: Partial<Tables<'grocery_items'>> = {}): Tables<'grocery_items'> => ({
   id: 'g1',
   household_id: 'h1',
+  list_id: 'sl1',
   text: 'Whole milk',
   display_id: null,
   created_at: '2026-09-14T10:00:00Z',
   checked_at: null,
+  ...over,
+})
+
+const shoppingListRow = (over: Partial<Tables<'shopping_lists'>> = {}): Tables<'shopping_lists'> => ({
+  id: 'sl1',
+  household_id: 'h1',
+  name: 'Groceries',
+  created_at: '2026-09-01T10:00:00Z',
+  archived_at: null,
+  ...over,
+})
+
+const taskRow = (over: Partial<Tables<'tasks'>> = {}): Tables<'tasks'> => ({
+  id: 't1',
+  household_id: 'h1',
+  text: 'Book the sitter',
+  assigned_membership_id: 'mem1',
+  due_on: '2026-09-15',
+  display_id: null,
+  created_at: '2026-09-14T10:00:00Z',
+  done_at: null,
+  ...over,
+})
+
+const recipeRow = (over: Partial<Tables<'recipes'>> = {}): Tables<'recipes'> => ({
+  id: 'rec1',
+  household_id: 'h1',
+  title: 'Weeknight tacos',
+  source_url: null,
+  servings: 4,
+  notes: null,
+  created_at: '2026-09-01T10:00:00Z',
+  archived_at: null,
+  ...over,
+})
+
+const ingredientRow = (over: Partial<Tables<'recipe_ingredients'>> = {}): Tables<'recipe_ingredients'> => ({
+  id: 'ri1',
+  household_id: 'h1',
+  recipe_id: 'rec1',
+  text: 'Ground beef',
+  sort: 0,
+  ...over,
+})
+
+const stepRow = (over: Partial<Tables<'recipe_steps'>> = {}): Tables<'recipe_steps'> => ({
+  id: 'rs1',
+  household_id: 'h1',
+  recipe_id: 'rec1',
+  text: 'Brown the beef.',
+  sort: 0,
+  ...over,
+})
+
+const mealPlanRow = (over: Partial<Tables<'meal_plan_entries'>> = {}): Tables<'meal_plan_entries'> => ({
+  id: 'mp1',
+  household_id: 'h1',
+  day: '2026-09-14',
+  text: 'Tacos',
+  recipe_id: 'rec1',
+  created_at: '2026-09-13T10:00:00Z',
   ...over,
 })
 
@@ -571,12 +633,111 @@ describe('toJot', () => {
 })
 
 describe('toGrocery', () => {
-  it('maps field by field', () => {
+  it('maps field by field, including the list it is on', () => {
     expect(toGrocery(groceryRow())).toEqual({
       id: 'g1',
+      listId: 'sl1',
       text: 'Whole milk',
       createdAt: '2026-09-14T10:00:00Z',
       checkedAt: null,
+    })
+  })
+})
+
+describe('toShoppingList', () => {
+  it('maps field by field', () => {
+    expect(toShoppingList(shoppingListRow())).toEqual({
+      id: 'sl1',
+      name: 'Groceries',
+      createdAt: '2026-09-01T10:00:00Z',
+      archivedAt: null,
+    })
+  })
+
+  it('maps an archived list', () => {
+    expect(toShoppingList(shoppingListRow({ archived_at: '2026-09-10T10:00:00Z' })).archivedAt).toBe('2026-09-10T10:00:00Z')
+  })
+})
+
+describe('toTask', () => {
+  it('maps field by field', () => {
+    expect(toTask(taskRow())).toEqual({
+      id: 't1',
+      text: 'Book the sitter',
+      assignedMembershipId: 'mem1',
+      dueOn: '2026-09-15',
+      createdAt: '2026-09-14T10:00:00Z',
+      doneAt: null,
+    })
+  })
+
+  it('maps an unassigned, undated, completed task', () => {
+    expect(toTask(taskRow({ assigned_membership_id: null, due_on: null, done_at: '2026-09-14T18:00:00Z' }))).toEqual({
+      id: 't1',
+      text: 'Book the sitter',
+      assignedMembershipId: null,
+      dueOn: null,
+      createdAt: '2026-09-14T10:00:00Z',
+      doneAt: '2026-09-14T18:00:00Z',
+    })
+  })
+})
+
+describe('toRecipeLine', () => {
+  it('maps an ingredient row', () => {
+    expect(toRecipeLine(ingredientRow())).toEqual({ id: 'ri1', text: 'Ground beef', sort: 0 })
+  })
+
+  it('maps a step row the same way', () => {
+    expect(toRecipeLine(stepRow({ sort: 2 }))).toEqual({ id: 'rs1', text: 'Brown the beef.', sort: 2 })
+  })
+})
+
+describe('toRecipe', () => {
+  it('maps field by field and takes the lines it is given', () => {
+    const ingredients = [toRecipeLine(ingredientRow())]
+    const steps = [toRecipeLine(stepRow())]
+    expect(toRecipe(recipeRow(), ingredients, steps)).toEqual({
+      id: 'rec1',
+      title: 'Weeknight tacos',
+      sourceUrl: null,
+      servings: 4,
+      notes: null,
+      createdAt: '2026-09-01T10:00:00Z',
+      archivedAt: null,
+      ingredients: [{ id: 'ri1', text: 'Ground beef', sort: 0 }],
+      steps: [{ id: 'rs1', text: 'Brown the beef.', sort: 0 }],
+    })
+  })
+
+  it('maps the optional columns', () => {
+    const recipe = toRecipe(
+      recipeRow({ source_url: 'https://example.com/tacos', servings: null, notes: 'Double it.', archived_at: '2026-09-12T10:00:00Z' }),
+      [],
+      [],
+    )
+    expect(recipe).toMatchObject({
+      sourceUrl: 'https://example.com/tacos', servings: null, notes: 'Double it.', archivedAt: '2026-09-12T10:00:00Z',
+      ingredients: [], steps: [],
+    })
+  })
+})
+
+describe('toMealPlanEntry', () => {
+  it('maps field by field', () => {
+    expect(toMealPlanEntry(mealPlanRow())).toEqual({
+      id: 'mp1',
+      day: '2026-09-14',
+      text: 'Tacos',
+      recipeId: 'rec1',
+      createdAt: '2026-09-13T10:00:00Z',
+    })
+  })
+
+  it('maps a free-text day, which has no recipe', () => {
+    expect(toMealPlanEntry(mealPlanRow({ text: 'Leftovers', recipe_id: null }))).toMatchObject({
+      text: 'Leftovers',
+      recipeId: null,
     })
   })
 })

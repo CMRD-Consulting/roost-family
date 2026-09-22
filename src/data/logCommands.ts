@@ -1,5 +1,5 @@
 import type { DiaperEntry, DoseEntry, FeedingEntry, HouseholdDate, IsoTimestamp, SleepEntry, StickerEntry } from '@/domain/types'
-import type { GroceryItem, Jot } from './snapshot'
+import type { GroceryItem, Jot, ShoppingList, Task } from './snapshot'
 
 export interface Attribution {
   displayId: string | null
@@ -11,6 +11,19 @@ export interface Attribution {
 
 export type EntryTable = 'sleep_entries' | 'feeding_entries' | 'sticker_entries' | 'diaper_entries' | 'jots'
 
+/** The editable fields of a task: what `task.update` sets, and what it carries as the state it replaced. */
+export interface TaskFields {
+  text: string
+  assignedMembershipId: string | null
+  dueOn: HouseholdDate | null
+}
+
+/** What a day's plan held: the label shown and, when planned from the recipe box, the recipe. */
+export interface MealFields {
+  text: string
+  recipeId: string | null
+}
+
 export type LogCommand =
   | { kind: 'sleep.start'; householdId: string; entry: SleepEntry; attribution: Attribution }
   | { kind: 'sleep.end'; householdId: string; entryId: string; endAt: IsoTimestamp | null; previousEndAt: IsoTimestamp | null }
@@ -21,9 +34,34 @@ export type LogCommand =
   | { kind: 'sticker.add'; householdId: string; entry: StickerEntry; attribution: Attribution }
   | { kind: 'diaper.add'; householdId: string; entry: DiaperEntry; attribution: Attribution }
   | { kind: 'jot.add'; householdId: string; jot: Jot; displayId: string | null }
+  /** The item carries its own `listId` (spec §3.1). An empty one lands on the household's default list, which is
+   *  what keeps an item queued by an older build replayable. */
   | { kind: 'grocery.add'; householdId: string; item: GroceryItem; displayId: string | null }
   | { kind: 'grocery.check'; householdId: string; itemId: string; checkedAt: IsoTimestamp | null; previousCheckedAt: IsoTimestamp | null }
   | { kind: 'grocery.delete'; householdId: string; item: GroceryItem; displayId: string | null }
+  // Shopping lists (spec §3.1, §7.1). Lists archive, they never delete, and every command carries the before-state
+  // its inverse needs, since an inverse is built without the snapshot.
+  | { kind: 'list.add'; householdId: string; list: ShoppingList }
+  | { kind: 'list.rename'; householdId: string; listId: string; name: string; previousName: string }
+  | { kind: 'list.archive'; householdId: string; listId: string; archivedAt: IsoTimestamp; previousArchivedAt: IsoTimestamp | null }
+  | { kind: 'list.restore'; householdId: string; listId: string; previousArchivedAt: IsoTimestamp }
+  // To-dos (spec §4.1, §7.1).
+  | { kind: 'task.add'; householdId: string; task: Task; displayId: string | null }
+  | { kind: 'task.check'; householdId: string; taskId: string; doneAt: IsoTimestamp | null; previousDoneAt: IsoTimestamp | null }
+  | {
+      kind: 'task.update'
+      householdId: string
+      taskId: string
+      text: string
+      assignedMembershipId: string | null
+      dueOn: HouseholdDate | null
+      previous: TaskFields
+    }
+  | { kind: 'task.delete'; householdId: string; task: Task; displayId: string | null }
+  /** One planned dinner per day (`unique (household_id, day)`), so the day is the key, not an id. `previous` is
+   *  null when nothing was planned for that day. */
+  | { kind: 'meal.set'; householdId: string; day: HouseholdDate; text: string; recipeId: string | null; previous: MealFields | null }
+  | { kind: 'meal.clear'; householdId: string; day: HouseholdDate; previous: MealFields }
   | { kind: 'entry.delete'; householdId: string; table: EntryTable; entryId: string }
   | { kind: 'dose.void'; householdId: string; doseId: string; membershipId: string; pin: string; reason: string }
   | { kind: 'dose.acknowledge'; householdId: string; doseId: string; membershipId: string; pin: string }

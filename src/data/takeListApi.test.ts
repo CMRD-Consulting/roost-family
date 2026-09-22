@@ -62,21 +62,23 @@ describe('createTakeListDisplayApi', () => {
 })
 
 describe('createTakeListPageApi', () => {
-  it('lists items with the token', async () => {
+  it('lists items with the token, each with the list it is on', async () => {
     const { client, calls } = fakeClient({
       take_list_items: {
         error: null,
         status: 200,
         data: [
-          { out_id: 'g1', out_text: 'Milk', out_checked: false },
-          { out_id: 'g2', out_text: 'Apples', out_checked: true },
+          { out_id: 'g1', out_text: 'Milk', out_checked: false, out_list_id: 'sl1', out_list_name: 'Groceries' },
+          { out_id: 'g2', out_text: 'Apples', out_checked: true, out_list_id: 'sl1', out_list_name: 'Groceries' },
+          { out_id: 'g3', out_text: 'Paper towels', out_checked: false, out_list_id: 'sl2', out_list_name: 'Costco' },
         ],
       },
     })
     const items = await createTakeListPageApi(client).items(TOKEN)
     expect(items).toEqual([
-      { id: 'g1', text: 'Milk', checked: false },
-      { id: 'g2', text: 'Apples', checked: true },
+      { id: 'g1', text: 'Milk', checked: false, listId: 'sl1', listName: 'Groceries' },
+      { id: 'g2', text: 'Apples', checked: true, listId: 'sl1', listName: 'Groceries' },
+      { id: 'g3', text: 'Paper towels', checked: false, listId: 'sl2', listName: 'Costco' },
     ])
     expect(calls).toEqual([{ name: 'take_list_items', args: { p_token: TOKEN } }])
   })

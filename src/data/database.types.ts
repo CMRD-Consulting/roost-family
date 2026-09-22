@@ -786,6 +786,7 @@ export type Database = {
           display_id: string | null
           household_id: string
           id: string
+          list_id: string
           text: string
         }
         Insert: {
@@ -794,6 +795,7 @@ export type Database = {
           display_id?: string | null
           household_id: string
           id?: string
+          list_id?: string
           text: string
         }
         Update: {
@@ -802,6 +804,7 @@ export type Database = {
           display_id?: string | null
           household_id?: string
           id?: string
+          list_id?: string
           text?: string
         }
         Relationships: [
@@ -818,6 +821,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "households"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "grocery_items_list_id_household_id_fkey"
+            columns: ["list_id", "household_id"]
+            isOneToOne: false
+            referencedRelation: "shopping_lists"
+            referencedColumns: ["id", "household_id"]
           },
         ]
       }
@@ -1068,6 +1078,48 @@ export type Database = {
           },
         ]
       }
+      meal_plan_entries: {
+        Row: {
+          created_at: string
+          day: string
+          household_id: string
+          id: string
+          recipe_id: string | null
+          text: string
+        }
+        Insert: {
+          created_at?: string
+          day: string
+          household_id: string
+          id?: string
+          recipe_id?: string | null
+          text: string
+        }
+        Update: {
+          created_at?: string
+          day?: string
+          household_id?: string
+          id?: string
+          recipe_id?: string | null
+          text?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "meal_plan_entries_household_id_fkey"
+            columns: ["household_id"]
+            isOneToOne: false
+            referencedRelation: "households"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "meal_plan_entries_recipe_id_household_id_fkey"
+            columns: ["recipe_id", "household_id"]
+            isOneToOne: false
+            referencedRelation: "recipes"
+            referencedColumns: ["id", "household_id"]
+          },
+        ]
+      }
       medicines: {
         Row: {
           archived_at: string | null
@@ -1263,6 +1315,125 @@ export type Database = {
           },
         ]
       }
+      recipe_ingredients: {
+        Row: {
+          household_id: string
+          id: string
+          recipe_id: string
+          sort: number
+          text: string
+        }
+        Insert: {
+          household_id: string
+          id?: string
+          recipe_id: string
+          sort: number
+          text: string
+        }
+        Update: {
+          household_id?: string
+          id?: string
+          recipe_id?: string
+          sort?: number
+          text?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recipe_ingredients_household_id_fkey"
+            columns: ["household_id"]
+            isOneToOne: false
+            referencedRelation: "households"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "recipe_ingredients_recipe_id_household_id_fkey"
+            columns: ["recipe_id", "household_id"]
+            isOneToOne: false
+            referencedRelation: "recipes"
+            referencedColumns: ["id", "household_id"]
+          },
+        ]
+      }
+      recipe_steps: {
+        Row: {
+          household_id: string
+          id: string
+          recipe_id: string
+          sort: number
+          text: string
+        }
+        Insert: {
+          household_id: string
+          id?: string
+          recipe_id: string
+          sort: number
+          text: string
+        }
+        Update: {
+          household_id?: string
+          id?: string
+          recipe_id?: string
+          sort?: number
+          text?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recipe_steps_household_id_fkey"
+            columns: ["household_id"]
+            isOneToOne: false
+            referencedRelation: "households"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "recipe_steps_recipe_id_household_id_fkey"
+            columns: ["recipe_id", "household_id"]
+            isOneToOne: false
+            referencedRelation: "recipes"
+            referencedColumns: ["id", "household_id"]
+          },
+        ]
+      }
+      recipes: {
+        Row: {
+          archived_at: string | null
+          created_at: string
+          household_id: string
+          id: string
+          notes: string | null
+          servings: number | null
+          source_url: string | null
+          title: string
+        }
+        Insert: {
+          archived_at?: string | null
+          created_at?: string
+          household_id: string
+          id?: string
+          notes?: string | null
+          servings?: number | null
+          source_url?: string | null
+          title: string
+        }
+        Update: {
+          archived_at?: string | null
+          created_at?: string
+          household_id?: string
+          id?: string
+          notes?: string | null
+          servings?: number | null
+          source_url?: string | null
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recipes_household_id_fkey"
+            columns: ["household_id"]
+            isOneToOne: false
+            referencedRelation: "households"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       routine_day_overrides: {
         Row: {
           child_id: string
@@ -1442,6 +1613,38 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "memberships"
             referencedColumns: ["id", "household_id"]
+          },
+        ]
+      }
+      shopping_lists: {
+        Row: {
+          archived_at: string | null
+          created_at: string
+          household_id: string
+          id: string
+          name: string
+        }
+        Insert: {
+          archived_at?: string | null
+          created_at?: string
+          household_id: string
+          id?: string
+          name: string
+        }
+        Update: {
+          archived_at?: string | null
+          created_at?: string
+          household_id?: string
+          id?: string
+          name?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "shopping_lists_household_id_fkey"
+            columns: ["household_id"]
+            isOneToOne: false
+            referencedRelation: "households"
+            referencedColumns: ["id"]
           },
         ]
       }
@@ -1739,6 +1942,61 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "take_list_links_household_id_fkey"
+            columns: ["household_id"]
+            isOneToOne: false
+            referencedRelation: "households"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tasks: {
+        Row: {
+          assigned_membership_id: string | null
+          created_at: string
+          display_id: string | null
+          done_at: string | null
+          due_on: string | null
+          household_id: string
+          id: string
+          text: string
+        }
+        Insert: {
+          assigned_membership_id?: string | null
+          created_at?: string
+          display_id?: string | null
+          done_at?: string | null
+          due_on?: string | null
+          household_id: string
+          id?: string
+          text: string
+        }
+        Update: {
+          assigned_membership_id?: string | null
+          created_at?: string
+          display_id?: string | null
+          done_at?: string | null
+          due_on?: string | null
+          household_id?: string
+          id?: string
+          text?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tasks_assigned_membership_id_household_id_fkey"
+            columns: ["assigned_membership_id", "household_id"]
+            isOneToOne: false
+            referencedRelation: "memberships"
+            referencedColumns: ["id", "household_id"]
+          },
+          {
+            foreignKeyName: "tasks_display_id_household_id_fkey"
+            columns: ["display_id", "household_id"]
+            isOneToOne: false
+            referencedRelation: "displays"
+            referencedColumns: ["id", "household_id"]
+          },
+          {
+            foreignKeyName: "tasks_household_id_fkey"
             columns: ["household_id"]
             isOneToOne: false
             referencedRelation: "households"
@@ -2252,6 +2510,8 @@ export type Database = {
         Returns: {
           out_checked: boolean
           out_id: string
+          out_list_id: string
+          out_list_name: string
           out_text: string
         }[]
       }

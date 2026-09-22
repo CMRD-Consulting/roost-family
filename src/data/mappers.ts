@@ -3,8 +3,9 @@ import type {
   SleepEntry, StickerEntry,
 } from '@/domain/types'
 import type {
-  GroceryItem, HouseholdInfo, HouseholdPhoto, HouseholdWeather, Jot, Member, RoutineDayOverride, RoutineProgress, SitterInfo,
-  PhotoKind, SitterSession, SnapshotChild, StickerCategory, WeatherIcon,
+  GroceryItem, HouseholdInfo, HouseholdPhoto, HouseholdWeather, Jot, MealPlanEntry, Member, Recipe, RecipeLine,
+  RoutineDayOverride, RoutineProgress, ShoppingList, SitterInfo, PhotoKind, SitterSession, SnapshotChild,
+  StickerCategory, Task, WeatherIcon,
 } from './snapshot'
 import type { Tables } from './database.types'
 
@@ -214,12 +215,67 @@ export function toJot(row: Tables<'jots'>): Jot {
   }
 }
 
+export function toShoppingList(row: Tables<'shopping_lists'>): ShoppingList {
+  return {
+    id: row.id,
+    name: row.name,
+    createdAt: row.created_at,
+    archivedAt: row.archived_at,
+  }
+}
+
 export function toGrocery(row: Tables<'grocery_items'>): GroceryItem {
   return {
     id: row.id,
+    listId: row.list_id,
     text: row.text,
     createdAt: row.created_at,
     checkedAt: row.checked_at,
+  }
+}
+
+export function toTask(row: Tables<'tasks'>): Task {
+  return {
+    id: row.id,
+    text: row.text,
+    assignedMembershipId: row.assigned_membership_id,
+    dueOn: row.due_on,
+    createdAt: row.created_at,
+    doneAt: row.done_at,
+  }
+}
+
+/** `recipe_ingredients` and `recipe_steps` have the same shape, so one mapper serves both. */
+export function toRecipeLine(row: Tables<'recipe_ingredients'> | Tables<'recipe_steps'>): RecipeLine {
+  return {
+    id: row.id,
+    text: row.text,
+    sort: row.sort,
+  }
+}
+
+/** The lines are loaded separately and grouped by recipe in `supabaseSource`; both arrive in `sort` order. */
+export function toRecipe(row: Tables<'recipes'>, ingredients: RecipeLine[], steps: RecipeLine[]): Recipe {
+  return {
+    id: row.id,
+    title: row.title,
+    sourceUrl: row.source_url,
+    servings: row.servings,
+    notes: row.notes,
+    createdAt: row.created_at,
+    archivedAt: row.archived_at,
+    ingredients,
+    steps,
+  }
+}
+
+export function toMealPlanEntry(row: Tables<'meal_plan_entries'>): MealPlanEntry {
+  return {
+    id: row.id,
+    day: row.day,
+    text: row.text,
+    recipeId: row.recipe_id,
+    createdAt: row.created_at,
   }
 }
 

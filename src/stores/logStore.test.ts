@@ -361,7 +361,7 @@ describe('useLogStore', () => {
       const queue = createOfflineQueue(`roost-logstore-${Math.random().toString(36).slice(2)}`)
       await logStore.init(writer, queue)
       setOnline(false)
-      const item = reactive({ id: 'grocery-r', text: 'Eggs', createdAt: '2026-09-14T19:00:00.000Z', checkedAt: null })
+      const item = reactive({ id: 'grocery-r', listId: 'list-1', text: 'Eggs', createdAt: '2026-09-14T19:00:00.000Z', checkedAt: null })
 
       const result = await logStore.submit({ kind: 'grocery.add', householdId: HOUSEHOLD_ID, item, displayId: null })
       item.text = 'Edited after submit'
@@ -377,7 +377,7 @@ describe('useLogStore', () => {
     it('sends the writer a plain copy', async () => {
       const { logStore, writer, queue } = await setup()
       await logStore.init(writer, queue)
-      const item = reactive({ id: 'grocery-r', text: 'Eggs', createdAt: '2026-09-14T19:00:00.000Z', checkedAt: null })
+      const item = reactive({ id: 'grocery-r', listId: 'list-1', text: 'Eggs', createdAt: '2026-09-14T19:00:00.000Z', checkedAt: null })
 
       await logStore.submit({ kind: 'grocery.add', householdId: HOUSEHOLD_ID, item, displayId: null })
 
@@ -808,7 +808,7 @@ describe('useLogStore', () => {
     it('undoes a saved grocery.add by deleting the item', async () => {
       const { householdStore, logStore, writer, queue } = await setup()
       await logStore.init(writer, queue)
-      const item = { id: 'grocery-undo', text: 'Eggs', createdAt: '2026-09-14T19:00:00.000Z', checkedAt: null }
+      const item = { id: 'grocery-undo', listId: 'list-1', text: 'Eggs', createdAt: '2026-09-14T19:00:00.000Z', checkedAt: null }
       await logStore.submit({ kind: 'grocery.add', householdId: HOUSEHOLD_ID, item, displayId: 'demo-display' })
 
       await logStore.undo()

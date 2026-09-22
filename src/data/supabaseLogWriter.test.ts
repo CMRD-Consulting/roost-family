@@ -9,7 +9,8 @@ interface RecordedCall {
   op: string
   payload?: unknown
   options?: unknown
-  eq?: [string, unknown]
+  /** Every `.eq(column, value)` in the chain, in order. */
+  eqs?: [string, unknown][]
   select?: string
   name?: string
   args?: unknown
@@ -32,6 +33,21 @@ function createFakeClient(opts: { responses?: Record<string, Resp>; throwOn?: Se
   }
 
   function from(table: string) {
+    /** A filter chain: `.eq()` as many times as the writer needs, then `.select()` runs it. */
+    function filters(call: RecordedCall, key: string) {
+      const chain = {
+        eq(col: string, val: unknown) {
+          call.eqs = [...(call.eqs ?? []), [col, val]]
+          return chain
+        },
+        select(columns: string) {
+          call.select = columns
+          return resultFor(key, [{ id: call.eqs?.[0]?.[1] }])
+        },
+      }
+      return chain
+    }
+
     return {
       upsert(payload: unknown, options?: unknown) {
         calls.push({ table, op: 'upsert', payload, options })
@@ -40,32 +56,12 @@ function createFakeClient(opts: { responses?: Record<string, Resp>; throwOn?: Se
       update(payload: unknown) {
         const call: RecordedCall = { table, op: 'update', payload }
         calls.push(call)
-        return {
-          eq(col: string, val: unknown) {
-            call.eq = [col, val]
-            return {
-              select(columns: string) {
-                call.select = columns
-                return resultFor(`${table}.update`, [{ id: val }])
-              },
-            }
-          },
-        }
+        return filters(call, `${table}.update`)
       },
       delete() {
         const call: RecordedCall = { table, op: 'delete' }
         calls.push(call)
-        return {
-          eq(col: string, val: unknown) {
-            call.eq = [col, val]
-            return {
-              select(columns: string) {
-                call.select = columns
-                return resultFor(`${table}.delete`, [{ id: val }])
-              },
-            }
-          },
-        }
+        return filters(call, `${table}.delete`)
       },
     }
   }
@@ -255,10 +251,10 @@ describe('createSupabaseLogWriter', () => {
       ])
     })
 
-    it('grocery.add', async () => {
+    it('grocery.add sends the list the item is on', async () => {
       const { client, calls } = createFakeClient()
       const writer = createSupabaseLogWriter(client)
-      const item = { id: 'grocery-1', text: 'Milk', createdAt: '2026-09-14T19:00:00Z', checkedAt: null }
+      const item = { id: 'grocery-1', listId: 'list-1', text: 'Milk', createdAt: '2026-09-14T19:00:00Z', checkedAt: null }
       await writer.execute({ kind: 'grocery.add', householdId, item, displayId: 'demo-display' })
 
       expect(calls).toEqual([
@@ -267,9 +263,81 @@ describe('createSupabaseLogWriter', () => {
           op: 'upsert',
           payload: {
             id: 'grocery-1', household_id: householdId, text: 'Milk', display_id: 'demo-display',
-            created_at: '2026-09-14T19:00:00Z', checked_at: null,
+            created_at: '2026-09-14T19:00:00Z', checked_at: null, list_id: 'list-1',
           },
           options: { onConflict: 'id', ignoreDuplicates: true },
+        },
+      ])
+    })
+
+    it('grocery.add without a list leaves list_id out, so the insert trigger fills in the default list', async () => {
+      const { client, calls } = createFakeClient()
+      const item = { id: 'grocery-1', listId: '', text: 'Milk', createdAt: '2026-09-14T19:00:00Z', checkedAt: null }
+      await createSupabaseLogWriter(client).execute({ kind: 'grocery.add', householdId, item, displayId: null })
+
+      expect(calls[0]?.payload).not.toHaveProperty('list_id')
+    })
+
+    it('list.add', async () => {
+      const { client, calls } = createFakeClient()
+      const list = { id: 'list-1', name: 'Costco', createdAt: '2026-09-14T19:00:00Z', archivedAt: null }
+      await createSupabaseLogWriter(client).execute({ kind: 'list.add', householdId, list })
+
+      expect(calls).toEqual([
+        {
+          table: 'shopping_lists',
+          op: 'upsert',
+          payload: { id: 'list-1', household_id: householdId, name: 'Costco', created_at: '2026-09-14T19:00:00Z', archived_at: null },
+          options: { onConflict: 'id', ignoreDuplicates: true },
+        },
+      ])
+    })
+
+    it('task.add', async () => {
+      const { client, calls } = createFakeClient()
+      const task = {
+        id: 'task-1', text: 'Book the sitter', assignedMembershipId: 'mem-1', dueOn: '2026-09-15',
+        createdAt: '2026-09-14T19:00:00Z', doneAt: null,
+      }
+      await createSupabaseLogWriter(client).execute({ kind: 'task.add', householdId, task, displayId: 'demo-display' })
+
+      expect(calls).toEqual([
+        {
+          table: 'tasks',
+          op: 'upsert',
+          payload: {
+            id: 'task-1', household_id: householdId, text: 'Book the sitter', assigned_membership_id: 'mem-1',
+            due_on: '2026-09-15', display_id: 'demo-display', created_at: '2026-09-14T19:00:00Z', done_at: null,
+          },
+          options: { onConflict: 'id', ignoreDuplicates: true },
+        },
+      ])
+    })
+
+    it('task.add restoring a deleted task sends its original timestamps', async () => {
+      const { client, calls } = createFakeClient()
+      const task = {
+        id: 'task-1', text: 'Book the sitter', assignedMembershipId: null, dueOn: null,
+        createdAt: '2026-09-10T08:00:00Z', doneAt: '2026-09-12T08:00:00Z',
+      }
+      await createSupabaseLogWriter(client).execute({ kind: 'task.delete', householdId, task, displayId: null })
+      await createSupabaseLogWriter(client).execute({ kind: 'task.add', householdId, task, displayId: null })
+
+      expect(calls[1]?.payload).toMatchObject({ created_at: '2026-09-10T08:00:00Z', done_at: '2026-09-12T08:00:00Z' })
+    })
+
+    it('meal.set upserts on the (household_id, day) conflict target, replacing that day', async () => {
+      const { client, calls } = createFakeClient()
+      await createSupabaseLogWriter(client).execute({
+        kind: 'meal.set', householdId, day: '2026-09-14', text: 'Tacos', recipeId: 'recipe-1', previous: null,
+      })
+
+      expect(calls).toEqual([
+        {
+          table: 'meal_plan_entries',
+          op: 'upsert',
+          payload: { household_id: householdId, day: '2026-09-14', text: 'Tacos', recipe_id: 'recipe-1' },
+          options: { onConflict: 'household_id,day' },
         },
       ])
     })
@@ -298,7 +366,7 @@ describe('createSupabaseLogWriter', () => {
   describe('restores keep the original timestamps', () => {
     it('grocery.add restoring a deleted checked item sends its created_at and checked_at', async () => {
       const { client, calls } = createFakeClient()
-      const item = { id: 'grocery-1', text: 'Milk', createdAt: '2026-09-10T08:00:00Z', checkedAt: '2026-09-11T09:30:00Z' }
+      const item = { id: 'grocery-1', listId: 'list-1', text: 'Milk', createdAt: '2026-09-10T08:00:00Z', checkedAt: '2026-09-11T09:30:00Z' }
       await createSupabaseLogWriter(client).execute({ kind: 'grocery.add', householdId, item, displayId: null })
 
       expect(calls[0]?.payload).toMatchObject({ created_at: '2026-09-10T08:00:00Z', checked_at: '2026-09-11T09:30:00Z' })
@@ -320,7 +388,7 @@ describe('createSupabaseLogWriter', () => {
       await writer.execute({ kind: 'sleep.end', householdId, entryId: 'sleep-1', endAt: '2026-09-14T20:00:00Z', previousEndAt: null })
 
       expect(calls).toEqual([
-        { table: 'sleep_entries', op: 'update', payload: { end_at: '2026-09-14T20:00:00Z' }, eq: ['id', 'sleep-1'], select: 'id' },
+        { table: 'sleep_entries', op: 'update', payload: { end_at: '2026-09-14T20:00:00Z' }, eqs: [['id', 'sleep-1']], select: 'id' },
       ])
     })
 
@@ -330,7 +398,40 @@ describe('createSupabaseLogWriter', () => {
       await writer.execute({ kind: 'grocery.check', householdId, itemId: 'grocery-1', checkedAt: '2026-09-14T20:00:00Z', previousCheckedAt: null })
 
       expect(calls).toEqual([
-        { table: 'grocery_items', op: 'update', payload: { checked_at: '2026-09-14T20:00:00Z' }, eq: ['id', 'grocery-1'], select: 'id' },
+        { table: 'grocery_items', op: 'update', payload: { checked_at: '2026-09-14T20:00:00Z' }, eqs: [['id', 'grocery-1']], select: 'id' },
+      ])
+    })
+
+    it('list.rename / list.archive / list.restore -> shopping_lists.update().eq(id, listId)', async () => {
+      const { client, calls } = createFakeClient()
+      const writer = createSupabaseLogWriter(client)
+      await writer.execute({ kind: 'list.rename', householdId, listId: 'list-1', name: 'Warehouse', previousName: 'Costco' })
+      await writer.execute({ kind: 'list.archive', householdId, listId: 'list-1', archivedAt: '2026-09-14T20:00:00Z', previousArchivedAt: null })
+      await writer.execute({ kind: 'list.restore', householdId, listId: 'list-1', previousArchivedAt: '2026-09-14T20:00:00Z' })
+
+      expect(calls).toEqual([
+        { table: 'shopping_lists', op: 'update', payload: { name: 'Warehouse' }, eqs: [['id', 'list-1']], select: 'id' },
+        { table: 'shopping_lists', op: 'update', payload: { archived_at: '2026-09-14T20:00:00Z' }, eqs: [['id', 'list-1']], select: 'id' },
+        { table: 'shopping_lists', op: 'update', payload: { archived_at: null }, eqs: [['id', 'list-1']], select: 'id' },
+      ])
+    })
+
+    it('task.check / task.update -> tasks.update().eq(id, taskId)', async () => {
+      const { client, calls } = createFakeClient()
+      const writer = createSupabaseLogWriter(client)
+      await writer.execute({ kind: 'task.check', householdId, taskId: 'task-1', doneAt: '2026-09-14T20:00:00Z', previousDoneAt: null })
+      await writer.execute({
+        kind: 'task.update', householdId, taskId: 'task-1', text: 'Book the sitter', assignedMembershipId: 'mem-1',
+        dueOn: '2026-09-20', previous: { text: 'x', assignedMembershipId: null, dueOn: null },
+      })
+
+      expect(calls).toEqual([
+        { table: 'tasks', op: 'update', payload: { done_at: '2026-09-14T20:00:00Z' }, eqs: [['id', 'task-1']], select: 'id' },
+        {
+          table: 'tasks', op: 'update',
+          payload: { text: 'Book the sitter', assigned_membership_id: 'mem-1', due_on: '2026-09-20' },
+          eqs: [['id', 'task-1']], select: 'id',
+        },
       ])
     })
   })
@@ -349,6 +450,23 @@ describe('createSupabaseLogWriter', () => {
       )
       expect(err.message).toBe('Not found yet')
       expect(err.network).toBe(true)
+      expect(err.code).toBe('NOT_FOUND')
+    })
+
+    it('task.check matching 0 rows throws a retryable NOT_FOUND (the add may not have synced yet)', async () => {
+      const { client } = createFakeClient({ responses: { 'tasks.update': { error: null, data: [] } } })
+      const err = await errorFrom(
+        createSupabaseLogWriter(client).execute({ kind: 'task.check', householdId, taskId: 't1', doneAt: null, previousDoneAt: null }),
+      )
+      expect(err.network).toBe(true)
+      expect(err.code).toBe('NOT_FOUND')
+    })
+
+    it('list.rename matching 0 rows throws a retryable NOT_FOUND', async () => {
+      const { client } = createFakeClient({ responses: { 'shopping_lists.update': { error: null, data: [] } } })
+      const err = await errorFrom(
+        createSupabaseLogWriter(client).execute({ kind: 'list.rename', householdId, listId: 'l1', name: 'x', previousName: 'y' }),
+      )
       expect(err.code).toBe('NOT_FOUND')
     })
 
@@ -373,7 +491,7 @@ describe('createSupabaseLogWriter', () => {
       const entry = { id: 'sleep-1', childId, startAt: '2026-09-14T19:00:00Z', endAt: null, type: 'nap' as const, sitterSessionId: null }
       await expect(writer.execute({ kind: 'sleep.discard', householdId, entry, attribution })).resolves.toBeUndefined()
       await expect(writer.execute({ kind: 'entry.delete', householdId, table: 'jots', entryId: 'jot-1' })).resolves.toBeUndefined()
-      const item = { id: 'grocery-1', text: 'Milk', createdAt: '2026-09-14T19:00:00Z', checkedAt: null }
+      const item = { id: 'grocery-1', listId: 'list-1', text: 'Milk', createdAt: '2026-09-14T19:00:00Z', checkedAt: null }
       await expect(writer.execute({ kind: 'grocery.delete', householdId, item, displayId: null })).resolves.toBeUndefined()
     })
   })
@@ -385,7 +503,7 @@ describe('createSupabaseLogWriter', () => {
       const entry = { id: 'sleep-1', childId, startAt: '2026-09-14T19:00:00Z', endAt: null, type: 'nap' as const, sitterSessionId: null }
       await writer.execute({ kind: 'sleep.discard', householdId, entry, attribution })
 
-      expect(calls).toEqual([{ table: 'sleep_entries', op: 'delete', eq: ['id', 'sleep-1'], select: 'id' }])
+      expect(calls).toEqual([{ table: 'sleep_entries', op: 'delete', eqs: [['id', 'sleep-1']], select: 'id' }])
     })
 
     it('entry.delete -> <table>.delete().eq(id, entryId)', async () => {
@@ -393,16 +511,41 @@ describe('createSupabaseLogWriter', () => {
       const writer = createSupabaseLogWriter(client)
       await writer.execute({ kind: 'entry.delete', householdId, table: 'jots', entryId: 'jot-1' })
 
-      expect(calls).toEqual([{ table: 'jots', op: 'delete', eq: ['id', 'jot-1'], select: 'id' }])
+      expect(calls).toEqual([{ table: 'jots', op: 'delete', eqs: [['id', 'jot-1']], select: 'id' }])
     })
 
     it('grocery.delete -> grocery_items.delete().eq(id, item.id)', async () => {
       const { client, calls } = createFakeClient()
       const writer = createSupabaseLogWriter(client)
-      const item = { id: 'grocery-1', text: 'Milk', createdAt: '2026-09-14T19:00:00Z', checkedAt: null }
+      const item = { id: 'grocery-1', listId: 'list-1', text: 'Milk', createdAt: '2026-09-14T19:00:00Z', checkedAt: null }
       await writer.execute({ kind: 'grocery.delete', householdId, item, displayId: 'demo-display' })
 
-      expect(calls).toEqual([{ table: 'grocery_items', op: 'delete', eq: ['id', 'grocery-1'], select: 'id' }])
+      expect(calls).toEqual([{ table: 'grocery_items', op: 'delete', eqs: [['id', 'grocery-1']], select: 'id' }])
+    })
+
+    it('task.delete -> tasks.delete().eq(id, task.id)', async () => {
+      const { client, calls } = createFakeClient()
+      const task = {
+        id: 'task-1', text: 'Book the sitter', assignedMembershipId: null, dueOn: null,
+        createdAt: '2026-09-14T19:00:00Z', doneAt: null,
+      }
+      await createSupabaseLogWriter(client).execute({ kind: 'task.delete', householdId, task, displayId: null })
+
+      expect(calls).toEqual([{ table: 'tasks', op: 'delete', eqs: [['id', 'task-1']], select: 'id' }])
+    })
+
+    it('meal.clear -> meal_plan_entries.delete() for that household and day', async () => {
+      const { client, calls } = createFakeClient()
+      await createSupabaseLogWriter(client).execute({
+        kind: 'meal.clear', householdId, day: '2026-09-14', previous: { text: 'Tacos', recipeId: null },
+      })
+
+      expect(calls).toEqual([
+        {
+          table: 'meal_plan_entries', op: 'delete',
+          eqs: [['household_id', householdId], ['day', '2026-09-14']], select: 'id',
+        },
+      ])
     })
   })
 
@@ -590,7 +733,7 @@ describe('createSupabaseLogWriter', () => {
         responses: { 'grocery_items.delete': { error: { message: 'not found', code: 'PGRST116' } } },
       })
       const writer = createSupabaseLogWriter(client)
-      const item = { id: 'grocery-1', text: 'Milk', createdAt: '2026-09-14T19:00:00Z', checkedAt: null }
+      const item = { id: 'grocery-1', listId: 'list-1', text: 'Milk', createdAt: '2026-09-14T19:00:00Z', checkedAt: null }
 
       const err = await writer.execute({ kind: 'grocery.delete', householdId, item, displayId: null }).catch((e: unknown) => e)
       expect(err).toBeInstanceOf(LogWriteError)
@@ -604,7 +747,7 @@ describe('createSupabaseLogWriter', () => {
         responses: { 'grocery_items.delete': { error: { message: 'network hiccup', code: '' } } },
       })
       const writer = createSupabaseLogWriter(client)
-      const item = { id: 'grocery-1', text: 'Milk', createdAt: '2026-09-14T19:00:00Z', checkedAt: null }
+      const item = { id: 'grocery-1', listId: 'list-1', text: 'Milk', createdAt: '2026-09-14T19:00:00Z', checkedAt: null }
 
       const err = await writer.execute({ kind: 'grocery.delete', householdId, item, displayId: null }).catch((e: unknown) => e)
       expect(err).toBeInstanceOf(LogWriteError)
@@ -615,7 +758,7 @@ describe('createSupabaseLogWriter', () => {
     it('a thrown TypeError (fetch failed) maps to network=true', async () => {
       const { client } = createFakeClient({ throwOn: new Set(['grocery_items.delete']) })
       const writer = createSupabaseLogWriter(client)
-      const item = { id: 'grocery-1', text: 'Milk', createdAt: '2026-09-14T19:00:00Z', checkedAt: null }
+      const item = { id: 'grocery-1', listId: 'list-1', text: 'Milk', createdAt: '2026-09-14T19:00:00Z', checkedAt: null }
 
       const err = await writer.execute({ kind: 'grocery.delete', householdId, item, displayId: null }).catch((e: unknown) => e)
       expect(err).toBeInstanceOf(LogWriteError)

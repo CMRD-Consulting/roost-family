@@ -101,8 +101,50 @@ insert into public.sticker_entries (household_id, child_id, category_id, at) val
   ('aaaaaaaa-0000-0000-0000-000000000001', 'cccccccc-0000-0000-0000-000000000001', 'dddddddd-0000-0000-0000-000000000001', now() - interval '1 hour'),
   ('aaaaaaaa-0000-0000-0000-000000000001', 'cccccccc-0000-0000-0000-000000000001', 'dddddddd-0000-0000-0000-000000000002', now() - interval '26 hours');
 
-insert into public.grocery_items (household_id, text) values
-  ('aaaaaaaa-0000-0000-0000-000000000001', 'Whole milk'),
-  ('aaaaaaaa-0000-0000-0000-000000000001', 'Bananas');
+-- Shopping lists (the oldest un-archived one is the household's default, so Groceries is)
+insert into public.shopping_lists (id, household_id, name, created_at) values
+  ('ffffffff-0000-0000-0000-000000000001', 'aaaaaaaa-0000-0000-0000-000000000001', 'Groceries', now() - interval '30 days'),
+  ('ffffffff-0000-0000-0000-000000000002', 'aaaaaaaa-0000-0000-0000-000000000001', 'Costco', now() - interval '9 days');
+
+insert into public.grocery_items (household_id, list_id, text) values
+  ('aaaaaaaa-0000-0000-0000-000000000001', 'ffffffff-0000-0000-0000-000000000001', 'Whole milk'),
+  ('aaaaaaaa-0000-0000-0000-000000000001', 'ffffffff-0000-0000-0000-000000000001', 'Bananas'),
+  ('aaaaaaaa-0000-0000-0000-000000000001', 'ffffffff-0000-0000-0000-000000000002', 'Paper towels');
 insert into public.jots (household_id, text) values
   ('aaaaaaaa-0000-0000-0000-000000000001', 'Call pediatrician about Theo''s rash');
+
+-- To-dos: one for the family, one overdue for Sam, one for Alex with no date
+insert into public.tasks (household_id, text, assigned_membership_id, due_on) values
+  ('aaaaaaaa-0000-0000-0000-000000000001', 'Book Ivy''s 3-year check-up', null, (now() at time zone 'America/New_York')::date),
+  ('aaaaaaaa-0000-0000-0000-000000000001', 'Return the library books', 'bbbbbbbb-0000-0000-0000-000000000001',
+   (now() at time zone 'America/New_York')::date - 2),
+  ('aaaaaaaa-0000-0000-0000-000000000001', 'Change the furnace filter', 'bbbbbbbb-0000-0000-0000-000000000002', null);
+
+-- Recipes
+insert into public.recipes (id, household_id, title, source_url, servings, notes) values
+  ('0b0b0b0b-0000-0000-0000-000000000001', 'aaaaaaaa-0000-0000-0000-000000000001', 'Sheet-pan tacos',
+   'https://example.test/sheet-pan-tacos', 4, 'Double the beans when Grandma is here.'),
+  ('0b0b0b0b-0000-0000-0000-000000000002', 'aaaaaaaa-0000-0000-0000-000000000001', 'Tomato soup', null, 4, null);
+
+insert into public.recipe_ingredients (household_id, recipe_id, text, sort) values
+  ('aaaaaaaa-0000-0000-0000-000000000001', '0b0b0b0b-0000-0000-0000-000000000001', '1 lb ground turkey', 0),
+  ('aaaaaaaa-0000-0000-0000-000000000001', '0b0b0b0b-0000-0000-0000-000000000001', 'Taco seasoning', 1),
+  ('aaaaaaaa-0000-0000-0000-000000000001', '0b0b0b0b-0000-0000-0000-000000000001', 'Black beans', 2),
+  ('aaaaaaaa-0000-0000-0000-000000000001', '0b0b0b0b-0000-0000-0000-000000000001', 'Corn tortillas', 3),
+  ('aaaaaaaa-0000-0000-0000-000000000001', '0b0b0b0b-0000-0000-0000-000000000002', '2 cans whole tomatoes', 0),
+  ('aaaaaaaa-0000-0000-0000-000000000001', '0b0b0b0b-0000-0000-0000-000000000002', 'Heavy cream', 1),
+  ('aaaaaaaa-0000-0000-0000-000000000001', '0b0b0b0b-0000-0000-0000-000000000002', 'Crusty bread', 2);
+
+insert into public.recipe_steps (household_id, recipe_id, text, sort) values
+  ('aaaaaaaa-0000-0000-0000-000000000001', '0b0b0b0b-0000-0000-0000-000000000001', 'Heat the oven to 425F.', 0),
+  ('aaaaaaaa-0000-0000-0000-000000000001', '0b0b0b0b-0000-0000-0000-000000000001', 'Spread the turkey and seasoning on a sheet pan and roast 15 minutes.', 1),
+  ('aaaaaaaa-0000-0000-0000-000000000001', '0b0b0b0b-0000-0000-0000-000000000001', 'Add the beans, roast 5 more minutes, then warm the tortillas.', 2),
+  ('aaaaaaaa-0000-0000-0000-000000000001', '0b0b0b0b-0000-0000-0000-000000000002', 'Simmer the tomatoes 20 minutes.', 0),
+  ('aaaaaaaa-0000-0000-0000-000000000001', '0b0b0b0b-0000-0000-0000-000000000002', 'Blend, stir in the cream, and toast the bread.', 1);
+
+-- Meal plan: today is planned from the recipe box (the entry carries the title it shows), tomorrow is free text.
+-- households.dinner_tonight above is the old, no-longer-read column.
+insert into public.meal_plan_entries (household_id, day, text, recipe_id) values
+  ('aaaaaaaa-0000-0000-0000-000000000001', (now() at time zone 'America/New_York')::date, 'Sheet-pan tacos',
+   '0b0b0b0b-0000-0000-0000-000000000001'),
+  ('aaaaaaaa-0000-0000-0000-000000000001', (now() at time zone 'America/New_York')::date + 1, 'Leftovers', null);

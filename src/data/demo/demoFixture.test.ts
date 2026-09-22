@@ -141,6 +141,69 @@ describe('buildDemoSnapshot', () => {
     expect(s.jots.every((j) => j.doneAt === null)).toBe(true)
   })
 
+  it('has two un-archived shopping lists, oldest first, with the grocery items split across them', () => {
+    const s = buildDemoSnapshot(now)
+    expect(s.shoppingLists?.map((l) => l.name)).toEqual(['Groceries', 'Costco'])
+    expect(s.shoppingLists?.every((l) => l.archivedAt === null)).toBe(true)
+    const [groceriesList, costco] = s.shoppingLists!
+    expect(Date.parse(groceriesList!.createdAt)).toBeLessThan(Date.parse(costco!.createdAt))
+    expect(s.groceries.map((g) => [g.text, g.listId])).toEqual([
+      ['Whole milk', groceriesList!.id],
+      ['Bananas', costco!.id],
+    ])
+  })
+
+  it('has four tasks: overdue, due today, undated and done 2 h ago', () => {
+    const s = buildDemoSnapshot(now)
+    const tasks = s.tasks ?? []
+    expect(tasks).toHaveLength(4)
+    const today = householdDate(now, s.household.timeZone)
+    const open = tasks.filter((t) => t.doneAt === null)
+    expect(open).toHaveLength(3)
+    expect(open.some((t) => t.dueOn !== null && t.dueOn < today)).toBe(true)
+    expect(open.some((t) => t.dueOn === today)).toBe(true)
+    expect(open.some((t) => t.dueOn === null && t.assignedMembershipId === null)).toBe(true)
+    const done = tasks.filter((t) => t.doneAt !== null)
+    expect(done.map((t) => t.doneAt)).toEqual([new Date(now.getTime() - 2 * 3_600_000).toISOString()])
+    // Every assignee is one of the household's adults.
+    const memberIds = s.members.map((m) => m.id)
+    expect(tasks.every((t) => t.assignedMembershipId === null || memberIds.includes(t.assignedMembershipId))).toBe(true)
+  })
+
+  it('has two recipes, each with ordered ingredients and steps', () => {
+    const s = buildDemoSnapshot(now)
+    const recipes = s.recipes ?? []
+    expect(recipes.map((r) => r.title).sort()).toEqual(['Sheet-pan chicken', 'Weeknight tacos'])
+    for (const recipe of recipes) {
+      expect(recipe.archivedAt).toBeNull()
+      expect(recipe.ingredients.length).toBeGreaterThan(0)
+      expect(recipe.steps.length).toBeGreaterThan(0)
+      expect(recipe.ingredients.map((l) => l.sort)).toEqual(recipe.ingredients.map((_, i) => i))
+      expect(recipe.steps.map((l) => l.sort)).toEqual(recipe.steps.map((_, i) => i))
+    }
+  })
+
+  it('plans three days from today, with today taken from the recipe box', () => {
+    const s = buildDemoSnapshot(now)
+    const plan = s.mealPlan ?? []
+    const today = householdDate(now, s.household.timeZone)
+    expect(plan).toHaveLength(3)
+    expect(plan.map((e) => e.day)).toEqual([today, '2026-09-15', '2026-09-16'])
+    expect(new Set(plan.map((e) => e.day)).size).toBe(3)
+    // Every entry carries the label it shows, whether or not it came from a recipe (spec §5.1).
+    expect(plan.every((e) => e.text.length > 0)).toBe(true)
+    const tonight = plan.find((e) => e.day === today)!
+    expect(tonight.text).toBe('Tacos')
+    expect(s.recipes?.some((r) => r.id === tonight.recipeId)).toBe(true)
+    expect(plan.some((e) => e.recipeId === null)).toBe(true)
+  })
+
+  it('the meal plan tracks a different `now`, not a fixed date', () => {
+    const laterNow = new Date('2026-12-25T19:00:00Z')
+    const s = buildDemoSnapshot(laterNow)
+    expect(s.mealPlan?.map((e) => e.day)).toEqual(['2026-12-25', '2026-12-26', '2026-12-27'])
+  })
+
   it('has sample weather fetched now', () => {
     expect(buildDemoSnapshot(now).weather).toEqual({
       fetchedAt: now.toISOString(),
