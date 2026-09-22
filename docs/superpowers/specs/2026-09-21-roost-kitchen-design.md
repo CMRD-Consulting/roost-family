@@ -69,7 +69,7 @@ A task is "open" while `done_at is null`. The snapshot carries open tasks plus t
 - **Recipe:** title (1–80), optional source URL (≤ 500), optional servings (1–99), optional notes (≤ 2000), `archived_at`.
 - **Ingredient:** free text (1–100), ordered. Deliberately the same shape as a shopping item, so pushing one onto a list is a copy.
 - **Step:** free text (1–500), ordered.
-- **Meal-plan entry:** one per household per day (`unique (household_id, day)`), holding **either** a `recipe_id` **or** free text (≤ 80). `day` is a household-local date.
+- **Meal-plan entry:** one per household per day (`unique (household_id, day)`). It always holds the label shown on the display — free text (1–80) — and, when the day was planned from the recipe box, the `recipe_id` as well. Planning from a recipe copies the recipe's title into the text, so an archived recipe never empties a plan.
 
 ### 5.2 Screen — Recipes tab
 
@@ -108,7 +108,7 @@ New tables, all household-owned, all under `private.is_household_member(househol
 | **Recipe** | id, householdId, title (1–80), sourceUrl (nullable, ≤ 500), servings (nullable, 1–99), notes (nullable, ≤ 2000), createdAt, archivedAt |
 | **RecipeIngredient** | id, householdId, recipeId (composite FK), text (1–100), sort (0–199) |
 | **RecipeStep** | id, householdId, recipeId (composite FK), text (1–500), sort (0–199) |
-| **MealPlanEntry** | id, householdId, day (date), recipeId (nullable, composite FK), text (nullable, ≤ 80), createdAt · `unique (household_id, day)` · `check (recipe_id is not null or text is not null)` |
+| **MealPlanEntry** | id, householdId, day (date), text (not null, 1–80, the label shown), recipeId (nullable, composite FK, `on delete set null`), createdAt · `unique (household_id, day)` |
 
 Retention: meal-plan entries older than 60 days and grocery items checked more than 30 days ago are removed by the existing purge job. Tasks completed more than 90 days ago are removed the same way.
 
