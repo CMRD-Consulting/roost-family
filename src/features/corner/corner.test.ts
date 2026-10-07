@@ -12,6 +12,7 @@ import { useHouseholdStore } from '@/stores/householdStore'
 import { useLogStore } from '@/stores/logStore'
 import * as sound from '@/ui/sound'
 import { EXIT_PATTERN_RNG, seededRng } from './cornerExit'
+import { GAME_RNG } from './games/rng'
 import { XYLOPHONE_BARS } from './games/xylophone'
 import KidsCorner from './KidsCorner.vue'
 
@@ -81,7 +82,7 @@ async function mountAt(path: string): Promise<VueWrapper> {
   await router.push(path)
   await router.isReady()
   const wrapper = mount(Shell, {
-    global: { plugins: [pinia, router], provide: { [EXIT_PATTERN_RNG as symbol]: seededRng(7) } },
+    global: { plugins: [pinia, router], provide: { [EXIT_PATTERN_RNG as symbol]: seededRng(7), [GAME_RNG as symbol]: seededRng(11) } },
     attachTo: document.body,
   })
   for (let i = 0; i < 10; i++) await flushPromises()
@@ -101,6 +102,13 @@ async function tapDots(w: VueWrapper, order: number[]) {
 const tab = (w: VueWrapper, name: string) => {
   const found = w.findAll('[role="tab"]').find((t) => t.text() === name)
   if (!found) throw new Error(`No tab "${name}"`)
+  return found
+}
+
+/** A tile on the Play menu. */
+const game = (w: VueWrapper, name: string) => {
+  const found = w.findAll('[data-testid="play-game"]').find((g) => g.attributes('aria-label') === name)
+  if (!found) throw new Error(`No game "${name}"`)
   return found
 }
 
@@ -373,17 +381,18 @@ describe("Kids' Corner (demo source)", () => {
   })
 
   describe('play', () => {
-    const game = (w: VueWrapper, name: string) => {
-      const found = w.findAll('[data-testid="play-game"]').find((g) => g.attributes('aria-label') === name)
-      if (!found) throw new Error(`No game "${name}"`)
-      return found
-    }
-
-    it('offers Farm, Bubbles and Music as picture tiles, with a back button that returns to the menu', async () => {
+    it('offers the games as picture tiles, with a back button that returns to the menu', async () => {
       const wrapper = await mountAt('/corner')
       await tab(wrapper, 'Play').trigger('click')
       expect(wrapper.find('[data-testid="play-picker"]').exists()).toBe(true)
-      expect(wrapper.findAll('[data-testid="play-game"]').map((g) => g.attributes('aria-label'))).toEqual(['Farm', 'Bubbles', 'Music'])
+      expect(wrapper.findAll('[data-testid="play-game"]').map((g) => g.attributes('aria-label'))).toEqual([
+        'Farm',
+        'Bubbles',
+        'Music',
+        'Who said that?',
+        'Colors',
+        'Memory',
+      ])
       expect(wrapper.find('button[aria-label="Back to games"]').exists()).toBe(false)
 
       await game(wrapper, 'Farm').trigger('click')
@@ -420,6 +429,8 @@ describe("Kids' Corner (demo source)", () => {
       expect(sound.preloadClip).toHaveBeenCalledWith('/sounds/farm/names/cow.mp3')
 
       await wrapper.get('[data-testid="farm-animal"][aria-label="Cow"]').trigger('pointerdown')
+      // The written word shows while the sounds play, then goes away.
+      expect(wrapper.get('[data-testid="word-card"]').text()).toBe('Cow')
       expect(sound.playClip).toHaveBeenCalledTimes(1)
       expect(sound.playClip).toHaveBeenLastCalledWith('/sounds/farm/cow.mp3')
       await vi.advanceTimersByTimeAsync(150)
@@ -428,6 +439,8 @@ describe("Kids' Corner (demo source)", () => {
       await flushPromises()
       // The name recording played, so speech synthesis is not needed.
       expect(speakSpy).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(1_500)
+      expect(wrapper.find('[data-testid="word-card"]').exists()).toBe(false)
       wrapper.unmount()
     })
 
@@ -494,6 +507,97 @@ describe("Kids' Corner (demo source)", () => {
       wrapper.unmount()
     })
   })
+
+    it('Who said that?: plays a call, a wrong tap wobbles, the right tap celebrates and moves on', async () => {
+      const wrapper = await mountAt('/corner')
+      await tab(wrapper, 'Play').trigger('click')
+      await game(wrapper, 'Who said that?').trigger('click')
+      await vi.advanceTimersByTimeAsync(400)
+      const calls = () => vi.mocked(sound.playClip).mock.calls.map((c) => c[0])
+      expect(calls()).toHaveLength(1)
+      const askedKey = calls()[0]!.match(/farm\/(\w+)\.mp3/)![1]!
+      const choices = wrapper.findAll('[data-testid="who-choice"]')
+      expect(choices).toHaveLength(3)
+      const right = choices.find((c) => c.attributes('aria-label')!.toLowerCase() === askedKey)!
+      const wrong = choices.find((c) => c !== right)!
+
+      await wrong.trigger('pointerdown')
+      expect(sound.playNote).toHaveBeenCalledWith(196)
+      expect(sound.playChime).not.toHaveBeenCalled()
+      expect(wrapper.find('[data-testid="word-card"]').exists()).toBe(false)
+
+      await wrapper.get('button[aria-label="Hear it again"]').trigger('pointerdown')
+      expect(calls()).toHaveLength(2)
+      expect(calls()[1]).toBe(calls()[0])
+
+      await right.trigger('pointerdown')
+      expect(sound.playChime).toHaveBeenCalledTimes(1)
+      expect(wrapper.get('[data-testid="word-card"]').text()).toBe(right.attributes('aria-label'))
+      expect(calls()[2]).toBe(`/sounds/farm/names/${askedKey}.mp3`)
+      // A tap during the celebration does nothing.
+      await wrong.trigger('pointerdown')
+      expect(sound.playNote).toHaveBeenCalledTimes(1)
+
+      await vi.advanceTimersByTimeAsync(2_200 + 400)
+      expect(calls()).toHaveLength(4)
+      expect(calls()[3]).not.toBe(calls()[0])
+      wrapper.unmount()
+    })
+
+    it('Colors: says a colour, shows three discs, celebrates the right one in its colour', async () => {
+      const wrapper = await mountAt('/corner')
+      await tab(wrapper, 'Play').trigger('click')
+      await game(wrapper, 'Colors').trigger('click')
+      await vi.advanceTimersByTimeAsync(400)
+      const calls = () => vi.mocked(sound.playClip).mock.calls.map((c) => c[0])
+      const askedKey = calls()[0]!.match(/colors\/(\w+)\.mp3/)![1]!
+      const discs = wrapper.findAll('[data-testid="color-choice"]')
+      expect(discs).toHaveLength(3)
+      const right = discs.find((d) => d.attributes('aria-label')!.toLowerCase() === askedKey)!
+      await right.trigger('pointerdown')
+      expect(sound.playChime).toHaveBeenCalledTimes(1)
+      const word = wrapper.get('[data-testid="word-card"]')
+      expect(word.text().toLowerCase()).toBe(askedKey)
+      expect(word.attributes('style')).toContain('color:')
+      wrapper.unmount()
+    })
+
+    it('Memory: a matched pair stays up and calls; a miss turns back; a full board celebrates and redeals', async () => {
+      const wrapper = await mountAt('/corner')
+      await tab(wrapper, 'Play').trigger('click')
+      await game(wrapper, 'Memory').trigger('click')
+      const cards = () => wrapper.findAll('[data-testid="memory-card"]')
+      expect(cards()).toHaveLength(12)
+      expect(cards().every((c) => c.attributes('aria-label') === 'Card')).toBe(true)
+
+      // Peek at the deal through the labels after turning each card (then let misses hide).
+      const faces: string[] = []
+      for (let i = 0; i < 12; i += 2) {
+        await cards()[i]!.trigger('pointerdown')
+        await cards()[i + 1]!.trigger('pointerdown')
+        faces.push(cards()[i]!.attributes('aria-label')!, cards()[i + 1]!.attributes('aria-label')!)
+        await vi.advanceTimersByTimeAsync(900)
+      }
+      const matchedSoFar = cards().filter((c) => c.attributes('disabled') !== undefined).length
+      const byName = new Map<string, number[]>()
+      faces.forEach((name, i) => byName.set(name, [...(byName.get(name) ?? []), i]))
+      expect(byName.size).toBe(6)
+
+      vi.mocked(sound.playClip).mockClear()
+      for (const [, [a, b]] of byName) {
+        if (cards()[a!]!.attributes('disabled') !== undefined) continue
+        await cards()[a!]!.trigger('pointerdown')
+        await cards()[b!]!.trigger('pointerdown')
+        expect(cards()[a!]!.attributes('disabled')).toBeDefined()
+      }
+      expect(cards().every((c) => c.attributes('disabled') !== undefined)).toBe(true)
+      expect(vi.mocked(sound.playClip).mock.calls.length).toBe(6 - matchedSoFar)
+      expect(wrapper.find('[data-testid="memory-complete"]').exists()).toBe(true)
+
+      await vi.advanceTimersByTimeAsync(3_000)
+      expect(cards().every((c) => c.attributes('aria-label') === 'Card')).toBe(true)
+      wrapper.unmount()
+    })
 
   describe('exit', () => {
     it('needs a 2 second hold and then an adult PIN to go back to the main screen', async () => {

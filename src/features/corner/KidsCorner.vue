@@ -34,8 +34,11 @@ import PictureSchedule from './PictureSchedule.vue'
 import StickerChart from './StickerChart.vue'
 import ExitPattern from './ExitPattern.vue'
 import BubblePop from './games/BubblePop.vue'
+import ColorFind from './games/ColorFind.vue'
 import FarmSounds from './games/FarmSounds.vue'
+import MemoryMatch from './games/MemoryMatch.vue'
 import PlayPicker, { type GameId } from './games/PlayPicker.vue'
+import WhoSaidThat from './games/WhoSaidThat.vue'
 import Xylophone from './games/Xylophone.vue'
 import { useVisualTimer } from './useVisualTimer'
 import VisualTimer from './VisualTimer.vue'
@@ -218,7 +221,10 @@ useNightPeekTaps()
             <PlayPicker v-if="game === null" @pick="game = $event" />
             <FarmSounds v-else-if="game === 'farm'" />
             <BubblePop v-else-if="game === 'bubbles'" :color="child.color" />
-            <Xylophone v-else />
+            <Xylophone v-else-if="game === 'music'" />
+            <WhoSaidThat v-else-if="game === 'who'" />
+            <ColorFind v-else-if="game === 'colors'" />
+            <MemoryMatch v-else />
           </template>
         </div>
 

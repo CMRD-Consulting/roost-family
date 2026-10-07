@@ -28,3 +28,8 @@ The spoken animal names were generated on 2026-10-07 with [ElevenLabs](https://e
 (model `eleven_multilingual_v2`, premade voice "Sarah", id `EXAVITQu4vr4xnSDxMaL`, speed 0.9, style 0.2), one word
 per file ("Cow.", "Pig.", …), under the account's ElevenLabs licence (commercial use is included on paid plans; check
 the plan's terms before launch). Processed like the calls, with a 0.15 s end pad.
+
+## Colour names (`public/sounds/colors/*.mp3`)
+
+Red, Blue, Yellow, Green, Orange and Purple for the Colors game, generated and processed exactly like the animal
+names above (ElevenLabs, voice "Sarah", 2026-10-07).

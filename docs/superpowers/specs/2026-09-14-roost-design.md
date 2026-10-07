@@ -361,6 +361,10 @@ A full-screen, toddler-friendly mode. No text-only controls; everything is a pic
 - **Farm:** eight animals (cow, pig, sheep, goat, horse, rooster, dog, cat). A tap bounces the animal, plays a short **recording** of its call (the app's only audio files, precached for offline use; sources and licences in `public/sounds/farm/SOURCES.md`) and then says its name through speech synthesis, with the most natural voice the tablet offers.
 - **Bubbles:** six bubbles in the child's person colour drift slowly up the screen; a tap pops one with a synthesised plink and a fresh bubble floats in from below. With Reduce Motion nothing drifts: bubbles sit still and a popped one reappears elsewhere.
 - **Music:** eight xylophone bars tuned to a C major pentatonic scale (C5 to E6), so any order of taps sounds like a tune. A tap strikes a bar; sliding a finger across plays a glissando. Notes are synthesised in WebAudio.
+- **Who said that?:** an animal's call plays; three animals are shown; the child taps the one that made it. Right: the tile pops, a chime, the name is heard and shown; a new round follows. Wrong: a gentle wobble and a low note, nothing more. A speaker button replays the call.
+- **Colors:** a colour's name is heard (recordings of red, blue, yellow, green, orange, purple); three big discs are shown; tap the matching one. Feedback as in Who said that?, with the word shown in its colour.
+- **Memory:** twelve face-down cards, six pairs of animals. A pair stays up and the animal calls; a miss turns back after a moment. A full board celebrates, then a fresh deal.
+- **Written words:** whenever a game plays an animal's or colour's name, the word is also shown big for a moment, so the child sees the written word with the spoken one.
 
 ### 7.6 Sitter Mode
 
