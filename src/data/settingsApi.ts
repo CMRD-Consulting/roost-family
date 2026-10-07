@@ -44,6 +44,7 @@ export interface HouseholdSettingsInput {
   leaveByBufferMin: number
   defaultNightSleep: TimeWindow
   nightMode: TimeWindow
+  nightModeEnabled: boolean
   diaperLogEnabled: boolean
 }
 

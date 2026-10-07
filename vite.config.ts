@@ -71,8 +71,8 @@ export default defineConfig({
         ],
       },
       workbox: {
-        // Every built asset, including the self-hosted Outfit font files.
-        globPatterns: ['**/*.{js,css,html,woff2,woff,svg,png,ico}'],
+        // Every built asset, including the self-hosted Outfit font files and the Farm game's recordings.
+        globPatterns: ['**/*.{js,css,html,woff2,woff,svg,png,ico,mp3}'],
         // Never precached (spec §5.8): a cached copy would defeat the whole point of the version check.
         // Belt-and-braces alongside globPatterns not matching .json — see writeVersionJson() above.
         // (Workbox's own default ignore, node_modules, is restated here since passing globIgnores replaces it.)

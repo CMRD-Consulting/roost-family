@@ -49,12 +49,12 @@ describe('createDemoSettingsApi', () => {
     const api = createDemoSettingsApi()
     await api.updateHouseholdSettings(auth, {
       name: 'Rivera-Chen', zip: '29710', timeZone: 'America/Chicago', leaveByBufferMin: 30,
-      defaultNightSleep: { start: '19:30', end: '06:30' }, nightMode: { start: '21:00', end: '06:00' }, diaperLogEnabled: true,
+      defaultNightSleep: { start: '19:30', end: '06:30' }, nightMode: { start: '21:00', end: '06:00' }, nightModeEnabled: false, diaperLogEnabled: true,
     })
     const household = getDemoSnapshot(new Date()).household
     expect(household).toMatchObject({
       name: 'Rivera-Chen', zip: '29710', timeZone: 'America/Chicago', leaveByBufferMin: 30,
-      defaultNightSleep: { start: '19:30', end: '06:30' }, nightMode: { start: '21:00', end: '06:00' }, diaperLogEnabled: true,
+      defaultNightSleep: { start: '19:30', end: '06:30' }, nightMode: { start: '21:00', end: '06:00' }, nightModeEnabled: false, diaperLogEnabled: true,
     })
   })
 

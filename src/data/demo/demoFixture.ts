@@ -290,6 +290,7 @@ export function buildDemoSnapshot(now: Date, options: DemoOptions = {}): Househo
       timeZone,
       defaultNightSleep: { start: '18:00', end: '05:00' },
       nightMode: { start: '20:00', end: '06:00' },
+      nightModeEnabled: true,
       leaveByBufferMin: 20,
       diaperLogEnabled: false,
       dinnerTonight: 'Tacos',

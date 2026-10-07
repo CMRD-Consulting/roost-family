@@ -31,6 +31,15 @@ describe('isNight', () => {
   it('is true right at the start boundary (8pm household time)', () => {
     expect(isNight(new Date('2026-09-15T00:00:00Z'), household())).toBe(true)
   })
+
+  it('is false inside the window when Night Mode is switched off in Settings', () => {
+    expect(isNight(new Date('2026-09-15T03:00:00Z'), household({ nightModeEnabled: false }))).toBe(false)
+  })
+
+  it('treats a snapshot without the switch (cached before it existed) as on', () => {
+    const { nightModeEnabled: _on, ...without } = household()
+    expect(isNight(new Date('2026-09-15T03:00:00Z'), without)).toBe(true)
+  })
 })
 
 describe('startNap / napShouldEnd', () => {
@@ -144,6 +153,14 @@ describe('useModesStore', () => {
       withHousehold(new Date('2026-09-14T18:00:00Z'), { timeZone: TZ, nightMode: NIGHT_MODE })
       const modes = useModesStore()
       expect(modes.nightActive).toBe(false)
+    })
+
+    it('is false, with sound on, when Night Mode is switched off in Settings', () => {
+      withHousehold(new Date('2026-09-15T03:00:00Z'), { timeZone: TZ, nightMode: NIGHT_MODE, nightModeEnabled: false })
+      const modes = useModesStore()
+      expect(modes.nightActive).toBe(false)
+      expect(modes.peeking).toBe(false)
+      expect(isMuted()).toBe(false)
     })
 
     it('is false with no household loaded yet', () => {

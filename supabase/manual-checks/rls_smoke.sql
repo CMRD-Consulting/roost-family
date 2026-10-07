@@ -711,30 +711,32 @@ select pg_temp.expect('a display verifies with its household adult''s PIN', (
 \echo '[42] update_household_settings saves every field, audits, and rejects bad PINs and input'
 select set_config('request.jwt.claims', :'F', true);
 select public.update_household_settings(:'membership_f', '2468', '  F home ', '', 'America/Los_Angeles', 15,
-  '19:00', '06:30', '21:00', '06:15', true);
+  '19:00', '06:30', '21:00', '06:15', true, false);
 select pg_temp.expect('household settings stored', (
   select name = 'F home' and zip is null and time_zone = 'America/Los_Angeles' and leave_by_buffer_min = 15
      and default_night_sleep_start = '19:00' and default_night_sleep_end = '06:30'
-     and night_mode_start = '21:00' and night_mode_end = '06:15' and diaper_log_enabled
+     and night_mode_start = '21:00' and night_mode_end = '06:15' and diaper_log_enabled and not night_mode_enabled
   from public.households where id = pg_temp.v('household_f')));
 select pg_temp.expect('household update audited', pg_temp.audited(pg_temp.v('household_f'), pg_temp.v('membership_f'), 'household', 'update', pg_temp.v('household_f')));
 select pg_temp.expect_error('household with a wrong PIN',
-  $q$select public.update_household_settings(pg_temp.v('membership_f'), '1111', 'X', '80202', 'America/Denver', 20, '18:00', '05:00', '20:00', '06:00', false)$q$, '42501');
+  $q$select public.update_household_settings(pg_temp.v('membership_f'), '1111', 'X', '80202', 'America/Denver', 20, '18:00', '05:00', '20:00', '06:00', false, true)$q$, '42501');
 select pg_temp.expect_error('household as a caregiver',
-  $q$select public.update_household_settings(pg_temp.v('membership_g'), '3333', 'X', '80202', 'America/Denver', 20, '18:00', '05:00', '20:00', '06:00', false)$q$, '42501');
+  $q$select public.update_household_settings(pg_temp.v('membership_g'), '3333', 'X', '80202', 'America/Denver', 20, '18:00', '05:00', '20:00', '06:00', false, true)$q$, '42501');
+select pg_temp.expect_error('household without the Night Mode switch',
+  $q$select public.update_household_settings(pg_temp.v('membership_f'), '2468', 'X', '80202', 'America/Denver', 20, '18:00', '05:00', '20:00', '06:00', false, null)$q$, '22023');
 select pg_temp.expect_error('household with a bad ZIP',
-  $q$select public.update_household_settings(pg_temp.v('membership_f'), '2468', 'X', '8020', 'America/Denver', 20, '18:00', '05:00', '20:00', '06:00', false)$q$, '22023');
+  $q$select public.update_household_settings(pg_temp.v('membership_f'), '2468', 'X', '8020', 'America/Denver', 20, '18:00', '05:00', '20:00', '06:00', false, true)$q$, '22023');
 select pg_temp.expect_error('household with an unknown time zone',
-  $q$select public.update_household_settings(pg_temp.v('membership_f'), '2468', 'X', '80202', 'Mars/Base', 20, '18:00', '05:00', '20:00', '06:00', false)$q$, '22023');
+  $q$select public.update_household_settings(pg_temp.v('membership_f'), '2468', 'X', '80202', 'Mars/Base', 20, '18:00', '05:00', '20:00', '06:00', false, true)$q$, '22023');
 select pg_temp.expect_error('household with a 121-minute buffer',
-  $q$select public.update_household_settings(pg_temp.v('membership_f'), '2468', 'X', '80202', 'America/Denver', 121, '18:00', '05:00', '20:00', '06:00', false)$q$, '22023');
+  $q$select public.update_household_settings(pg_temp.v('membership_f'), '2468', 'X', '80202', 'America/Denver', 121, '18:00', '05:00', '20:00', '06:00', false, true)$q$, '22023');
 select pg_temp.expect_error('household with a blank name',
-  $q$select public.update_household_settings(pg_temp.v('membership_f'), '2468', '   ', '80202', 'America/Denver', 20, '18:00', '05:00', '20:00', '06:00', false)$q$, '22023');
+  $q$select public.update_household_settings(pg_temp.v('membership_f'), '2468', '   ', '80202', 'America/Denver', 20, '18:00', '05:00', '20:00', '06:00', false, true)$q$, '22023');
 select pg_temp.expect_error('household with a missing Night Mode time',
-  $q$select public.update_household_settings(pg_temp.v('membership_f'), '2468', 'X', '80202', 'America/Denver', 20, '18:00', '05:00', null, '06:00', false)$q$, '22023');
+  $q$select public.update_household_settings(pg_temp.v('membership_f'), '2468', 'X', '80202', 'America/Denver', 20, '18:00', '05:00', null, '06:00', false, true)$q$, '22023');
 select set_config('request.jwt.claims', :'B', true);
 select pg_temp.expect_error('non-member updates F household with F''s PIN',
-  $q$select public.update_household_settings(pg_temp.v('membership_f'), '2468', 'X', '80202', 'America/Denver', 20, '18:00', '05:00', '20:00', '06:00', false)$q$, '42501');
+  $q$select public.update_household_settings(pg_temp.v('membership_f'), '2468', 'X', '80202', 'America/Denver', 20, '18:00', '05:00', '20:00', '06:00', false, true)$q$, '42501');
 select set_config('request.jwt.claims', :'F', true);
 select pg_temp.expect('rejected updates left F household unchanged', (
   select name = 'F home' from public.households where id = pg_temp.v('household_f')));
@@ -1779,7 +1781,7 @@ select pg_temp.expect('location change audited without coordinates', pg_temp.aud
   and (select change::text not like '%35.2%' and change::text not like '%80.8%' from public.settings_audit order by id desc limit 1));
 set local role authenticated;
 select set_config('request.jwt.claims', :'F', true);
-select public.update_household_settings(:'membership_f', '2468', 'F family', '80202', 'America/Denver', 20, '18:00', '05:00', '20:00', '06:00', false);
+select public.update_household_settings(:'membership_f', '2468', 'F family', '80202', 'America/Denver', 20, '18:00', '05:00', '20:00', '06:00', false, true);
 reset role;
 select pg_temp.expect('changing the ZIP keeps the weather location', (
   select zip = '80202' and lat = 35.23 and lon = -80.84 from public.households where id = pg_temp.v('household_f')));

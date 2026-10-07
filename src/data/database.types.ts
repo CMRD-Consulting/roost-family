@@ -945,6 +945,7 @@ export type Database = {
           lon: number | null
           name: string
           night_mode_end: string
+          night_mode_enabled: boolean
           night_mode_start: string
           plan: string
           sitter_info: Json
@@ -964,6 +965,7 @@ export type Database = {
           lon?: number | null
           name: string
           night_mode_end?: string
+          night_mode_enabled?: boolean
           night_mode_start?: string
           plan?: string
           sitter_info?: Json
@@ -983,6 +985,7 @@ export type Database = {
           lon?: number | null
           name?: string
           night_mode_end?: string
+          night_mode_enabled?: boolean
           night_mode_start?: string
           plan?: string
           sitter_info?: Json
@@ -2289,6 +2292,7 @@ export type Database = {
           p_leave_by_buffer_min: number
           p_membership_id: string
           p_name: string
+          p_night_mode_enabled: boolean
           p_night_mode_end: string
           p_night_mode_start: string
           p_pin: string

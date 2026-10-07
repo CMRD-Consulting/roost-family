@@ -138,6 +138,7 @@ export function createSupabaseSettingsApi(client: RoostClient): SettingsApi {
         p_night_mode_start: input.nightMode.start,
         p_night_mode_end: input.nightMode.end,
         p_diaper_log_enabled: input.diaperLogEnabled,
+        p_night_mode_enabled: input.nightModeEnabled,
       } as never),
     )
   }

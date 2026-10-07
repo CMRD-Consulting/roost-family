@@ -137,6 +137,7 @@ export function createDemoSettingsApi(): SettingsApi {
         leaveByBufferMin: input.leaveByBufferMin,
         defaultNightSleep: input.defaultNightSleep,
         nightMode: input.nightMode,
+        nightModeEnabled: input.nightModeEnabled,
         diaperLogEnabled: input.diaperLogEnabled,
       },
     }))

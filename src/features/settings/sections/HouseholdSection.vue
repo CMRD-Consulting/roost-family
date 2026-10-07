@@ -141,6 +141,7 @@ async function submit(): Promise<void> {
       <fieldset class="flex flex-col gap-3 rounded-[var(--radius-card)] bg-surface px-6 py-5">
         <legend class="float-left text-[20px] font-medium text-ink">Night Mode schedule</legend>
         <p class="clear-left text-[18px] text-ink-3">The Night screen shows and sounds stay off during these hours.</p>
+        <ToggleField v-model="form.nightModeEnabled" label="Night Mode" hint="Off, the display never dims for the night" />
         <div class="grid grid-cols-2 gap-4">
           <TimeField v-model="form.nightModeStart" label="Starts" />
           <TimeField v-model="form.nightModeEnd" label="Ends" />

@@ -13,6 +13,7 @@ export interface HouseholdForm {
   nightSleepEnd: string
   nightModeStart: string
   nightModeEnd: string
+  nightModeEnabled: boolean
   diaperLogEnabled: boolean
 }
 
@@ -35,6 +36,7 @@ export function householdFormFrom(household: HouseholdInfo): HouseholdForm {
     nightSleepEnd: household.defaultNightSleep.end,
     nightModeStart: household.nightMode.start,
     nightModeEnd: household.nightMode.end,
+    nightModeEnabled: household.nightModeEnabled ?? true,
     diaperLogEnabled: household.diaperLogEnabled,
   }
 }
@@ -74,6 +76,7 @@ export function toHouseholdSettingsInput(form: HouseholdForm): HouseholdSettings
     leaveByBufferMin: form.leaveByBufferMin,
     defaultNightSleep: { start: form.nightSleepStart, end: form.nightSleepEnd },
     nightMode: { start: form.nightModeStart, end: form.nightModeEnd },
+    nightModeEnabled: form.nightModeEnabled,
     diaperLogEnabled: form.diaperLogEnabled,
   }
 }

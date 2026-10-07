@@ -25,6 +25,9 @@ export interface HouseholdInfo {
   timeZone: string
   defaultNightSleep: TimeWindow
   nightMode: TimeWindow
+  /** Night Mode on/off (Settings → Household). Optional: a device-cached snapshot from before it existed won't have
+   *  it, and absent means on. */
+  nightModeEnabled?: boolean
   leaveByBufferMin: number
   diaperLogEnabled: boolean
   dinnerTonight: string | null

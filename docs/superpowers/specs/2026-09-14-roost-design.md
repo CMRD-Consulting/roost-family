@@ -356,6 +356,12 @@ A full-screen, toddler-friendly mode. No text-only controls; everything is a pic
 - Stickers are awarded only through the guarded Sticker log, not by tapping the chart.
 - Resets each Monday; past weeks are kept in history.
 
+**Games**
+- A fourth **Play** tab: a menu of picture tiles, one per game, and a back arrow in a game. Tapping the Play tab again also returns to the menu. Games change no data (stickers are still awarded only through the guarded Sticker log), need no files or connection, and are muted like everything else in Nap and Night Mode; every game is readable with the sound off.
+- **Farm:** eight animals (cow, pig, sheep, goat, horse, rooster, dog, cat). A tap bounces the animal, plays a short **recording** of its call (the app's only audio files, precached for offline use; sources and licences in `public/sounds/farm/SOURCES.md`) and then says its name through speech synthesis, with the most natural voice the tablet offers.
+- **Bubbles:** six bubbles in the child's person colour drift slowly up the screen; a tap pops one with a synthesised plink and a fresh bubble floats in from below. With Reduce Motion nothing drifts: bubbles sit still and a popped one reappears elsewhere.
+- **Music:** eight xylophone bars tuned to a C major pentatonic scale (C5 to E6), so any order of taps sounds like a tune. A tap strikes a bar; sliding a finger across plays a glissando. Notes are synthesised in WebAudio.
+
 ### 7.6 Sitter Mode
 
 For times a sitter is in charge.
@@ -390,6 +396,7 @@ For times a sitter is in charge.
 - Tapping shows a dimmed main screen for 60 s, then returns to the slideshow.
 - All sounds silent.
 - With no photos uploaded, shows only the dim clock.
+- **Can be switched off:** Settings → Household → Night Mode schedule has a **Night Mode** on/off switch (default on). Off, the display never shows the Night screen and sounds stay on, whatever the schedule says; the schedule is kept for when it is switched back on. Nap Mode still mutes.
 
 **Nap Mode**
 - Toggled with the moon button.
@@ -417,7 +424,7 @@ Opened with an adult PIN, which authorises every section, including the Owner-on
 - **Medicines:** per child; name, minimum hours between doses, optional max doses in 24 hours
 - **Stickers:** categories
 - **Sitter info:** nap and bedtime instructions, emergency contacts, pediatrician, address, "where things are" notes
-- **Household:** name, ZIP code / time zone, weather location (from this tablet's location), leave-by buffer, default night-sleep window, Night Mode schedule, Diaper log on/off, tonight's dinner
+- **Household:** name, ZIP code / time zone, weather location (from this tablet's location), leave-by buffer, default night-sleep window, Night Mode on/off and schedule, Diaper log on/off, tonight's dinner
 - **Photos:** slideshow photos (up to 200)
 - **Logs:** history per child and type; edit or delete entries; void doses
 - **Inbox:** jots (check off or delete)
@@ -524,7 +531,7 @@ All household-owned tables are scoped to a household, directly through `househol
 | **GroceryItem** | id, householdId, text, createdAt, checkedAt, attribution* |
 | **TakeListLink** | id, householdId, tokenHash, expiresAt, revokedAt |
 | **SitterSession** | id, householdId, displayId, sitterName, start, end, summaryShownAt |
-| **HouseholdSettings** | householdId, leaveByBufferMin, defaultNightSleepStart/End, nightModeStart/End, diaperLogEnabled, dinnerTonight, sitterInfo |
+| **HouseholdSettings** | householdId, leaveByBufferMin, defaultNightSleepStart/End, nightModeStart/End, nightModeEnabled, diaperLogEnabled, dinnerTonight, sitterInfo |
 | **Photo** | id, householdId, storagePath, kind (avatar/step/slideshow), addedAt |
 | **SettingsAudit** | id, householdId, membershipId, change, at |
 

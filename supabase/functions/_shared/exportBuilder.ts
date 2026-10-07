@@ -47,7 +47,7 @@ export const EXPORT_TABLES = {
     table: 'households',
     columns: [
       'id', 'name', 'time_zone', 'zip', 'lat', 'lon', 'plan', 'default_night_sleep_start', 'default_night_sleep_end',
-      'night_mode_start', 'night_mode_end', 'leave_by_buffer_min', 'diaper_log_enabled', 'dinner_tonight', 'sitter_info',
+      'night_mode_start', 'night_mode_end', 'night_mode_enabled', 'leave_by_buffer_min', 'diaper_log_enabled', 'dinner_tonight', 'sitter_info',
       'created_at',
     ],
     timestamps: ['created_at'],

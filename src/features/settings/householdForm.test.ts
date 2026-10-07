@@ -9,6 +9,7 @@ const HOUSEHOLD: HouseholdInfo = {
   timeZone: 'America/New_York',
   defaultNightSleep: { start: '18:00', end: '05:00' },
   nightMode: { start: '20:00', end: '06:00' },
+  nightModeEnabled: true,
   leaveByBufferMin: 20,
   diaperLogEnabled: false,
   dinnerTonight: null,
@@ -22,8 +23,14 @@ describe('householdFormFrom', () => {
     expect(householdFormFrom(HOUSEHOLD)).toEqual({
       name: 'Rivera', zip: '28202', timeZone: 'America/New_York', leaveByBufferMin: 20,
       nightSleepStart: '18:00', nightSleepEnd: '05:00', nightModeStart: '20:00', nightModeEnd: '06:00',
-      diaperLogEnabled: false,
+      nightModeEnabled: true, diaperLogEnabled: false,
     })
+  })
+
+  it('treats a household without the Night Mode switch (cached before it existed) as on', () => {
+    const { nightModeEnabled: _on, ...without } = HOUSEHOLD
+    expect(householdFormFrom(without).nightModeEnabled).toBe(true)
+    expect(householdFormFrom({ ...HOUSEHOLD, nightModeEnabled: false }).nightModeEnabled).toBe(false)
   })
 
   it('treats a missing or null ZIP as empty', () => {
@@ -66,10 +73,10 @@ describe('validateHouseholdForm', () => {
 
 describe('toHouseholdSettingsInput', () => {
   it('trims text, turns an empty ZIP into null and groups the time windows', () => {
-    expect(toHouseholdSettingsInput(form({ name: '  Rivera-Chen ', zip: '  ', diaperLogEnabled: true }))).toEqual({
+    expect(toHouseholdSettingsInput(form({ name: '  Rivera-Chen ', zip: '  ', diaperLogEnabled: true, nightModeEnabled: false }))).toEqual({
       name: 'Rivera-Chen', zip: null, timeZone: 'America/New_York', leaveByBufferMin: 20,
       defaultNightSleep: { start: '18:00', end: '05:00' }, nightMode: { start: '20:00', end: '06:00' },
-      diaperLogEnabled: true,
+      nightModeEnabled: false, diaperLogEnabled: true,
     })
   })
 })
