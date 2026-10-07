@@ -419,7 +419,7 @@ describe("Kids' Corner (demo source)", () => {
       expect(sound.preloadClip).toHaveBeenCalledWith('/sounds/farm/cow.mp3')
       expect(sound.preloadClip).toHaveBeenCalledWith('/sounds/farm/names/cow.mp3')
 
-      await wrapper.get('[data-testid="farm-animal"][aria-label="Cow"]').trigger('click')
+      await wrapper.get('[data-testid="farm-animal"][aria-label="Cow"]').trigger('pointerdown')
       expect(sound.playClip).toHaveBeenCalledTimes(1)
       expect(sound.playClip).toHaveBeenLastCalledWith('/sounds/farm/cow.mp3')
       await vi.advanceTimersByTimeAsync(150)
@@ -442,8 +442,8 @@ describe("Kids' Corner (demo source)", () => {
       await tab(wrapper, 'Play').trigger('click')
       await game(wrapper, 'Farm').trigger('click')
 
-      await wrapper.get('[data-testid="farm-animal"][aria-label="Cow"]').trigger('click')
-      await wrapper.get('[data-testid="farm-animal"][aria-label="Goat"]').trigger('click')
+      await wrapper.get('[data-testid="farm-animal"][aria-label="Cow"]').trigger('pointerdown')
+      await wrapper.get('[data-testid="farm-animal"][aria-label="Goat"]').trigger('pointerdown')
       await vi.advanceTimersByTimeAsync(150)
       await flushPromises()
       expect(speakSpy.mock.calls.map((c) => (c[0] as { text: string }).text)).toEqual(['Goat'])

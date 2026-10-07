@@ -1,6 +1,7 @@
 <script setup lang="ts">
 /**
- * Farm (Kids' Corner games, spec §7.5): eight animals; tapping one makes it bounce, play its recorded call and
+ * Farm (Kids' Corner games, spec §7.5): eight animals; touching one (on pointer down, not release, so the sound
+ * answers the finger) makes it bounce, play its recorded call and
  * then a recording of its name. Both are preloaded when the game opens so the first tap answers at once. A name
  * recording that can't be loaded falls back to speech synthesis. Silent in Nap and Night Mode.
  */
@@ -62,7 +63,9 @@ onBeforeUnmount(() => clearTimeout(bounceTimer))
             { background: animal.tint, boxShadow: '0 12px 30px rgba(90, 70, 54, 0.12)' },
             bouncing === animal.key ? 'animation: roost-pop 600ms ease-out both' : '',
           ]"
-          @click="tap(animal.key)"
+          @pointerdown.prevent="tap(animal.key)"
+          @keydown.enter.prevent="tap(animal.key)"
+          @keydown.space.prevent="tap(animal.key)"
         >
           <span class="text-[96px] leading-none" aria-hidden="true">{{ animal.emoji }}</span>
           <span class="text-[24px] font-semibold leading-tight">{{ animal.name }}</span>

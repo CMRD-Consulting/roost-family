@@ -5,7 +5,7 @@ Short animal calls for Kids' Corner's Farm game (spec §7.5). All eight are from
 non-commercial projects for free, without attribution. Check the license text before redistributing the files on their
 own (the license is for use in a project, not for re-publishing a sound library).
 
-Each file was processed with ffmpeg on 2026-10-07: mixed to mono, leading silence below -50 dB and trailing silence
+Each file was processed with ffmpeg on 2026-10-07: mixed to mono, leading silence below -50 dB (all of it, so playback starts on the sound) and trailing silence
 below -60 dB trimmed (gently, so decaying tails are kept), 0.2 s of silence padded on the end, loudness normalised to
 -16 LUFS (true peak -1.5 dBTP), re-encoded as 96 kbps MP3.
 
