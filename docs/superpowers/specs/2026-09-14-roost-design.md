@@ -390,6 +390,7 @@ For times a sitter is in charge.
 - Tapping shows a dimmed main screen for 60 s, then returns to the slideshow.
 - All sounds silent.
 - With no photos uploaded, shows only the dim clock.
+- **Can be switched off:** Settings → Household → Night Mode schedule has a **Night Mode** on/off switch (default on). Off, the display never shows the Night screen and sounds stay on, whatever the schedule says; the schedule is kept for when it is switched back on. Nap Mode still mutes.
 
 **Nap Mode**
 - Toggled with the moon button.
@@ -417,7 +418,7 @@ Opened with an adult PIN, which authorises every section, including the Owner-on
 - **Medicines:** per child; name, minimum hours between doses, optional max doses in 24 hours
 - **Stickers:** categories
 - **Sitter info:** nap and bedtime instructions, emergency contacts, pediatrician, address, "where things are" notes
-- **Household:** name, ZIP code / time zone, weather location (from this tablet's location), leave-by buffer, default night-sleep window, Night Mode schedule, Diaper log on/off, tonight's dinner
+- **Household:** name, ZIP code / time zone, weather location (from this tablet's location), leave-by buffer, default night-sleep window, Night Mode on/off and schedule, Diaper log on/off, tonight's dinner
 - **Photos:** slideshow photos (up to 200)
 - **Logs:** history per child and type; edit or delete entries; void doses
 - **Inbox:** jots (check off or delete)
@@ -524,7 +525,7 @@ All household-owned tables are scoped to a household, directly through `househol
 | **GroceryItem** | id, householdId, text, createdAt, checkedAt, attribution* |
 | **TakeListLink** | id, householdId, tokenHash, expiresAt, revokedAt |
 | **SitterSession** | id, householdId, displayId, sitterName, start, end, summaryShownAt |
-| **HouseholdSettings** | householdId, leaveByBufferMin, defaultNightSleepStart/End, nightModeStart/End, diaperLogEnabled, dinnerTonight, sitterInfo |
+| **HouseholdSettings** | householdId, leaveByBufferMin, defaultNightSleepStart/End, nightModeStart/End, nightModeEnabled, diaperLogEnabled, dinnerTonight, sitterInfo |
 | **Photo** | id, householdId, storagePath, kind (avatar/step/slideshow), addedAt |
 | **SettingsAudit** | id, householdId, membershipId, change, at |
 

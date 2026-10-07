@@ -14,6 +14,7 @@ describe('buildDemoSnapshot', () => {
     expect(s.household.timeZone).toBe('America/New_York')
     expect(s.household.dinnerTonight).toBe('Tacos')
     expect(s.household.diaperLogEnabled).toBe(false)
+    expect(s.household.nightModeEnabled).toBe(true)
   })
 
   it('builds members Sam (owner) and Alex (adult) with distinct PERSON_COLORS', () => {

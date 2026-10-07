@@ -99,7 +99,7 @@ describe('createSupabaseSettingsApi', () => {
     const { client, calls } = createFakeClient()
     await createSupabaseSettingsApi(client).updateHouseholdSettings(auth, {
       name: 'Rivera', zip: '28202', timeZone: 'America/New_York', leaveByBufferMin: 20,
-      defaultNightSleep: { start: '19:00', end: '06:00' }, nightMode: { start: '20:00', end: '06:00' }, diaperLogEnabled: true,
+      defaultNightSleep: { start: '19:00', end: '06:00' }, nightMode: { start: '20:00', end: '06:00' }, nightModeEnabled: false, diaperLogEnabled: true,
     })
     expect(calls).toEqual([
       {
@@ -107,7 +107,7 @@ describe('createSupabaseSettingsApi', () => {
         args: {
           p_membership_id: membershipId, p_pin: '1234', p_name: 'Rivera', p_zip: '28202', p_time_zone: 'America/New_York',
           p_leave_by_buffer_min: 20, p_default_night_start: '19:00', p_default_night_end: '06:00',
-          p_night_mode_start: '20:00', p_night_mode_end: '06:00', p_diaper_log_enabled: true,
+          p_night_mode_start: '20:00', p_night_mode_end: '06:00', p_diaper_log_enabled: true, p_night_mode_enabled: false,
         },
       },
     ])
@@ -117,7 +117,7 @@ describe('createSupabaseSettingsApi', () => {
     const { client, calls } = createFakeClient()
     await createSupabaseSettingsApi(client).updateHouseholdSettings(auth, {
       name: 'Rivera', zip: null, timeZone: 'America/New_York', leaveByBufferMin: 20,
-      defaultNightSleep: { start: '19:00', end: '06:00' }, nightMode: { start: '20:00', end: '06:00' }, diaperLogEnabled: false,
+      defaultNightSleep: { start: '19:00', end: '06:00' }, nightMode: { start: '20:00', end: '06:00' }, nightModeEnabled: true, diaperLogEnabled: false,
     })
     expect((calls[0] as RpcCall).args).toMatchObject({ p_zip: null })
   })

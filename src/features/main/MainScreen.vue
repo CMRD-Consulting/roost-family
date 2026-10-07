@@ -354,7 +354,11 @@ const SETTINGS_BUTTON = {
                 stroke-linejoin="round"
                 aria-hidden="true"
               >
-                <path d="M12 3l9 8h-3v9h-4v-6H10v6H6v-9H3z" />
+                <!-- A child's face: this is the toddler mode. -->
+                <path d="M9 12h.01" />
+                <path d="M15 12h.01" />
+                <path d="M10 16c.5.3 1.2.5 2 .5s1.5-.2 2-.5" />
+                <path d="M19 6.3a9 9 0 0 1 1.8 3.9 2 2 0 0 1 0 3.6 9 9 0 0 1-17.6 0 2 2 0 0 1 0-3.6A9 9 0 0 1 12 3c2 0 3.5 1.1 3.5 2.5s-.9 2.5-2 2.5c-.8 0-1.5-.4-1.5-1" />
               </svg>
             </button>
             <RLongPress
@@ -384,8 +388,11 @@ const SETTINGS_BUTTON = {
                     stroke-linejoin="round"
                     aria-hidden="true"
                   >
-                    <path d="M16 8a4 4 0 1 1-8 0 4 4 0 0 1 8 0z" />
-                    <path d="M4 21c0-4 3.6-7 8-7s8 3 8 7" />
+                    <!-- A hand holding a heart: someone else is caring for the kids. -->
+                    <path d="M11 14h2a2 2 0 1 0 0-4h-3c-.6 0-1.1.2-1.4.6L3 16" />
+                    <path d="m7 20 1.6-1.4c.3-.4.8-.6 1.4-.6h4c1.1 0 2.1-.4 2.8-1.2l4.6-4.4a2 2 0 0 0-2.75-2.91l-4.2 3.9" />
+                    <path d="m2 15 6 6" />
+                    <path d="M19.5 8.5c.7-.7 1.5-1.6 1.5-2.7A2.73 2.73 0 0 0 16 4a2.78 2.78 0 0 0-5 1.8c0 1.2.8 2 1.5 2.8L16 12Z" />
                   </svg>
                 </span>
               </RLongPress>

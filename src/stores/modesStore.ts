@@ -18,9 +18,10 @@ const IDLE_TICK_MS = 15_000
 const NAP_MAX_MS = 3 * 60 * 60_000
 const NAP_STORAGE_KEY = 'roost-nap'
 
-/** Pure: is `now` inside the household's night window? */
+/** Pure: is `now` inside the household's night window, with Night Mode switched on (Settings → Household)? A
+ *  snapshot without the switch (cached before it existed) counts as on. */
 export function isNight(now: Date, household: HouseholdInfo): boolean {
-  return isInWindow(now, household.nightMode, household.timeZone)
+  return household.nightModeEnabled !== false && isInWindow(now, household.nightMode, household.timeZone)
 }
 
 /** Pure: the ids of every sleep entry (for any child) still open when a nap starts. */
@@ -46,23 +47,26 @@ export function napShouldEnd(nap: NapState, snapshot: HouseholdSnapshot, now: Da
   })
 }
 
-function loadNap(): NapState | null {
+function loadStored<T>(key: string): T | null {
   try {
-    const raw = localStorage.getItem(NAP_STORAGE_KEY)
-    return raw ? (JSON.parse(raw) as NapState) : null
+    const raw = localStorage.getItem(key)
+    return raw ? (JSON.parse(raw) as T) : null
   } catch {
     return null
   }
 }
 
-function saveNap(nap: NapState | null): void {
+function saveStored(key: string, value: unknown | null): void {
   try {
-    if (nap === null) localStorage.removeItem(NAP_STORAGE_KEY)
-    else localStorage.setItem(NAP_STORAGE_KEY, JSON.stringify(nap))
+    if (value === null) localStorage.removeItem(key)
+    else localStorage.setItem(key, JSON.stringify(value))
   } catch {
-    // Private mode or quota exceeded: nap state just won't survive a reload.
+    // Private mode or quota exceeded: the state just won't survive a reload.
   }
 }
+
+const loadNap = (): NapState | null => loadStored<NapState>(NAP_STORAGE_KEY)
+const saveNap = (nap: NapState | null): void => saveStored(NAP_STORAGE_KEY, nap)
 
 /** Nap/Night mode state. Ticks its own clock (`now`) so `nightActive` and the mute watcher track the household's
  *  night window even when nothing else changes; the clock runs every second during a peek. */

@@ -50,6 +50,7 @@ function sampleInput(): ExportInput {
       default_night_sleep_end: '05:00:00',
       night_mode_start: '20:00:00',
       night_mode_end: '06:00:00',
+      night_mode_enabled: true,
       leave_by_buffer_min: 20,
       diaper_log_enabled: true,
       dinner_tonight: 'Tacos',

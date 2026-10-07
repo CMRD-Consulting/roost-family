@@ -298,7 +298,7 @@ describe('SettingsShell', () => {
       await w.find('button[aria-label="Increase Leave-by buffer"]').trigger('click')
       await inputByLabel(w, 'Starts').setValue('21:00')
       await inputByLabel(w, 'Night from').setValue('19:30')
-      await w.find('button[role="switch"]').trigger('click')
+      await w.findAll('button[role="switch"]').find((s) => s.text().includes('Diaper log'))!.trigger('click')
       await buttonByText(w, 'Save').trigger('click')
       await settle()
 
@@ -309,11 +309,27 @@ describe('SettingsShell', () => {
         leaveByBufferMin: 25,
         defaultNightSleep: { start: '19:30', end: '05:00' },
         nightMode: { start: '21:00', end: '06:00' },
+        nightModeEnabled: true,
         diaperLogEnabled: true,
       })
       expect(w.find('[role="status"]').text()).toContain('Saved')
       await vi.advanceTimersByTimeAsync(3_000)
       expect(w.text()).not.toContain('Saved')
+      w.unmount()
+    })
+
+    it('switches Night Mode off from the Night Mode schedule card', async () => {
+      const settingsApi = fakeApi()
+      const w = await openShell(settingsApi)
+
+      const night = w.findAll('button[role="switch"]').find((s) => s.text().includes('Night Mode'))!
+      expect(night.attributes('aria-checked')).toBe('true')
+      await night.trigger('click')
+      expect(night.attributes('aria-checked')).toBe('false')
+      await buttonByText(w, 'Save').trigger('click')
+      await settle()
+
+      expect(settingsApi.updateHouseholdSettings).toHaveBeenCalledWith(SAM_AUTH, expect.objectContaining({ nightModeEnabled: false, diaperLogEnabled: false }))
       w.unmount()
     })
 
