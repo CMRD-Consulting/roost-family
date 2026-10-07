@@ -356,6 +356,12 @@ A full-screen, toddler-friendly mode. No text-only controls; everything is a pic
 - Stickers are awarded only through the guarded Sticker log, not by tapping the chart.
 - Resets each Monday; past weeks are kept in history.
 
+**Games**
+- A fourth **Play** tab: a menu of picture tiles, one per game, and a back arrow in a game. Tapping the Play tab again also returns to the menu. Games change no data (stickers are still awarded only through the guarded Sticker log), need no files or connection, and are muted like everything else in Nap and Night Mode; every game is readable with the sound off.
+- **Farm:** eight animals (cow, pig, sheep, goat, horse, rooster, dog, cat). A tap bounces the animal, plays a short **recording** of its call (the app's only audio files, precached for offline use; sources and licences in `public/sounds/farm/SOURCES.md`) and then says its name through speech synthesis, with the most natural voice the tablet offers.
+- **Bubbles:** six bubbles in the child's person colour drift slowly up the screen; a tap pops one with a synthesised plink and a fresh bubble floats in from below. With Reduce Motion nothing drifts: bubbles sit still and a popped one reappears elsewhere.
+- **Music:** eight xylophone bars tuned to a C major pentatonic scale (C5 to E6), so any order of taps sounds like a tune. A tap strikes a bar; sliding a finger across plays a glissando. Notes are synthesised in WebAudio.
+
 ### 7.6 Sitter Mode
 
 For times a sitter is in charge.

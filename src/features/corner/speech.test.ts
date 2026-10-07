@@ -1,13 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetSoundForTests, setMuted } from '@/ui/sound'
-import { speak } from './speech'
+import { pickVoice, speak } from './speech'
 
 class FakeUtterance {
   rate = 1
+  voice: SpeechSynthesisVoice | null = null
   constructor(public text: string) {}
 }
 
-let synth: { speak: ReturnType<typeof vi.fn>; cancel: ReturnType<typeof vi.fn> }
+function voice(name: string, lang: string, extra: Partial<SpeechSynthesisVoice> = {}): SpeechSynthesisVoice {
+  return { name, lang, localService: false, default: false, voiceURI: name, ...extra }
+}
+
+let synth: { speak: ReturnType<typeof vi.fn>; cancel: ReturnType<typeof vi.fn>; getVoices?: () => SpeechSynthesisVoice[] }
 
 describe('speak', () => {
   beforeEach(() => {
@@ -48,5 +53,30 @@ describe('speak', () => {
       throw new Error('not allowed')
     })
     expect(() => speak('Park')).not.toThrow()
+  })
+
+  it('prefers an enhanced voice in the tablet language over the compact default', () => {
+    const voices = [
+      voice('Fred', 'en-US', { default: true, localService: true }),
+      voice('Samantha', 'en-US', { localService: true }),
+      voice('Samantha (Enhanced)', 'en-US', { localService: true }),
+      voice('Amélie', 'fr-CA', { localService: true }),
+    ]
+    expect(pickVoice(voices, 'en-US')?.name).toBe('Samantha (Enhanced)')
+    expect(pickVoice(voices, 'fr-CA')?.name).toBe('Amélie')
+    // Same language, other region: still better than switching language.
+    expect(pickVoice(voices, 'en-GB')?.name).toBe('Samantha (Enhanced)')
+    // Nothing in the language at all: the best of what there is.
+    expect(pickVoice([voice('Fred', 'en-US', { default: true })], 'de-DE')?.name).toBe('Fred')
+    expect(pickVoice([], 'en-US')).toBeNull()
+  })
+
+  it('sets the chosen voice on the utterance when the browser lists voices', () => {
+    const best = voice('Samantha (Enhanced)', 'en-US')
+    synth.getVoices = vi.fn(() => [voice('Fred', 'en-US', { default: true }), best])
+    vi.stubGlobal('speechSynthesis', synth)
+    speak('Cow')
+    const utterance = synth.speak.mock.calls[0]![0] as FakeUtterance
+    expect(utterance.voice).toBe(best)
   })
 })

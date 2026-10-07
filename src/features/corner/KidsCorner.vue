@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
- * Kids' Corner (spec §7.5): child picker → the child's picture schedule, visual timer and sticker chart, in a
- * full-screen, picture-first layout. Leaving needs a 2 s hold in the corner and then an adult PIN (§7.3); when
+ * Kids' Corner (spec §7.5): child picker → the child's picture schedule, visual timer, sticker chart and games,
+ * in a full-screen, picture-first layout. Leaving needs a 2 s hold in the corner and then an adult PIN (§7.3); when
  * the PIN can't be checked (no connection) an adult taps numbered dots 1-4 in order instead. Every other way
  * out (history back, a stray navigation) is cancelled, except the display being removed or unregistered.
  * Night and Nap Mode apply here as on the main screen (§7.7).
@@ -33,10 +33,14 @@ import { completeCurrent, cornerChildren, scheduleModel, stickerGridModel } from
 import PictureSchedule from './PictureSchedule.vue'
 import StickerChart from './StickerChart.vue'
 import ExitPattern from './ExitPattern.vue'
+import BubblePop from './games/BubblePop.vue'
+import FarmSounds from './games/FarmSounds.vue'
+import PlayPicker, { type GameId } from './games/PlayPicker.vue'
+import Xylophone from './games/Xylophone.vue'
 import { useVisualTimer } from './useVisualTimer'
 import VisualTimer from './VisualTimer.vue'
 
-type Tab = 'schedule' | 'timer' | 'stickers'
+type Tab = 'schedule' | 'timer' | 'stickers' | 'play'
 
 const EXIT_HOLD_MS = 2_000
 
@@ -70,9 +74,19 @@ const tab = ref<Tab>('schedule')
 const schedule = computed(() => (view.value && child.value ? scheduleModel(view.value, child.value.id, now.value) : null))
 const stickerGrid = computed(() => (view.value && child.value ? stickerGridModel(view.value, child.value.id, now.value) : null))
 
+/** The game open on the Play tab; null shows the game menu. Reset on switching tab or child. */
+const game = ref<GameId | null>(null)
+watch([tab, child], () => (game.value = null))
+
 function pick(childId: string): void {
   pickedChildId.value = childId
   tab.value = 'schedule'
+}
+
+/** Tapping the Play tab, even when already on it, goes back to the game menu. */
+function selectTab(id: Tab): void {
+  tab.value = id
+  if (id === 'play') game.value = null
 }
 
 async function completeStep(): Promise<void> {
@@ -91,6 +105,7 @@ const TABS: { id: Tab; label: string; paths: string[] }[] = [
   { id: 'schedule', label: 'Schedule', paths: ['M9 6h11M9 12h11M9 18h11', 'M4 6h.01M4 12h.01M4 18h.01'] },
   { id: 'timer', label: 'Timer', paths: ['M6 2h12M6 22h12', 'M7 2v4l5 6-5 6v4M17 2v4l-5 6 5 6v4'] },
   { id: 'stickers', label: 'Stickers', paths: ['M12 2.5l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4 6.1 20.5l1.2-6.5L2.5 9.4l6.6-.9z'] },
+  { id: 'play', label: 'Play', paths: ['M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z', 'M3.5 10c3 1.5 6 1.5 8.5 0s5.5-1.5 8.5 0', 'M8 3.8c1 3 1 7.5-.5 11.5M16 3.8c-1 3-1 7.5.5 11.5'] },
 ]
 
 // Section tabs (WAI-ARIA tabs pattern): only the selected tab is in the tab order; arrow keys, Home and End
@@ -109,7 +124,7 @@ function onTabKeydown(e: KeyboardEvent, index: number): void {
     : null
   if (target === null) return
   e.preventDefault()
-  tab.value = TABS[target]!.id
+  selectTab(TABS[target]!.id)
   document.getElementById(tabId(TABS[target]!.id))?.focus()
 }
 
@@ -181,7 +196,10 @@ useNightPeekTaps()
       >
         <span class="flex size-[200px] items-center justify-center rounded-full bg-corner-tile">
           <svg width="120" height="120" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M12 3l9 8h-3v9h-4v-6H10v6H6v-9H3z" />
+<path d="M9 12h.01" />
+            <path d="M15 12h.01" />
+            <path d="M10 16c.5.3 1.2.5 2 .5s1.5-.2 2-.5" />
+            <path d="M19 6.3a9 9 0 0 1 1.8 3.9 2 2 0 0 1 0 3.6 9 9 0 0 1-17.6 0 2 2 0 0 1 0-3.6A9 9 0 0 1 12 3c2 0 3.5 1.1 3.5 2.5s-.9 2.5-2 2.5c-.8 0-1.5-.4-1.5-1" />
           </svg>
         </span>
         <p class="text-[32px] font-semibold">Kids' Corner isn't set up for anyone yet</p>
@@ -195,7 +213,13 @@ useNightPeekTaps()
         <div :id="PANEL_ID" role="tabpanel" :aria-labelledby="tabId(tab)" class="min-h-0">
           <PictureSchedule v-if="tab === 'schedule'" :model="schedule" @complete="completeStep" />
           <VisualTimer v-else-if="tab === 'timer'" :timer="timer" />
-          <StickerChart v-else-if="stickerGrid" :grid="stickerGrid" />
+          <StickerChart v-else-if="tab === 'stickers' && stickerGrid" :grid="stickerGrid" />
+          <template v-else-if="tab === 'play'">
+            <PlayPicker v-if="game === null" @pick="game = $event" />
+            <FarmSounds v-else-if="game === 'farm'" />
+            <BubblePop v-else-if="game === 'bubbles'" :color="child.color" />
+            <Xylophone v-else />
+          </template>
         </div>
 
         <div role="tablist" aria-label="Kids' Corner sections" class="flex items-center justify-center gap-5 bg-corner-bar">
@@ -210,7 +234,7 @@ useNightPeekTaps()
             :tabindex="tab === t.id ? 0 : -1"
             class="flex size-[88px] flex-col items-center justify-center gap-0.5 rounded-[24px] text-ink-2 focus-visible:outline-4 focus-visible:outline-offset-2 focus-visible:outline-ink-2"
             :class="tab === t.id ? 'bg-corner-tile' : 'bg-transparent'"
-            @click="tab = t.id"
+            @click="selectTab(t.id)"
             @keydown="onTabKeydown($event, i)"
           >
             <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -233,6 +257,19 @@ useNightPeekTaps()
           <RAvatar :name="child.name" :color="child.color" :size="72" />
         </span>
       </div>
+
+      <button
+        v-if="child !== null && tab === 'play' && game !== null"
+        type="button"
+        aria-label="Back to games"
+        class="absolute left-1/2 top-5 z-[5] flex size-[72px] -translate-x-1/2 items-center justify-center rounded-full bg-corner-tile text-ink-2 focus-visible:outline-4 focus-visible:outline-offset-2 focus-visible:outline-ink-2"
+        style="box-shadow: 0 10px 24px rgba(90, 70, 54, 0.15)"
+        @click="game = null"
+      >
+        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M15 5l-7 7 7 7" />
+        </svg>
+      </button>
 
       <!-- Adults only: hold 2 s, then PIN. Small and quiet in the corner so it doesn't invite a toddler.
            (Positioned by a wrapper: RLongPress is position: relative itself, for its fill ring.) -->

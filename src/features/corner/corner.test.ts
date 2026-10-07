@@ -12,6 +12,7 @@ import { useHouseholdStore } from '@/stores/householdStore'
 import { useLogStore } from '@/stores/logStore'
 import * as sound from '@/ui/sound'
 import { EXIT_PATTERN_RNG, seededRng } from './cornerExit'
+import { XYLOPHONE_BARS } from './games/xylophone'
 import KidsCorner from './KidsCorner.vue'
 
 vi.mock('@/data/householdSource', async () => {
@@ -121,6 +122,10 @@ describe("Kids' Corner (demo source)", () => {
       },
     )
     vi.spyOn(sound, 'playChime').mockImplementation(() => {})
+    vi.spyOn(sound, 'playNote').mockImplementation(() => {})
+    vi.spyOn(sound, 'playPop').mockImplementation(() => {})
+    vi.spyOn(sound, 'playClip').mockResolvedValue(true)
+    vi.spyOn(sound, 'preloadClip').mockResolvedValue(null)
     pinia = createPinia()
     setActivePinia(pinia)
   })
@@ -244,18 +249,18 @@ describe("Kids' Corner (demo source)", () => {
       expect(list.element.tagName).not.toBe('NAV')
       expect(list.attributes('aria-label')).toBe("Kids' Corner sections")
       const tabs = list.findAll('[role="tab"]')
-      expect(tabs.map((t) => t.text())).toEqual(['Schedule', 'Timer', 'Stickers'])
+      expect(tabs.map((t) => t.text())).toEqual(['Schedule', 'Timer', 'Stickers', 'Play'])
       const panel = wrapper.get('[role="tabpanel"]')
       for (const t of tabs) expect(t.attributes('aria-controls')).toBe(panel.attributes('id'))
-      expect(tabs.map((t) => t.attributes('aria-selected'))).toEqual(['true', 'false', 'false'])
-      expect(tabs.map((t) => t.attributes('tabindex'))).toEqual(['0', '-1', '-1'])
+      expect(tabs.map((t) => t.attributes('aria-selected'))).toEqual(['true', 'false', 'false', 'false'])
+      expect(tabs.map((t) => t.attributes('tabindex'))).toEqual(['0', '-1', '-1', '-1'])
       expect(panel.attributes('aria-labelledby')).toBe(tabs[0]!.attributes('id'))
       expect(panel.find('[data-testid="picture-schedule"]').exists()).toBe(true)
 
       await tabs[2]!.trigger('click')
       expect(wrapper.get('[role="tabpanel"]').attributes('aria-labelledby')).toBe(tabs[2]!.attributes('id'))
       expect(wrapper.get('[role="tabpanel"]').find('[data-testid="sticker-chart"]').exists()).toBe(true)
-      expect(tabs.map((t) => t.attributes('tabindex'))).toEqual(['-1', '-1', '0'])
+      expect(tabs.map((t) => t.attributes('tabindex'))).toEqual(['-1', '-1', '0', '-1'])
       wrapper.unmount()
     })
 
@@ -267,12 +272,12 @@ describe("Kids' Corner (demo source)", () => {
       expect(document.activeElement).toBe(tabs()[1]!.element)
 
       await tabs()[1]!.trigger('keydown', { key: 'End' })
-      expect(tabs()[2]!.attributes('aria-selected')).toBe('true')
-      await tabs()[2]!.trigger('keydown', { key: 'ArrowRight' })
+      expect(tabs()[3]!.attributes('aria-selected')).toBe('true')
+      await tabs()[3]!.trigger('keydown', { key: 'ArrowRight' })
       expect(tabs()[0]!.attributes('aria-selected')).toBe('true')
       await tabs()[0]!.trigger('keydown', { key: 'ArrowLeft' })
-      expect(tabs()[2]!.attributes('aria-selected')).toBe('true')
-      await tabs()[2]!.trigger('keydown', { key: 'Home' })
+      expect(tabs()[3]!.attributes('aria-selected')).toBe('true')
+      await tabs()[3]!.trigger('keydown', { key: 'Home' })
       expect(tabs()[0]!.attributes('aria-selected')).toBe('true')
       expect(document.activeElement).toBe(tabs()[0]!.element)
       wrapper.unmount()
@@ -363,6 +368,129 @@ describe("Kids' Corner (demo source)", () => {
       const cell = wrapper.findAll('[data-testid="sticker-row"]')[0]!.findAll('[data-testid="sticker-cell"]')[0]!
       expect(cell.findAll('[data-testid="sticker"]')).toHaveLength(5)
       expect(cell.text()).toContain('+2')
+      wrapper.unmount()
+    })
+  })
+
+  describe('play', () => {
+    const game = (w: VueWrapper, name: string) => {
+      const found = w.findAll('[data-testid="play-game"]').find((g) => g.attributes('aria-label') === name)
+      if (!found) throw new Error(`No game "${name}"`)
+      return found
+    }
+
+    it('offers Farm, Bubbles and Music as picture tiles, with a back button that returns to the menu', async () => {
+      const wrapper = await mountAt('/corner')
+      await tab(wrapper, 'Play').trigger('click')
+      expect(wrapper.find('[data-testid="play-picker"]').exists()).toBe(true)
+      expect(wrapper.findAll('[data-testid="play-game"]').map((g) => g.attributes('aria-label'))).toEqual(['Farm', 'Bubbles', 'Music'])
+      expect(wrapper.find('button[aria-label="Back to games"]').exists()).toBe(false)
+
+      await game(wrapper, 'Farm').trigger('click')
+      expect(wrapper.find('[data-testid="game-farm"]').exists()).toBe(true)
+      await wrapper.get('button[aria-label="Back to games"]').trigger('click')
+      expect(wrapper.find('[data-testid="play-picker"]').exists()).toBe(true)
+      wrapper.unmount()
+    })
+
+    it('tapping the Play tab while in a game goes back to the menu, and leaving the tab forgets the game', async () => {
+      const wrapper = await mountAt('/corner')
+      await tab(wrapper, 'Play').trigger('click')
+      await game(wrapper, 'Music').trigger('click')
+      expect(wrapper.find('[data-testid="game-music"]').exists()).toBe(true)
+      await tab(wrapper, 'Play').trigger('click')
+      expect(wrapper.find('[data-testid="play-picker"]').exists()).toBe(true)
+
+      await game(wrapper, 'Music').trigger('click')
+      await tab(wrapper, 'Timer').trigger('click')
+      await tab(wrapper, 'Play').trigger('click')
+      expect(wrapper.find('[data-testid="play-picker"]').exists()).toBe(true)
+      wrapper.unmount()
+    })
+
+    it('Farm: tapping an animal plays its call, then a recording of its name', async () => {
+      const wrapper = await mountAt('/corner')
+      await tab(wrapper, 'Play').trigger('click')
+      await game(wrapper, 'Farm').trigger('click')
+      const animals = wrapper.findAll('[data-testid="farm-animal"]')
+      expect(animals).toHaveLength(8)
+      // Opening the game preloads every call and every name.
+      expect(sound.preloadClip).toHaveBeenCalledTimes(16)
+      expect(sound.preloadClip).toHaveBeenCalledWith('/sounds/farm/cow.mp3')
+      expect(sound.preloadClip).toHaveBeenCalledWith('/sounds/farm/names/cow.mp3')
+
+      await wrapper.get('[data-testid="farm-animal"][aria-label="Cow"]').trigger('click')
+      expect(sound.playClip).toHaveBeenCalledTimes(1)
+      expect(sound.playClip).toHaveBeenLastCalledWith('/sounds/farm/cow.mp3')
+      await vi.advanceTimersByTimeAsync(150)
+      expect(sound.playClip).toHaveBeenCalledTimes(2)
+      expect(sound.playClip).toHaveBeenLastCalledWith('/sounds/farm/names/cow.mp3')
+      await flushPromises()
+      // The name recording played, so speech synthesis is not needed.
+      expect(speakSpy).not.toHaveBeenCalled()
+      wrapper.unmount()
+    })
+
+    it('Farm: a missing name recording falls back to speech, and a newer tap drops the older animal’s name', async () => {
+      let finishCow: (played: boolean) => void = () => {}
+      vi.mocked(sound.playClip).mockImplementation((url) => {
+        if (url.endsWith('/cow.mp3')) return new Promise<boolean>((resolve) => (finishCow = resolve))
+        if (url.includes('/names/')) return Promise.resolve(false)
+        return Promise.resolve(true)
+      })
+      const wrapper = await mountAt('/corner')
+      await tab(wrapper, 'Play').trigger('click')
+      await game(wrapper, 'Farm').trigger('click')
+
+      await wrapper.get('[data-testid="farm-animal"][aria-label="Cow"]').trigger('click')
+      await wrapper.get('[data-testid="farm-animal"][aria-label="Goat"]').trigger('click')
+      await vi.advanceTimersByTimeAsync(150)
+      await flushPromises()
+      expect(speakSpy.mock.calls.map((c) => (c[0] as { text: string }).text)).toEqual(['Goat'])
+
+      finishCow(true)
+      await vi.advanceTimersByTimeAsync(150)
+      await flushPromises()
+      expect(speakSpy.mock.calls.map((c) => (c[0] as { text: string }).text)).toEqual(['Goat'])
+      wrapper.unmount()
+    })
+
+    it('Music: eight bars in a pentatonic scale, each striking its note', async () => {
+      const wrapper = await mountAt('/corner')
+      await tab(wrapper, 'Play').trigger('click')
+      await game(wrapper, 'Music').trigger('click')
+      const bars = wrapper.findAll('[data-testid="xylophone-bar"]')
+      expect(bars).toHaveLength(8)
+      await bars[0]!.trigger('pointerdown')
+      expect(sound.playNote).toHaveBeenLastCalledWith(523.25)
+      await bars[7]!.trigger('pointerdown')
+      expect(sound.playNote).toHaveBeenLastCalledWith(1318.51)
+      expect(XYLOPHONE_BARS.map((b) => b.note)).toEqual(['C5', 'D5', 'E5', 'G5', 'A5', 'C6', 'D6', 'E6'])
+      wrapper.unmount()
+    })
+
+    it('Bubbles: six bubbles in the child’s colour; popping one plinks and a new one replaces it', async () => {
+      const wrapper = await mountAt('/corner')
+      await tab(wrapper, 'Play').trigger('click')
+      await game(wrapper, 'Bubbles').trigger('click')
+      const bubbles = () => wrapper.findAll('[data-testid="bubble"]')
+      expect(bubbles()).toHaveLength(6)
+      const ivyColor = getDemoSnapshot(new Date()).children.find((c) => c.id === IVY)!.color
+      expect(bubbles()[0]!.attributes('style')).toContain(`--bubble-color: ${ivyColor}`)
+
+      const first = bubbles()[0]!
+      const firstKeyPos = first.attributes('style')
+      await first.trigger('pointerdown')
+      expect(sound.playPop).toHaveBeenCalledTimes(1)
+      expect(first.classes()).toContain('bubble--pop')
+      // A second tap on a popping bubble is ignored.
+      await first.trigger('pointerdown')
+      expect(sound.playPop).toHaveBeenCalledTimes(1)
+
+      await vi.advanceTimersByTimeAsync(250)
+      expect(bubbles()).toHaveLength(6)
+      expect(bubbles().some((b) => b.classes().includes('bubble--pop'))).toBe(false)
+      expect(bubbles()[0]!.attributes('style')).not.toBe(firstKeyPos)
       wrapper.unmount()
     })
   })

@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "roost-demo",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-lc", "source ~/.nvm/nvm.sh && nvm use 22 >/dev/null && VITE_DATA_SOURCE=demo pnpm vite --port 5179 --strictPort"],
+      "port": 5179
+    }
+  ]
+}
