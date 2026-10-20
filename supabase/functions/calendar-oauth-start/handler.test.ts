@@ -62,14 +62,23 @@ describe('calendar-oauth-start handler', () => {
     expect(url).not.toContain(stored.codeVerifier)
   })
 
-  it('returns the Microsoft consent URL with a fresh state each time', async () => {
+  it('uses a fresh state for every attempt', async () => {
     const d = deps()
-    const first = (await (await createOAuthStartHandler(d)(post({ householdId: HOUSEHOLD, provider: 'microsoft' }))).json()) as { url: string }
-    const second = (await (await createOAuthStartHandler(d)(post({ householdId: HOUSEHOLD, provider: 'microsoft' }))).json()) as { url: string }
-    const params = new URL(first.url).searchParams
-    expect(first.url.startsWith('https://login.microsoftonline.com/common/oauth2/v2.0/authorize?')).toBe(true)
-    expect(params.get('scope')).toBe('openid email profile offline_access Calendars.ReadWrite')
-    expect(new URL(second.url).searchParams.get('state')).not.toBe(params.get('state'))
+    const first = (await (await createOAuthStartHandler(d)(post({ householdId: HOUSEHOLD, provider: 'google' }))).json()) as { url: string }
+    const second = (await (await createOAuthStartHandler(d)(post({ householdId: HOUSEHOLD, provider: 'google' }))).json()) as { url: string }
+    const state = new URL(first.url).searchParams.get('state')
+    expect(state).not.toBeNull()
+    expect(new URL(second.url).searchParams.get('state')).not.toBe(state)
+  })
+
+  it('refuses a provider this build does not offer, with its client configured and before checking the caller', async () => {
+    const d = deps()
+    const res = await createOAuthStartHandler(d)(post({ householdId: HOUSEHOLD, provider: 'microsoft' }))
+    expect(res.status).toBe(400)
+    // Not `not_configured`: that would read as "set up the credentials and it will work".
+    expect(await res.json()).toEqual({ error: 'provider_not_supported' })
+    expect(d.requireFullSignInAdult).not.toHaveBeenCalled()
+    expect(d.createState).not.toHaveBeenCalled()
   })
 
   it('answers not_configured (200) without storing a state when the provider has no client', async () => {

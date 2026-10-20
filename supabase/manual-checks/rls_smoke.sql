@@ -2752,7 +2752,9 @@ select pg_temp.expect('an attempt stores only the hash, the id+name calendar lis
   from public.calendar_oauth_attempts where id = :'attempt_one')
   and (select decrypted_secret = 'refresh-attempt-1' from vault.decrypted_secrets where id = :'attempt_secret'));
 set local role service_role;
-select pg_temp.expect('peek returns the household without consuming', public.svc_peek_calendar_oauth_attempt(repeat('1', 64)) = :'household_f'::uuid);
+-- The provider comes back too, so calendar-oauth-finish can refuse one this build has switched off (migration 21).
+select pg_temp.expect('peek returns the household and the provider without consuming', (
+  select household_id = :'household_f'::uuid and provider = 'google' from public.svc_peek_calendar_oauth_attempt(repeat('1', 64))));
 select pg_temp.expect('another member (a caregiver of the household) finishing it is forbidden', (
   select outcome = 'forbidden' and connection_id is null from public.svc_finish_calendar_oauth_attempt(repeat('1', 64), pg_temp.v('membership_g'))));
 select pg_temp.expect('another household''s member finishing it is forbidden', (

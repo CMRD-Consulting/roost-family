@@ -7,14 +7,14 @@
  * stored, §11.2), so a failed refresh or a remount keeps showing it with its `updatedAt`.
  *
  * Calendar settings: an adult lists their own connections (explicit columns: the Vault secret id and external calendar
- * ids are not readable), connects a calendar link or starts Google / Microsoft OAuth through the Edge Functions, shows
+ * ids are not readable), connects a calendar link or starts Google OAuth through the Edge Functions, shows
  * / assigns calendars and disconnects through RPCs. OAuth always returns to Manage household
  * (`/manage?calendar=pending&attempt=…`), where the signed-in adult finishes the attempt (`finishOAuth`).
  *
  * The three changes come in two forms, one per surface (spec §6.3): in a browser at `/manage` the adult's own
  * email-code sign-in authorises them; on a display the `…WithPin` calls run on the display's own client and carry the
  * Settings PIN, which the server checks again on every call. Reading is the same either way — a display may read its
- * household's connections. Google and Microsoft still connect only from `/manage`.
+ * household's connections. Google still connects only from `/manage`.
  */
 import { computed, getCurrentScope, onScopeDispose, ref, shallowRef, watch, type Ref } from 'vue'
 import { msUntilNextHouseholdMidnight } from '@/composables/householdMidnight'
@@ -427,6 +427,10 @@ export function useTodayEvents(optionsRef: TodayEventsOptions): TodayEventsState
 
 // ─── Calendar settings ─────────────────────────────────────────────────────
 
+/**
+ * Microsoft is switched off (`CALENDAR_PROVIDERS` in supabase/functions/_shared/oauthProviders.ts): nothing
+ * connects one any more, but a connection made before that is still listed and still read, so it stays in the union.
+ */
 export type CalendarProvider = 'ics' | 'google' | 'microsoft'
 export type Assignee = { type: 'member' | 'child'; id: string }
 
@@ -500,7 +504,7 @@ export interface CalendarSettingsApi {
     url: string,
   ): Promise<{ connectionId: string; selectionId: string; name: string; alreadyConnected: boolean }>
   /** The provider's consent page (the browser comes back to /manage), or not configured on this server. */
-  startOAuth(client: AdultClient, householdId: string, provider: 'google' | 'microsoft'): Promise<{ url: string } | { notConfigured: true }>
+  startOAuth(client: AdultClient, householdId: string, provider: 'google'): Promise<{ url: string } | { notConfigured: true }>
   /** Creates the connection for a returned OAuth attempt, as the adult who started it. */
   finishOAuth(client: AdultClient, attempt: string): Promise<{ connectionId: string; calendars: number; label: string }>
   setSelection(client: AdultClient, selectionId: string, visible: boolean, assignee: Assignee | null): Promise<void>
@@ -790,7 +794,7 @@ export function createCalendarSettingsApi(): CalendarSettingsApi {
 }
 
 /**
- * A failed calendar connection or change, worded for the adult. `context`: a calendar link, or Google / Microsoft.
+ * A failed calendar connection or change, worded for the adult. `context`: a calendar link, or a Google account.
  * `authorisedBy` is what the surface used, so a refusal points at the right thing to try again: the email sign-in at
  * /manage, or the Settings PIN on a display.
  */

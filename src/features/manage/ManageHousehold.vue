@@ -11,7 +11,7 @@
  *   When it resolves, the page says the link will be emailed to the signed-in address.
  * - `#calendars` (slot): the calendar settings, shown in My account for adults and above the owner sections for
  *   owners, with the signed-in adult's client, household and membership. Defaults to CalendarsSection.
- * - `?calendar=pending&attempt=…` (a Google / Microsoft connection coming back) is finished for the signed-in adult
+ * - `?calendar=pending&attempt=…` (a Google connection coming back) is finished for the signed-in adult
  *   (useCalendarAttempt); `?calendar=connected` / `?calendar=error&reason=…` show a dismissible banner once signed in.
  */
 import { computed, nextTick, onMounted, ref, useTemplateRef, watch } from 'vue'

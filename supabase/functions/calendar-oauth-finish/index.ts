@@ -1,6 +1,6 @@
 /**
- * `calendar-oauth-finish` Edge Function (spec §5.5, §6.3): the signed-in adult who started a Google or Microsoft
- * connection finishes it, binding the consent to their own membership. See handler.ts for the contract.
+ * `calendar-oauth-finish` Edge Function (spec §5.5, §6.3): the signed-in adult who started a Google connection
+ * finishes it, binding the consent to their own membership. See handler.ts for the contract.
  */
 import { callerAuth, svc } from '../_shared/calendarDeno.ts'
 import { createOAuthFinishHandler, type FinishOutcome } from './handler.ts'
@@ -14,8 +14,11 @@ interface FinishRow {
 
 const handler = createOAuthFinishHandler({
   peekAttempt: async (attemptHash) => {
-    const householdId = await svc<string | null>('svc_peek_calendar_oauth_attempt', { p_attempt_hash: attemptHash })
-    return householdId ? { householdId } : null
+    const rows = await svc<Array<{ household_id: string; provider: string }> | null>('svc_peek_calendar_oauth_attempt', {
+      p_attempt_hash: attemptHash,
+    })
+    const row = rows?.[0]
+    return row ? { householdId: row.household_id, provider: row.provider } : null
   },
   requireFullSignInAdult: (req, householdId) => callerAuth.requireFullSignInAdult(req, householdId),
   finishAttempt: async (attemptHash, membershipId): Promise<FinishOutcome> => {

@@ -8,6 +8,10 @@
  *   400 { error: 'invalid_request' }   no attempt token of the right shape
  *   404 { error: 'invalid_attempt' }   unknown or already finished
  *   410 { error: 'expired' }           older than 15 minutes (it is deleted)
+ *   403 { error: 'provider_not_supported' }
+ *                                      the attempt names a provider this build does not offer (`CALENDAR_PROVIDERS`:
+ *                                      Microsoft is switched off). The callback refuses those before parking one, so
+ *                                      this is the backstop for a row made before the switch.
  *   403 { error: 'forbidden' }         the caller is not a full sign-in adult of the attempt's household, or is not
  *                                      the adult who started it (401 when there is no usable JWT)
  *   500 { error: 'internal' }
@@ -20,6 +24,7 @@
  */
 import { AuthError } from '../_shared/auth.ts'
 import { jsonResponse, preflight, readJsonObject } from '../_shared/http.ts'
+import { calendarProviderEnabled } from '../_shared/oauthProviders.ts'
 import { sha256Hex } from '../_shared/pkce.ts'
 
 const METHODS = 'POST'
@@ -30,8 +35,11 @@ export type FinishOutcome =
   | { outcome: 'invalid_attempt' | 'expired' | 'forbidden' }
 
 export interface OAuthFinishDeps {
-  /** The household of the attempt with this hash (expired or not), without consuming it; null when there is none. */
-  peekAttempt(attemptHash: string): Promise<{ householdId: string } | null>
+  /**
+   * The household and provider of the attempt with this hash (expired or not), without consuming it; null when
+   * there is none. The provider decides whether this build still offers it (`CALENDAR_PROVIDERS`).
+   */
+  peekAttempt(attemptHash: string): Promise<{ householdId: string; provider: string } | null>
   /** The caller's membership id when they are a full sign-in owner or adult; throws AuthError otherwise. */
   requireFullSignInAdult(req: Request, householdId: string): Promise<string>
   /**
@@ -55,6 +63,9 @@ export function createOAuthFinishHandler(deps: OAuthFinishDeps): (req: Request) 
       const attemptHash = await sha256Hex(token)
       const pending = await deps.peekAttempt(attemptHash)
       if (!pending) return json(404, { error: 'invalid_attempt' })
+      // A provider this build has switched off (`CALENDAR_PROVIDERS`) is never connected, whoever asks. The attempt
+      // is left in place to expire on its own rather than consumed, exactly as a mismatched caller's is.
+      if (!calendarProviderEnabled(pending.provider)) return json(403, { error: 'provider_not_supported' })
       const membershipId = await deps.requireFullSignInAdult(req, pending.householdId)
 
       const result = await deps.finishAttempt(attemptHash, membershipId)

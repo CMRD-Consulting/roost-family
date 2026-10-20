@@ -35,7 +35,7 @@ export const allowPrivateHosts = config.allowPrivateHosts
 /** Where the OAuth flow returns the browser (`APP_URL`); null outside a local stack when unset. */
 export const appUrl = config.appUrl
 
-/** The OAuth redirect URI registered with Google and Microsoft. */
+/** The OAuth redirect URI registered with Google. */
 export const oauthRedirectUri = config.oauthRedirectUri
 
 /** HMAC-SHA256 hex under `CALENDAR_FINGERPRINT_KEY`; null when the key is not configured. */

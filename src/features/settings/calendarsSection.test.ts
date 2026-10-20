@@ -207,8 +207,8 @@ describe('CalendarsSection', () => {
     })
   })
 
-  describe('Google and Microsoft', () => {
-    it('disables a provider that isn’t set up yet', async () => {
+  describe('Google', () => {
+    it('disables Google when it isn’t set up yet', async () => {
       const w = await mountSection()
       await w.get('[data-testid="connect-google"]').trigger('click')
       await flushPromises()
@@ -216,16 +216,27 @@ describe('CalendarsSection', () => {
       const google = w.get('[data-testid="connect-google"]')
       expect(google.text()).toBe('Connect Google — Not set up yet')
       expect(google.attributes('aria-disabled')).toBe('true')
-      expect(w.get('[data-testid="connect-microsoft"]').attributes('aria-disabled')).toBeUndefined()
     })
 
     it('goes to the provider’s consent page', async () => {
-      api.startOAuth.mockResolvedValue({ url: 'https://login.microsoftonline.com/consent?x=1' })
+      api.startOAuth.mockResolvedValue({ url: 'https://accounts.google.com/o/oauth2/v2/auth?x=1' })
       const navigate = vi.fn()
       const w = await mountSection({ navigate })
-      await w.get('[data-testid="connect-microsoft"]').trigger('click')
+      await w.get('[data-testid="connect-google"]').trigger('click')
       await flushPromises()
-      expect(navigate).toHaveBeenCalledWith('https://login.microsoftonline.com/consent?x=1')
+      expect(navigate).toHaveBeenCalledWith('https://accounts.google.com/o/oauth2/v2/auth?x=1')
+    })
+
+    it('offers no Microsoft account anywhere, on either surface', async () => {
+      for (const surface of ['browser', 'display'] as const) {
+        const w = await mountSection({ surface })
+        expect(w.find('[data-testid="connect-microsoft"]').exists()).toBe(false)
+        // Nothing in the section invites an Outlook or Microsoft *account*. The one remaining mention is where to
+        // find an Outlook calendar's ICS link, which Roost does support.
+        expect(w.text()).not.toContain('Connect Microsoft')
+        expect(w.text()).not.toContain('Microsoft')
+        w.unmount()
+      }
     })
 
     it('says when there were too many connection attempts, keeping focus on the button', async () => {
@@ -251,11 +262,10 @@ describe('CalendarsSection', () => {
       expect(api.startOAuth).toHaveBeenCalledTimes(1)
     })
 
-    it('on a display, keeps them disabled and points to Manage household', async () => {
+    it('on a display, keeps it disabled and points to Manage household', async () => {
       const w = await mountSection({ surface: 'display' })
       expect(w.get('[data-testid="connect-google"]').attributes('disabled')).toBeDefined()
-      expect(w.get('[data-testid="connect-microsoft"]').attributes('disabled')).toBeDefined()
-      expect(w.text()).toContain('Connect Google or Microsoft from Manage household on your phone or computer: roost.cmrd.dev/manage')
+      expect(w.text()).toContain('Connect Google from Manage household on your phone or computer: roost.cmrd.dev/manage')
       await w.get('[data-testid="connect-google"]').trigger('click')
       expect(api.startOAuth).not.toHaveBeenCalled()
     })

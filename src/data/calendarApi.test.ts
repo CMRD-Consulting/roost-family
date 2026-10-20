@@ -555,7 +555,7 @@ describe('createCalendarSettingsApi', () => {
     await expect(api.startOAuth(fakeClient(invoke), HOUSEHOLD, 'google')).resolves.toEqual({ notConfigured: true })
     expect(invoke).toHaveBeenCalledWith('calendar-oauth-start', { body: { householdId: HOUSEHOLD, provider: 'google', returnTo: 'manage' }, timeout: 20_000 })
     invoke.mockResolvedValue({ data: { url: 'https://accounts.example/consent' }, error: null })
-    await expect(api.startOAuth(fakeClient(invoke), HOUSEHOLD, 'microsoft')).resolves.toEqual({ url: 'https://accounts.example/consent' })
+    await expect(api.startOAuth(fakeClient(invoke), HOUSEHOLD, 'google')).resolves.toEqual({ url: 'https://accounts.example/consent' })
     invoke.mockResolvedValue({ data: null, error: httpError(429, { error: 'rate_limited' }) })
     await expect(api.startOAuth(fakeClient(invoke), HOUSEHOLD, 'google')).rejects.toMatchObject({ code: 'rate_limited' })
   })

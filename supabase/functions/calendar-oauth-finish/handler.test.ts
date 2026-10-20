@@ -14,6 +14,7 @@ interface StoredAttempt {
   membershipId: string
   expired: boolean
   calendars: number
+  provider?: string
 }
 
 /** An in-memory stand-in with the same rules as private.finish_calendar_oauth_attempt. */
@@ -23,7 +24,9 @@ function fakeAttempts(initial: Record<string, StoredAttempt>) {
   return {
     rows,
     connections,
-    peekAttempt: vi.fn(async (hash: string) => (rows.has(hash) ? { householdId: rows.get(hash)!.householdId } : null)),
+    peekAttempt: vi.fn(async (hash: string) =>
+      rows.has(hash) ? { householdId: rows.get(hash)!.householdId, provider: rows.get(hash)!.provider ?? 'google' } : null,
+    ),
     finishAttempt: vi.fn(async (hash: string, membershipId: string): Promise<FinishOutcome> => {
       const row = rows.get(hash)
       if (!row) return { outcome: 'invalid_attempt' }
@@ -87,6 +90,20 @@ describe('calendar-oauth-finish handler', () => {
     expect(store.connections).toEqual([])
   })
 
+  it('refuses an attempt for a provider this build does not offer, without consuming it', async () => {
+    const token = randomUrlToken()
+    const hash = await sha256Hex(token)
+    const store = fakeAttempts({
+      [hash]: { householdId: VICTIM_HOUSEHOLD, membershipId: VICTIM, expired: false, calendars: 1, provider: 'microsoft' },
+    })
+    const requireFullSignInAdult = signedInAs({ [VICTIM_HOUSEHOLD]: VICTIM })
+    const res = await call({ ...store, requireFullSignInAdult }, { attempt: token })
+    expect(res).toMatchObject({ status: 403, body: { error: 'provider_not_supported' } })
+    expect(requireFullSignInAdult).not.toHaveBeenCalled()
+    expect(store.finishAttempt).not.toHaveBeenCalled()
+    expect(store.connections).toEqual([])
+  })
+
   it('refuses a replayed attempt', async () => {
     const token = randomUrlToken()
     const store = fakeAttempts({ [await sha256Hex(token)]: { householdId: VICTIM_HOUSEHOLD, membershipId: VICTIM, expired: false, calendars: 1 } })
@@ -99,7 +116,7 @@ describe('calendar-oauth-finish handler', () => {
   it('reports a race where the attempt disappears between the check and the finish as invalid_attempt', async () => {
     const token = randomUrlToken()
     const store = fakeAttempts({})
-    store.peekAttempt.mockResolvedValueOnce({ householdId: VICTIM_HOUSEHOLD })
+    store.peekAttempt.mockResolvedValueOnce({ householdId: VICTIM_HOUSEHOLD, provider: 'google' })
     const res = await call({ ...store, requireFullSignInAdult: signedInAs({ [VICTIM_HOUSEHOLD]: VICTIM }) }, { attempt: token })
     expect(res).toMatchObject({ status: 404, body: { error: 'invalid_attempt' } })
   })

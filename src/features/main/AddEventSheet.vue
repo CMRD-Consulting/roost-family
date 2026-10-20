@@ -1,8 +1,8 @@
 <script setup lang="ts">
 /**
  * Add event, from the Today panel (spec §5.5, §7.2, §7.3): an adult puts an event straight into a connected Google
- * or Microsoft calendar. Roost stores nothing (§11.2); the panel shows the new row until the next refresh brings it
- * back from the provider.
+ * calendar. Roost stores nothing (§11.2); the panel shows the new row until the next refresh brings it back from the
+ * provider.
  *
  * It is PIN-authorised, like every other guarded action on the main screen: the same `RPinPad` the dose dialogs use,
  * and the membership and PIN are re-sent with the write, which the server checks again (§6.3). There is no second

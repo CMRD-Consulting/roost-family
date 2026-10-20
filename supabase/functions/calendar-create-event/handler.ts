@@ -22,6 +22,9 @@
  *                                     same way, so ids cannot be probed)
  *   403 { error: 'not_writable' }     an ICS subscription (one-way), or an account connected before Roost asked for
  *                                     write access: it must be connected again to grant it
+ *   403 { error: 'provider_not_supported' }
+ *                                     a connection for a provider this build does not offer (`CALENDAR_PROVIDERS`:
+ *                                     Microsoft is switched off). Its events are still read; only writing is refused
  *   410 { error: 'calendar_gone' }    the provider no longer has that calendar
  *   422 { error: 'auth_expired' }     the account must be connected again
  *   429 { error: 'rate_limited' }     more than 30 events added by this member in the last hour
@@ -37,6 +40,7 @@ import { AuthError } from '../_shared/auth.ts'
 import { CalendarProviderError, type AccessToken, type ConnectionStatus } from '../_shared/calendarProvider.ts'
 import { EventInputError, parseEventDraft, type EventDraft } from '../_shared/eventDraft.ts'
 import { UUID_RE, jsonResponse, preflight, readJsonObject } from '../_shared/http.ts'
+import { calendarProviderEnabled } from '../_shared/oauthProviders.ts'
 
 const METHODS = 'POST'
 
@@ -126,6 +130,9 @@ export function createCreateEventHandler(deps: CreateEventDeps): (req: Request) 
       }
       connectionId = target.connectionId
       if (target.gone) return json(410, { error: 'calendar_gone' })
+      // A connection left over from a provider this build has switched off (`CALENDAR_PROVIDERS`). Its events are
+      // still read by calendar-events, so the calendar does not break — but nothing may be written to it.
+      if (target.provider !== 'ics' && !calendarProviderEnabled(target.provider)) return json(403, { error: 'provider_not_supported' })
       // A subscription link is one-way, and an account connected under the old read-only scopes cannot be written
       // to until its owner connects it again.
       if (target.provider === 'ics' || !target.canWrite) return json(403, { error: 'not_writable' })

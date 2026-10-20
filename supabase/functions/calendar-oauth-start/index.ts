@@ -1,7 +1,10 @@
 /**
- * `calendar-oauth-start` Edge Function (spec §5.5, §6.3): a full sign-in adult begins connecting a Google or Microsoft
- * calendar account. See handler.ts for the contract. Credential-gated: without the provider's client id and secret,
- * APP_URL (outside a local stack) or CALENDAR_FINGERPRINT_KEY it answers `{ error: 'not_configured' }`.
+ * `calendar-oauth-start` Edge Function (spec §5.5, §6.3): a full sign-in adult begins connecting a Google calendar
+ * account. See handler.ts for the contract. Credential-gated: without the provider's client id and secret, APP_URL
+ * (outside a local stack) or CALENDAR_FINGERPRINT_KEY it answers `{ error: 'not_configured' }`.
+ *
+ * Microsoft is switched off (`CALENDAR_PROVIDERS`) and refused outright by the handler; its client stays wired below
+ * so turning it back on needs no change here.
  */
 import { appUrl, callerAuth, fingerprint, oauthClient, oauthRedirectUri, svc } from '../_shared/calendarDeno.ts'
 import { oauthProviderApi } from '../_shared/oauthProviders.ts'

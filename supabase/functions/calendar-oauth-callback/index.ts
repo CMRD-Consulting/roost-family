@@ -1,5 +1,5 @@
 /**
- * `calendar-oauth-callback` Edge Function (spec §5.5): Google and Microsoft send the browser here after consent. The
+ * `calendar-oauth-callback` Edge Function (spec §5.5): Google sends the browser here after consent. The
  * gateway's JWT check is off (config.toml): the single-use state from calendar-oauth-start identifies the attempt,
  * and the result is only parked as a pending attempt for calendar-oauth-finish. See handler.ts.
  */

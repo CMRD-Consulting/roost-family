@@ -126,17 +126,6 @@ describe('calendar-oauth-callback handler', () => {
     expect(res.headers.get('Location')).not.toMatch(/refresh-1|access-1|auth-code/)
   })
 
-  it('fingerprints Microsoft accounts by oid, and leaves the label empty without an email', async () => {
-    const msFetch = vi.fn(async (url: string) =>
-      url.includes('/oauth2/v2.0/token')
-        ? json(200, { access_token: 'a', refresh_token: 'r', scope: 'Calendars.ReadWrite', id_token: idToken({ oid: 'object-1', sub: 'pairwise-1' }) })
-        : json(200, { value: [{ id: 'cal-1', name: 'Calendar', isDefaultCalendar: true }] }),
-    )
-    const { d, attempts } = deps(attempt({ provider: 'microsoft' }), msFetch)
-    expect(location(await createOAuthCallbackHandler(d)(get('state=s&code=c'))).searchParams.get('calendar')).toBe('pending')
-    expect(attempts[0]).toMatchObject({ provider: 'microsoft', accountLabel: null, secret: 'r', canWrite: true, fingerprint: await hmacSha256Hex(KEY, 'microsoft:object-1') })
-  })
-
   it('records an account that granted only the old read-only scopes as not writable', async () => {
     const { fetch } = googleFetch({ scope: 'openid email https://www.googleapis.com/auth/calendar.readonly' })
     const { d, attempts } = deps(attempt(), fetch)
@@ -144,15 +133,16 @@ describe('calendar-oauth-callback handler', () => {
     expect(attempts[0]!.canWrite).toBe(false)
   })
 
-  it('records a Microsoft account that granted only Calendars.Read as not writable', async () => {
-    const msFetch = vi.fn(async (url: string) =>
-      url.includes('/oauth2/v2.0/token')
-        ? json(200, { access_token: 'a', refresh_token: 'r', scope: 'Calendars.Read', id_token: idToken({ oid: 'object-1' }) })
-        : json(200, { value: [{ id: 'cal-1', name: 'Calendar' }] }),
-    )
-    const { d, attempts } = deps(attempt({ provider: 'microsoft' }), msFetch)
-    expect(location(await createOAuthCallbackHandler(d)(get('state=s&code=c'))).searchParams.get('calendar')).toBe('pending')
-    expect(attempts[0]!.canWrite).toBe(false)
+  it('refuses a state for a provider this build does not offer, consuming it and exchanging nothing', async () => {
+    // The Microsoft mapping itself still works (see _shared/microsoft.test.ts); it is simply never reached.
+    const msFetch = vi.fn(async () => json(200, {}))
+    const { d, consumed, attempts } = deps(attempt({ provider: 'microsoft' }), msFetch)
+    const to = location(await createOAuthCallbackHandler(d)(get('state=s&code=c')))
+    expect(to.searchParams.get('calendar')).toBe('error')
+    expect(to.searchParams.get('reason')).toBe('provider_not_supported')
+    expect(consumed).toHaveLength(1)
+    expect(msFetch).not.toHaveBeenCalled()
+    expect(attempts).toEqual([])
   })
 
   it('refuses a missing, unknown or used state before any provider call', async () => {

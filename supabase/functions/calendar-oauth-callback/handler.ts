@@ -14,6 +14,7 @@
  *   ?calendar=pending&attempt=<token>   the token (32 random bytes, base64url) goes to calendar-oauth-finish; only its
  *                                       SHA-256 is stored
  *   ?calendar=error&reason=<reason>     invalid_state (none, unknown or used), expired (older than 10 minutes),
+ *                                       provider_not_supported (a provider this build has switched off),
  *                                       access_denied, provider_error (any other provider error, no code, or no
  *                                       account id), not_configured, exchange_failed, no_refresh_token, list_failed,
  *                                       forbidden (the member may no longer connect calendars), internal
@@ -21,7 +22,7 @@
  * appear in redirects or logs.
  */
 import type { CalendarProviderError } from '../_shared/calendarProvider.ts'
-import type { OAuthClient, OAuthProvider, OAuthProviderApi } from '../_shared/oauthProviders.ts'
+import { calendarProviderEnabled, type OAuthClient, type OAuthProvider, type OAuthProviderApi } from '../_shared/oauthProviders.ts'
 import { randomUrlToken, sha256Hex } from '../_shared/pkce.ts'
 
 export interface ConsumedState {
@@ -93,6 +94,10 @@ export function createOAuthCallbackHandler(deps: OAuthCallbackDeps): (req: Reque
       const attempt = await deps.consumeState(await sha256Hex(state))
       if (!attempt) return fail('invalid_state')
       if (attempt.expired) return fail('expired')
+      // A provider this build has switched off (`CALENDAR_PROVIDERS`). The state has already been consumed, so
+      // nothing is exchanged and nothing is parked: this function is the only writer of pending attempts, which is
+      // why no switched-off attempt can exist for calendar-oauth-finish to find.
+      if (!calendarProviderEnabled(attempt.provider)) return fail('provider_not_supported')
 
       const providerError = params.get('error')
       if (providerError) return fail(providerError === 'access_denied' ? 'access_denied' : 'provider_error')

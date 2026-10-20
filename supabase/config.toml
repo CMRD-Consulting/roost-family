@@ -409,22 +409,22 @@ verify_jwt = true
 [functions.calendar-events]
 verify_jwt = true
 
-# Adding one event to a connected Google / Microsoft calendar (spec §5.5, §6.3, §7.2). Callers must send a valid JWT;
+# Adding one event to a connected Google calendar (spec §5.5, §6.3, §7.2). Callers must send a valid JWT;
 # the function requires a full sign-in adult, or a display with the Settings PIN, who owns a writable connection.
 [functions.calendar-create-event]
 verify_jwt = true
 
-# Google / Microsoft calendar consent start (spec §5.5, §6.3). Callers must send a valid JWT; the function requires a
+# Google calendar consent start (spec §5.5, §6.3). Callers must send a valid JWT; the function requires a
 # full sign-in adult.
 [functions.calendar-oauth-start]
 verify_jwt = true
 
-# Google / Microsoft calendar consent callback. The browser arrives from the provider without a Supabase JWT, so the
+# Google calendar consent callback. The browser arrives from the provider without a Supabase JWT, so the
 # gateway's JWT check is off; the single-use, hashed OAuth state identifies the attempt, which is only parked as pending.
 [functions.calendar-oauth-callback]
 verify_jwt = false
 
-# Finishes a pending Google / Microsoft connection. Callers must send a valid JWT; the function requires the full
+# Finishes a pending Google connection. Callers must send a valid JWT; the function requires the full
 # sign-in adult who started the attempt.
 [functions.calendar-oauth-finish]
 verify_jwt = true

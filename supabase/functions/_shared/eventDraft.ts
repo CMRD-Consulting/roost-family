@@ -1,7 +1,7 @@
 /**
  * The one event an adult is adding, checked and normalised before any provider sees it (spec §5.5, §7.2).
  *
- * Roost writes the event to the connected Google or Microsoft calendar and stores nothing (§11.2), so this module is
+ * Roost writes the event to the connected Google calendar and stores nothing (§11.2), so this module is
  * the only validation there is: it decides what a title, a location and a pair of times may be, and turns both
  * shapes — a timed event given as two instants, an all-day event given as two household dates — into one draft
  * carrying both readings, which the provider modules then render their own way.

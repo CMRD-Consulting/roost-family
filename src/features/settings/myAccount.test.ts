@@ -197,7 +197,7 @@ describe('MyAccountSection', () => {
     w.unmount()
   })
 
-  it('shows my calendars straight away on the Settings PIN, with no sign-in and no Google or Microsoft', async () => {
+  it('shows my calendars straight away on the Settings PIN, with no sign-in and no Google connecting', async () => {
     const w = await mountAs(SAM, '1234')
 
     const section = w.get('[data-testid="calendars-section"]')

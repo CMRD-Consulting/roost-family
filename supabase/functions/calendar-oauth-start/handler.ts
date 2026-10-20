@@ -1,12 +1,16 @@
 /**
  * HTTP handling for `calendar-oauth-start`, kept free of Deno and Supabase so Vitest can exercise it.
  *
- * POST { householdId, provider: 'google' | 'microsoft' } with a full sign-in adult's JWT. A `returnTo` field is still
- * accepted for compatibility but ignored: the flow always returns to /manage (the tablet does not do OAuth).
+ * POST { householdId, provider: 'google' } with a full sign-in adult's JWT. A `returnTo` field is still accepted for
+ * compatibility but ignored: the flow always returns to /manage (the tablet does not do OAuth).
  *   200 { url }                       open this URL in the browser (the provider's consent page)
  *   200 { error: 'not_configured' }   the provider's client id/secret, APP_URL or CALENDAR_FINGERPRINT_KEY is not set.
  *                                     Deliberately a 200: it describes what the server offers rather than a failure,
  *                                     so the UI can read it from `functions.invoke`'s `data` and disable the button.
+ *   400 { error: 'provider_not_supported' }
+ *                                     a provider Roost has code for but this build does not offer
+ *                                     (`CALENDAR_PROVIDERS`: Microsoft is switched off). Not `not_configured`, which
+ *                                     would read as "set the credentials and it will work".
  *   400 { error: 'invalid_request' }  401/403 { error: 'forbidden' }
  *   429 { error: 'rate_limited' }     the member already has 5 unexpired attempts
  *   500 { error: 'internal' }
@@ -17,7 +21,7 @@
  */
 import { AuthError } from '../_shared/auth.ts'
 import { UUID_RE, jsonResponse, preflight, readJsonObject } from '../_shared/http.ts'
-import type { OAuthClient, OAuthProvider, OAuthProviderApi } from '../_shared/oauthProviders.ts'
+import { calendarProviderEnabled, isOAuthProvider, type OAuthClient, type OAuthProvider, type OAuthProviderApi } from '../_shared/oauthProviders.ts'
 import { randomUrlToken, s256Challenge, sha256Hex } from '../_shared/pkce.ts'
 
 const METHODS = 'POST'
@@ -44,9 +48,12 @@ export function createOAuthStartHandler(deps: OAuthStartDeps): (req: Request) =>
     const body = await readJsonObject(req)
     const householdId = body?.householdId
     const provider = body?.provider
-    if (typeof householdId !== 'string' || !UUID_RE.test(householdId) || (provider !== 'google' && provider !== 'microsoft')) {
+    if (typeof householdId !== 'string' || !UUID_RE.test(householdId) || !isOAuthProvider(provider)) {
       return json(400, { error: 'invalid_request' })
     }
+    // Before the caller is even checked and before any state exists, so a crafted request cannot begin a flow for
+    // a provider this build has switched off.
+    if (!calendarProviderEnabled(provider)) return json(400, { error: 'provider_not_supported' })
 
     try {
       const membershipId = await deps.requireFullSignInAdult(req, householdId)

@@ -1,7 +1,7 @@
 /**
  * Adding an event (spec §5.5, §7.2): the rules behind the Add event sheet, free of Vue and Supabase.
  *
- * Roost writes the event to a connected Google or Microsoft calendar and stores nothing itself, so the form's job is
+ * Roost writes the event to a connected Google calendar and stores nothing itself, so the form's job is
  * to pick **which** calendar and turn "tomorrow, 4:00 PM, 45 minutes" into the instants the Edge Function takes.
  *
  * Only calendars that can actually show the result are offered: a writable connection that is working (`canWrite`
@@ -92,7 +92,7 @@ export function addEventBlockMessage(block: Exclude<AddEventBlock, null>): strin
     case 'not_shown':
       return 'None of that account’s calendars is shown on the displays yet. Show one in Settings → Calendars, and events can be added to it.'
     default:
-      return 'No calendar here can be added to yet. Calendar links are one-way, so connect Google or Microsoft from Manage household, then show one of its calendars.'
+      return 'No calendar here can be added to yet. Calendar links are one-way, so connect Google from Manage household, then show one of its calendars.'
   }
 }
 

@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from 'vitest'
 import { AuthError } from '../_shared/auth.ts'
 import { CalendarProviderError } from '../_shared/calendarProvider.ts'
 import { createGoogleEvent, refreshGoogleAccessToken } from '../_shared/google.ts'
-import { createMicrosoftEvent, refreshMicrosoftAccessToken } from '../_shared/microsoft.ts'
 import { createCreateEventHandler, type CreateEventDeps, type CreateEventTarget, type EventWriter } from './handler.ts'
 
 const HOUSEHOLD = 'aaaaaaaa-0000-0000-0000-000000000001'
@@ -115,12 +114,14 @@ describe('calendar-create-event handler', () => {
     expect(recorded).toEqual([[MEMBERSHIP, SELECTION]])
   })
 
-  it('writes to Microsoft when the connection is a Microsoft account', async () => {
+  it('refuses a connection for a provider this build does not offer, even with its writer wired up', async () => {
     const google = writer()
     const microsoft = writer()
     const { d } = deps({ load: async () => target({ provider: 'microsoft', externalCalendarId: 'AAMk=' }), writers: { google: google.w, microsoft: microsoft.w } })
-    expect((await call(d, post(event()))).res.status).toBe(200)
-    expect(microsoft.created).toHaveLength(1)
+    const { res, body } = await call(d, post(event()))
+    // Not `not_configured`: the credentials are beside the point, the provider is switched off.
+    expect([res.status, body]).toEqual([403, { error: 'provider_not_supported' }])
+    expect(microsoft.created).toHaveLength(0)
     expect(google.created).toHaveLength(0)
   })
 
@@ -206,7 +207,7 @@ describe('calendar-create-event handler', () => {
 
   // ─── What a connection may do ───────────────────────────────────────────
   it('answers not_writable for an ICS subscription and for a read-only account', async () => {
-    for (const t of [target({ provider: 'ics', canWrite: false }), target({ canWrite: false }), target({ provider: 'microsoft', canWrite: false })]) {
+    for (const t of [target({ provider: 'ics', canWrite: false }), target({ canWrite: false })]) {
       const { d, created } = deps({ load: async () => t })
       const { res, body } = await call(d, post(event()))
       expect(res.status).toBe(403)
@@ -354,25 +355,6 @@ describe('calendar-create-event over the real provider clients', () => {
     expect(calls).toEqual(['https://oauth2.googleapis.com/token'])
   })
 
-  it('posts the event Microsoft Graph expects', async () => {
-    const calls: Array<{ url: string; init?: RequestInit }> = []
-    const fetchImpl = async (url: string, init?: RequestInit) => {
-      calls.push({ url, init })
-      if (url.includes('/oauth2/v2.0/token')) return jsonResponse(200, { access_token: 'fresh', expires_in: 3600 })
-      return jsonResponse(201, { id: 'AAMk=' })
-    }
-    const microsoft: EventWriter = {
-      refresh: (refreshToken, now) => refreshMicrosoftAccessToken(fetchImpl, { clientId: 'cid', clientSecret: 'cs', refreshToken }, now),
-      createEvent: (accessToken, calendarId, draft) => createMicrosoftEvent(fetchImpl, accessToken, calendarId, draft),
-    }
-    const { d } = deps({ load: async () => target({ provider: 'microsoft', externalCalendarId: 'AAMkAGI2=' }), writers: { google: null, microsoft } })
-    expect((await call(d, post(event({ allDay: true, start: '2026-09-15', end: '2026-09-16' })))).res.status).toBe(200)
-    expect(calls[1]!.url).toBe('https://graph.microsoft.com/v1.0/me/calendars/AAMkAGI2%3D/events')
-    expect(JSON.parse(String(calls[1]!.init!.body))).toEqual({
-      subject: 'Swim lesson',
-      isAllDay: true,
-      start: { dateTime: '2026-09-15T00:00:00', timeZone: TZ },
-      end: { dateTime: '2026-09-16T00:00:00', timeZone: TZ },
-    })
-  })
+  // The Microsoft write path is still built and still tested, just never reached from here: see
+  // _shared/microsoft.test.ts for `refreshMicrosoftAccessToken` and `createMicrosoftEvent`.
 })

@@ -2503,7 +2503,10 @@ export type Database = {
       }
       svc_peek_calendar_oauth_attempt: {
         Args: { p_attempt_hash: string }
-        Returns: string
+        Returns: {
+          household_id: string
+          provider: string
+        }[]
       }
       svc_record_calendar_connect_attempt: {
         Args: { p_membership_id: string }

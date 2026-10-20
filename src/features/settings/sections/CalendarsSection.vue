@@ -1,17 +1,21 @@
 <script setup lang="ts">
 /**
  * My calendars (spec §5.5, §7.9, §7.10): one adult's own calendar connections. Connect a calendar link (ICS), connect
- * Google or Microsoft, show each calendar on the displays and choose whose it is (a member or a child: a shown
- * calendar needs exactly one person), and disconnect.
+ * Google, show each calendar on the displays and choose whose it is (a member or a child: a shown calendar needs
+ * exactly one person), and disconnect.
+ *
+ * Google is the only account provider offered. The Microsoft code is written and tested but switched off on the
+ * server too (`CALENDAR_PROVIDERS` in supabase/functions/_shared/oauthProviders.ts), so no button here either.
+ * `PROVIDER_LABEL` still names it, so a connection made before the switch still reads correctly in the list.
  *
  * How the caller is authorised depends on the surface (spec §6.3). Manage household passes its signed-in adult's
  * client and no `pin`. Settings on a display passes the display's own client and the open Settings PIN session, which
  * authorises every change there — no second, email-code sign-in. Reading is the same either way.
  *
- * Google and Microsoft connect only from Manage household (`surface: 'browser'`). The provider sends the browser back
- * to /manage, and a tablet can't finish there: its full sign-in is never persisted, and /settings needs the PIN
- * session, so a full reload after the redirect would land on the main screen. On a display the buttons stay disabled
- * with a note to use Manage household on a phone or computer.
+ * Google connects only from Manage household (`surface: 'browser'`). The provider sends the browser back to /manage,
+ * and a tablet can't finish there: its full sign-in is never persisted, and /settings needs the PIN session, so a
+ * full reload after the redirect would land on the main screen. On a display the button stays disabled with a note
+ * to use Manage household on a phone or computer.
  *
  * While a change is saving, controls are `aria-disabled` (not `disabled`) and ignore input, so the focused switch,
  * person or button keeps focus. After connecting, focus moves to the new connection (or the notice); after
@@ -60,6 +64,7 @@ const emit = defineEmits<{ busy: [boolean] }>()
 const api = props.api ?? createCalendarSettingsApi()
 const navigate = props.navigate ?? ((url: string) => window.location.assign(url))
 
+/** Microsoft is no longer offered, but a connection made before that still has to read correctly here. */
 const PROVIDER_LABEL: Record<MyConnection['provider'], string> = {
   ics: 'Calendar link',
   google: 'Google',
@@ -77,7 +82,7 @@ const notice = ref<string | null>(null)
 
 const icsUrl = ref('')
 const icsError = ref<string | null>(null)
-const notConfigured = ref<Array<'google' | 'microsoft'>>([])
+const notConfigured = ref<Array<'google'>>([])
 /** The calendar being shown that still needs a person. */
 const choosingFor = ref<string | null>(null)
 const confirmDisconnectId = ref<string | null>(null)
@@ -196,7 +201,7 @@ async function connectLink(): Promise<void> {
   await focusAfterChange(listed && !alreadyConnected ? `[data-connection-heading="${CSS.escape(connectionId)}"]` : null)
 }
 
-async function connectProvider(provider: 'google' | 'microsoft'): Promise<void> {
+async function connectProvider(provider: 'google'): Promise<void> {
   if (props.surface !== 'browser' || notConfigured.value.includes(provider)) return
   await act(async () => {
     const result = await api.startOAuth(props.client, props.householdId, provider)
@@ -327,25 +332,23 @@ function statusText(connection: MyConnection): string {
         </form>
       </div>
 
-      <!-- Google and Microsoft -->
+      <!-- Google -->
       <div class="flex flex-col gap-3 rounded-[var(--radius-card)] bg-surface px-6 py-5">
-        <component :is="subTag" class="text-[22px] font-semibold text-ink">Google or Microsoft account</component>
+        <component :is="subTag" class="text-[22px] font-semibold text-ink">Google account</component>
         <div class="flex flex-wrap gap-3">
           <RButton
-            v-for="provider in (['google', 'microsoft'] as const)"
-            :key="provider"
             variant="secondary"
-            :data-testid="`connect-${provider}`"
+            data-testid="connect-google"
             :disabled="surface !== 'browser'"
-            :aria-disabled="surface === 'browser' && (busy || notConfigured.includes(provider)) ? 'true' : undefined"
-            :class="notConfigured.includes(provider) && 'opacity-50 aria-disabled:cursor-not-allowed'"
-            @click="connectProvider(provider)"
+            :aria-disabled="surface === 'browser' && (busy || notConfigured.includes('google')) ? 'true' : undefined"
+            :class="notConfigured.includes('google') && 'opacity-50 aria-disabled:cursor-not-allowed'"
+            @click="connectProvider('google')"
           >
-            {{ provider === 'google' ? 'Connect Google' : 'Connect Microsoft' }}<template v-if="notConfigured.includes(provider)"> — Not set up yet</template>
+            Connect Google<template v-if="notConfigured.includes('google')"> — Not set up yet</template>
           </RButton>
         </div>
         <p v-if="surface !== 'browser'" class="text-[18px] text-ink-2">
-          Connect Google or Microsoft from Manage household on your phone or computer: <strong class="font-semibold">{{ MANAGE_URL }}</strong>
+          Connect Google from Manage household on your phone or computer: <strong class="font-semibold">{{ MANAGE_URL }}</strong>
         </p>
       </div>
 

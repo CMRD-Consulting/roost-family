@@ -4,7 +4,7 @@ import { CalendarError } from '@/data/calendarApi'
 import { SettingsError, type AdultMembershipRow } from '@/data/settingsApi'
 
 export interface CalendarStatus {
-  /** 'pending': a Google / Microsoft attempt came back and is being finished for the signed-in adult. */
+  /** 'pending': a Google attempt came back and is being finished for the signed-in adult. */
   kind: 'pending' | 'connected' | 'error'
   message: string
 }

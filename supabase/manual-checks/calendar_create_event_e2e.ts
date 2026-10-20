@@ -1,7 +1,7 @@
 /**
  * End-to-end check of `calendar-create-event` against the local stack and a stub provider (spec §5.5).
  *
- * Google and Microsoft cannot be reached without real OAuth credentials, so the only thing faked here is the
+ * Google cannot be reached without real OAuth credentials, so the only thing faked here is the
  * provider's *host*: a tiny HTTP server answers the token and `events.insert` endpoints, and the `fetch` handed to
  * `deps.ts` rewrites Google's real URLs to it. Everything else is the real thing — the real handler, the real
  * database wiring, real JWTs from the local auth server, the real `my_calendar_caller` /

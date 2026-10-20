@@ -53,7 +53,7 @@ export interface CalendarAttemptOptions {
 }
 
 /**
- * A Google / Microsoft connection coming back to Manage household (`?calendar=pending&attempt=…`). The adult's sign-in
+ * A Google connection coming back to Manage household (`?calendar=pending&attempt=…`). The adult's sign-in
  * isn't persisted, so the page reloads at the sign-in step: the attempt token is kept in memory and in sessionStorage
  * (surviving another reload), and finished with `calendar-oauth-finish` as soon as an adult is signed in with a
  * household open. The token leaves the URL at once (the address bar, history and error-tracking breadcrumbs never keep
