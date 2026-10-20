@@ -4,12 +4,14 @@ import { flushPromises } from '@vue/test-utils'
 import {
   CALENDAR_REFRESH_MS,
   CalendarError,
+  FUNCTION_TIMEOUT_MS,
   calendarConnectMessage,
   createCalendarSettingsApi,
   demoTodayEvents,
   fetchTodayEventsWith,
   resetTodayEventsForTests,
   useTodayEvents,
+  type TodayEvent,
   type TodayEvents,
 } from './calendarApi'
 import type { RoostClient } from './supabase'
@@ -196,6 +198,51 @@ describe('useTodayEvents', () => {
     expect(fetchEvents).toHaveBeenCalledTimes(2)
   })
 
+  it('shows an event just added until a fresh answer replaces it', async () => {
+    const { today, scope } = setup()
+    await flushPromises()
+    expect(today.result.value?.events.map((e) => e.title)).toEqual(['Event 1'])
+    const added: TodayEvent = {
+      title: 'Swim lesson', startAt: '2026-09-14T20:00:00Z', endAt: '2026-09-14T20:45:00Z', allDay: false,
+      location: null, personType: 'child', personId: 'cccccccc-0000-0000-0000-000000000001', calendarColor: '#D9A441',
+    }
+    const saved = today.addLocal(added)
+    // On screen at once, on top of the answer the panel already had.
+    expect(today.result.value?.events.map((e) => e.title)).toEqual(['Event 1', 'Swim lesson'])
+    await saved
+    // The fresh answer is the provider's own copy, so the local row goes.
+    expect(fetchEvents).toHaveBeenCalledTimes(2)
+    expect(today.result.value?.events.map((e) => e.title)).toEqual(['Event 2'])
+    scope.stop()
+  })
+
+  it('keeps an added event when the refresh after it fails', async () => {
+    const { today, scope } = setup()
+    await flushPromises()
+    fetchEvents.mockRejectedValueOnce(new Error('offline'))
+    await today.addLocal({
+      title: 'Swim lesson', startAt: '2026-09-14T20:00:00Z', endAt: '2026-09-14T20:45:00Z', allDay: false,
+      location: null, personType: 'member', personId: 'bbbbbbbb-0000-0000-0000-000000000001', calendarColor: '#653437',
+    })
+    expect(today.failed.value).toBe(true)
+    expect(today.result.value?.events.map((e) => e.title)).toEqual(['Event 1', 'Swim lesson'])
+    scope.stop()
+  })
+
+  it('never carries an added event over to another household', async () => {
+    const { today, householdId, scope } = setup()
+    await flushPromises()
+    fetchEvents.mockRejectedValueOnce(new Error('offline'))
+    await today.addLocal({
+      title: 'Swim lesson', startAt: '2026-09-14T20:00:00Z', endAt: '2026-09-14T20:45:00Z', allDay: false,
+      location: null, personType: 'member', personId: 'bbbbbbbb-0000-0000-0000-000000000001', calendarColor: '#653437',
+    })
+    expect(today.result.value?.events.map((e) => e.title)).toContain('Swim lesson')
+    householdId.value = 'aaaaaaaa-0000-0000-0000-000000000002'
+    expect(today.result.value).toBeNull()
+    scope.stop()
+  })
+
   it('refreshes when the page becomes visible again', async () => {
     const { scope } = setup()
     await flushPromises()
@@ -360,7 +407,7 @@ describe('createCalendarSettingsApi', () => {
     const order = vi.fn().mockResolvedValue({
       data: [
         {
-          id: 'conn-1', provider: 'ics', label: 'Family', status: 'ok', created_at: '2026-09-01T00:00:00Z',
+          id: 'conn-1', provider: 'ics', label: 'Family', status: 'ok', can_write: false, created_at: '2026-09-01T00:00:00Z',
           calendar_selections: [
             { id: 'sel-2', name: 'B', visible: false, gone: false, assigned_membership_id: null, assigned_child_id: null, created_at: '2026-09-02T00:00:00Z' },
             { id: 'sel-1', name: 'A', visible: true, gone: false, assigned_membership_id: null, assigned_child_id: 'child-1', created_at: '2026-09-01T00:00:00Z' },
@@ -383,13 +430,100 @@ describe('createCalendarSettingsApi', () => {
     expect(eq2).toHaveBeenCalledWith('membership_id', 'member-1')
     expect(rows).toEqual([
       {
-        id: 'conn-1', provider: 'ics', label: 'Family', status: 'ok',
+        id: 'conn-1', provider: 'ics', label: 'Family', status: 'ok', canWrite: false,
         calendars: [
           { id: 'sel-1', name: 'A', visible: true, gone: false, assignee: { type: 'child', id: 'child-1' } },
           { id: 'sel-2', name: 'B', visible: false, gone: false, assignee: null },
         ],
       },
     ])
+  })
+
+  it('lists the whole household’s connections, with whose each is, for Add event', async () => {
+    const order = vi.fn().mockResolvedValue({
+      data: [
+        {
+          membership_id: 'member-1', id: 'conn-1', provider: 'google', label: 'sam@example.com', status: 'ok', can_write: true,
+          created_at: '2026-09-01T00:00:00Z',
+          calendar_selections: [
+            { id: 'sel-1', name: 'Family', visible: true, gone: false, assigned_membership_id: 'member-1', assigned_child_id: null, created_at: '2026-09-01T00:00:00Z' },
+          ],
+        },
+      ],
+      error: null,
+    })
+    const eq = vi.fn(() => ({ order }))
+    const select = vi.fn(() => ({ eq }))
+    const from = vi.fn(() => ({ select }))
+
+    const rows = await api.listHouseholdConnections({ from } as never, HOUSEHOLD)
+    expect((select.mock.calls[0] as unknown as [string])[0]).not.toMatch(/vault_secret_id|external_calendar_id|\*/)
+    expect(eq).toHaveBeenCalledWith('household_id', HOUSEHOLD)
+    // No membership filter: a display reads them all, and only after a PIN are they narrowed to one adult's.
+    expect(rows).toEqual([
+      {
+        membershipId: 'member-1', id: 'conn-1', provider: 'google', label: 'sam@example.com', status: 'ok', canWrite: true,
+        calendars: [{ id: 'sel-1', name: 'Family', visible: true, gone: false, assignee: { type: 'member', id: 'member-1' } }],
+      },
+    ])
+  })
+
+  it('writes an event on an adult’s sign-in, leaving an empty location out', async () => {
+    const invoke = vi.fn().mockResolvedValue({
+      data: {
+        created: true, selectionId: 'sel-1', title: 'Swim lesson', startAt: '2026-09-14T20:00:00.000Z',
+        endAt: '2026-09-14T20:45:00.000Z', allDay: false, location: null,
+      },
+      error: null,
+    })
+    const created = await api.createEvent(fakeClient(invoke), HOUSEHOLD, {
+      selectionId: 'sel-1', title: 'Swim lesson', start: '2026-09-14T20:00:00.000Z', end: '2026-09-14T20:45:00.000Z',
+      allDay: false, location: '   ',
+    })
+    expect(created).toEqual({
+      selectionId: 'sel-1', title: 'Swim lesson', startAt: '2026-09-14T20:00:00.000Z', endAt: '2026-09-14T20:45:00.000Z',
+      allDay: false, location: null,
+    })
+    expect(invoke).toHaveBeenCalledWith('calendar-create-event', {
+      body: {
+        householdId: HOUSEHOLD, selectionId: 'sel-1', title: 'Swim lesson', start: '2026-09-14T20:00:00.000Z',
+        end: '2026-09-14T20:45:00.000Z', allDay: false,
+      },
+      timeout: FUNCTION_TIMEOUT_MS,
+    })
+  })
+
+  it('writes an event from a display with the Settings PIN, and sends the location it was given', async () => {
+    const invoke = vi.fn().mockResolvedValue({
+      data: { created: true, selectionId: 'sel-1', title: 'Dentist', startAt: '2026-09-15T04:00:00.000Z', endAt: '2026-09-16T04:00:00.000Z', allDay: true, location: 'Riverside' },
+      error: null,
+    })
+    await api.createEventWithPin(fakeClient(invoke), HOUSEHOLD, { membershipId: 'member-1', pin: '1234' }, {
+      selectionId: 'sel-1', title: 'Dentist', start: '2026-09-15', end: '2026-09-16', allDay: true, location: 'Riverside',
+    })
+    expect((invoke.mock.calls[0] as unknown as [string, { body: Record<string, unknown> }])[1].body).toEqual({
+      householdId: HOUSEHOLD, selectionId: 'sel-1', title: 'Dentist', start: '2026-09-15', end: '2026-09-16',
+      allDay: true, location: 'Riverside', membershipId: 'member-1', pin: '1234',
+    })
+  })
+
+  it('maps the write’s own failure codes', async () => {
+    for (const code of ['not_writable', 'auth_expired', 'calendar_gone'] as const) {
+      const invoke = vi.fn().mockResolvedValue({
+        data: null,
+        error: { name: 'FunctionsHttpError', context: { status: 403, json: async () => ({ error: code }) } },
+      })
+      await expect(
+        api.createEvent(fakeClient(invoke), HOUSEHOLD, { selectionId: 'sel-1', title: 'x', start: '2026-09-15', end: '2026-09-16', allDay: true }),
+      ).rejects.toMatchObject({ code })
+    }
+  })
+
+  it('refuses an answer that is not a written event', async () => {
+    const invoke = vi.fn().mockResolvedValue({ data: { created: false }, error: null })
+    await expect(
+      api.createEvent(fakeClient(invoke), HOUSEHOLD, { selectionId: 'sel-1', title: 'x', start: '2026-09-15', end: '2026-09-16', allDay: true }),
+    ).rejects.toMatchObject({ code: 'internal' })
   })
 
   it('connects a calendar link and maps function errors to codes', async () => {

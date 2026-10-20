@@ -32,14 +32,17 @@ import type { AdultClient, SettingsAuth } from '@/data/settingsApi'
 import RAvatar from '@/ui/RAvatar.vue'
 import RButton from '@/ui/RButton.vue'
 import RInput from '@/ui/RInput.vue'
+import AddEventForm from './AddEventForm.vue'
 
 const props = withDefaults(
   defineProps<{
     client: AdultClient
     householdId: string
     membershipId: string
-    /** 'display': Settings on a tablet (no OAuth). 'browser': Manage household. */
+    /** 'display': Settings on a tablet (no OAuth, no Add event — the Today panel has it). 'browser': Manage household. */
     surface: 'display' | 'browser'
+    /** The household's IANA zone, which a new event's day and time are read in. */
+    timeZone?: string
     /** The open Settings PIN session on a display, which authorises the changes; null in a browser. */
     pin?: SettingsAuth | null
     headingLevel?: 2 | 3
@@ -49,7 +52,7 @@ const props = withDefaults(
     /** Opens the provider's consent page (tests). */
     navigate?: (url: string) => void
   }>(),
-  { headingLevel: 2, reloadKey: 0, pin: null },
+  { headingLevel: 2, reloadKey: 0, pin: null, timeZone: 'UTC' },
 )
 
 const emit = defineEmits<{ busy: [boolean] }>()
@@ -345,6 +348,17 @@ function statusText(connection: MyConnection): string {
           Connect Google or Microsoft from Manage household on your phone or computer: <strong class="font-semibold">{{ MANAGE_URL }}</strong>
         </p>
       </div>
+
+      <!-- Add an event (spec §5.5). Only in a browser: on a display the Today panel's Add event does this on the
+           Settings PIN, where an adult is already standing at the tablet. -->
+      <AddEventForm
+        v-if="surface === 'browser' && loaded"
+        :connections="connections"
+        :people="people"
+        :time-zone="timeZone"
+        :heading-level="3"
+        :save="(event) => api.createEvent(props.client, props.householdId, event)"
+      />
 
       <!-- My connections -->
       <p v-if="loading && !loaded" role="status" class="text-[20px] text-ink-2">Loading your calendars…</p>

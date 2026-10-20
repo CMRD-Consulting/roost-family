@@ -44,6 +44,8 @@ export interface CalendarsSlotProps {
   client: AdultClient
   householdId: string
   membershipId: string
+  /** The household's IANA zone, which a new event's day and time are read in. */
+  timeZone: string
   role: 'owner' | 'adult' | 'caregiver'
 }
 
@@ -85,7 +87,9 @@ async function dismissCalendarStatus(): Promise<void> {
 const calendarsSlotProps = computed<CalendarsSlotProps | null>(() => {
   const session = adult.value
   const row = selected.value
-  return session && row ? { client: session.client, householdId: row.householdId, membershipId: row.membershipId, role: row.role } : null
+  return session && row
+    ? { client: session.client, householdId: row.householdId, membershipId: row.membershipId, timeZone: row.timeZone, role: row.role }
+    : null
 })
 
 const calendarApi = props.calendarApi ?? createCalendarSettingsApi()
@@ -282,6 +286,7 @@ watch([phase, () => selected.value?.membershipId], async () => {
                 :client="calendarsSlotProps.client"
                 :household-id="calendarsSlotProps.householdId"
                 :membership-id="calendarsSlotProps.membershipId"
+                :time-zone="calendarsSlotProps.timeZone"
                 surface="browser"
                 :heading-level="2"
                 :api="calendarApi"
@@ -324,6 +329,7 @@ watch([phase, () => selected.value?.membershipId], async () => {
                   :client="calendarsSlotProps.client"
                   :household-id="calendarsSlotProps.householdId"
                   :membership-id="calendarsSlotProps.membershipId"
+                  :time-zone="calendarsSlotProps.timeZone"
                   surface="browser"
                   :heading-level="3"
                   :api="calendarApi"

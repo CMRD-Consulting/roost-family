@@ -4,6 +4,10 @@
  * color, and under them — in whatever room today leaves — tomorrow's. Long lists scroll within the panel; titles
  * clamp to two lines. Sitter Mode replaces this panel with Care Info
  * (MainScreen). Events come from `useTodayEvents` (memory only); this component only shows them.
+ *
+ * The heading carries Add event (spec §5.5), which opens the sheet that writes one to a connected calendar. It is
+ * always offered: the sheet is where an adult is told why it cannot be used — a one-way calendar link, an account
+ * that needs reconnecting, or no connection at all — rather than being left with a button that does nothing.
  */
 import { computed, useId } from 'vue'
 import { useNow } from '@/composables/useNow'
@@ -24,6 +28,8 @@ const props = defineProps<{
    *  out so there is only one such line. */
   updatedNote?: string | null
 }>()
+
+const emit = defineEmits<{ add: [] }>()
 
 const ownNow = props.now === undefined ? useNow(60_000) : null
 const headingId = useId()
@@ -47,7 +53,20 @@ const model = computed(() =>
     :aria-labelledby="headingId"
     class="flex min-h-0 flex-1 flex-col gap-3 rounded-[var(--radius-card)] bg-surface px-[26px] py-[22px]"
   >
-    <h2 :id="headingId" class="shrink-0 text-[16px] font-semibold uppercase tracking-[0.1em] text-ink-3">Today</h2>
+    <div class="flex shrink-0 items-center justify-between gap-3">
+      <h2 :id="headingId" class="text-[16px] font-semibold uppercase tracking-[0.1em] text-ink-3">Today</h2>
+      <button
+        type="button"
+        data-testid="add-event"
+        aria-label="Add event"
+        class="-my-2 -mr-2 flex h-[60px] w-[60px] shrink-0 items-center justify-center rounded-2xl bg-surface-2 text-ink focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-ink"
+        @click="emit('add')"
+      >
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true">
+          <path d="M12 5v14M5 12h14" />
+        </svg>
+      </button>
+    </div>
 
     <div class="-mx-2 flex min-h-0 flex-col gap-4 overflow-y-auto px-2">
       <ul v-if="model.rows.length" class="flex shrink-0 flex-col gap-4" aria-label="Today’s events">

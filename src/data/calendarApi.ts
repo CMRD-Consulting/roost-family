@@ -16,7 +16,7 @@
  * Settings PIN, which the server checks again on every call. Reading is the same either way — a display may read its
  * household's connections. Google and Microsoft still connect only from `/manage`.
  */
-import { getCurrentScope, onScopeDispose, ref, shallowRef, watch, type Ref, type ShallowRef } from 'vue'
+import { computed, getCurrentScope, onScopeDispose, ref, shallowRef, watch, type Ref } from 'vue'
 import { msUntilNextHouseholdMidnight } from '@/composables/householdMidnight'
 import { startOfHouseholdDay } from '@/domain/time'
 import { isDemo } from './householdSource'
@@ -77,6 +77,12 @@ export type CalendarErrorCode =
   | 'not_configured'
   | 'network'
   | 'internal'
+  /** The account's grant has run out: it must be connected again (adding an event). */
+  | 'auth_expired'
+  /** The provider no longer has that calendar. */
+  | 'calendar_gone'
+  /** An ICS subscription, or an account connected before Roost asked for write access. */
+  | 'not_writable'
 
 export class CalendarError extends Error {
   constructor(readonly code: CalendarErrorCode) {
@@ -87,7 +93,7 @@ export class CalendarError extends Error {
 
 const KNOWN_CODES = new Set<string>([
   'invalid_request', 'invalid_url', 'forbidden', 'not_found', 'too_large', 'not_a_calendar', 'unreachable', 'invalid_attempt',
-  'expired', 'rate_limited', 'not_configured', 'internal',
+  'expired', 'rate_limited', 'not_configured', 'internal', 'auth_expired', 'calendar_gone', 'not_writable',
 ])
 
 /** A `functions.invoke` error as a CalendarError: the function's `{ error }` code, or `network` when no response came. */
@@ -188,8 +194,23 @@ const DEMO_MEMBER_SAM = 'bbbbbbbb-0000-0000-0000-000000000001'
 const DEMO_CHILD_IVY = 'cccccccc-0000-0000-0000-000000000001'
 const DEMO_CHILD_THEO = 'cccccccc-0000-0000-0000-000000000002'
 
+/**
+ * Events added in the demo, in memory for as long as the page is loaded. The demo has no provider to write to, so
+ * "Add event" puts the event here and the panel reads it back like any other (spec §7.2).
+ */
+const demoAdded: TodayEvent[] = []
+
+export function addDemoEvent(event: TodayEvent): void {
+  demoAdded.push(event)
+}
+
+export function resetDemoEventsForTests(): void {
+  demoAdded.length = 0
+}
+
 /** The demo’s calendar, relative to `now`: an all-day event, an event with a leave-by, two later ones, and a couple
- *  tomorrow morning. Events beyond tomorrow are left out. Colors come from the people (empty `calendarColor`). */
+ *  tomorrow morning, plus anything added in this session. Events beyond tomorrow are left out. Colors come from the
+ *  people (empty `calendarColor`). */
 export function demoTodayEvents(now: Date, timeZone: string): TodayEvents {
   const dayStart = startOfHouseholdDay(now, timeZone)
   const dayEnd = new Date(dayStart.getTime() + 24 * 3_600_000)
@@ -227,7 +248,7 @@ export function demoTodayEvents(now: Date, timeZone: string): TodayEvents {
     tomorrowAt(8.5, 45, 'Dentist', 'child', DEMO_CHILD_THEO, 'Riverside Pediatrics'),
     tomorrowAt(17.5, 60, 'Soccer practice', 'child', DEMO_CHILD_IVY, 'Field 3'),
   )
-  return { events, connections: [], partial: false, updatedAt: now.toISOString(), receivedAt: now.toISOString() }
+  return { events: [...events, ...demoAdded], connections: [], partial: false, updatedAt: now.toISOString(), receivedAt: now.toISOString() }
 }
 
 /** Today's events for a household on this display (loaded lazily so the Supabase client isn't built in tests). */
@@ -256,21 +277,42 @@ export interface TodayEventsOptions {
 }
 
 export interface TodayEventsState {
-  /** The last good answer for the household, or null before the first one. */
-  result: ShallowRef<TodayEvents | null>
+  /**
+   * The last good answer for the household, plus any event just added through `addLocal` that it predates, or null
+   * before the first answer. The same object as the last answer while nothing has been added locally.
+   */
+  result: Readonly<Ref<TodayEvents | null>>
   /** The latest request failed (the last good answer is still shown). */
   failed: Ref<boolean>
   refresh: () => Promise<void>
+  /**
+   * Shows an event the household just added (spec §7.2) and asks for a fresh answer. The row stays until that
+   * answer arrives — the event is already in the provider, but the panel's last answer was fetched before it — and
+   * is left in place if the refresh fails, so what the adult added never silently disappears.
+   */
+  addLocal: (event: TodayEvent) => Promise<void>
 }
 
 /** Keeps today's events for the household current while the calling component is mounted. */
-export function useTodayEvents(options: TodayEventsOptions): TodayEventsState {
-  const online = options.online ?? (() => true)
-  const enabled = options.enabled ?? (() => true)
-  const fetchEvents = options.fetchEvents ?? ((id: string) => fetchTodayEvents(id, options.timeZone() ?? 'UTC'))
-  const initialId = options.householdId()
-  const result = shallowRef<TodayEvents | null>(initialId ? (lastGood.get(initialId) ?? null) : null)
+export function useTodayEvents(optionsRef: TodayEventsOptions): TodayEventsState {
+  const online = optionsRef.online ?? (() => true)
+  const enabled = optionsRef.enabled ?? (() => true)
+  const fetchEvents = optionsRef.fetchEvents ?? ((id: string) => fetchTodayEvents(id, optionsRef.timeZone() ?? 'UTC'))
+  const initialId = optionsRef.householdId()
+  const fetched = shallowRef<TodayEvents | null>(initialId ? (lastGood.get(initialId) ?? null) : null)
   const failed = ref(false)
+  /** Events added here that the last answer predates, each with when it was added and a sequence number. */
+  const localRows = ref<Array<{ seq: number; at: string; event: TodayEvent }>>([])
+  let localSeq = 0
+  /** The fetched answer, with locally added events on top; the answer itself while there are none. */
+  const result = computed<TodayEvents | null>(() => {
+    const answer = fetched.value
+    if (localRows.value.length === 0) return answer
+    const events = localRows.value.map((r) => r.event)
+    const at = localRows.value[localRows.value.length - 1]!.at
+    if (!answer) return { events, connections: [], partial: false, updatedAt: at, receivedAt: at }
+    return { ...answer, events: [...answer.events, ...events] }
+  })
   let disposed = false
   /** Bumped at the household's midnight: an answer asked for before it belongs to the previous day. */
   let generation = 0
@@ -280,7 +322,7 @@ export function useTodayEvents(options: TodayEventsOptions): TodayEventsState {
   let midnight: ReturnType<typeof setTimeout> | undefined
 
   const canAsk = (): string | null => {
-    const id = options.householdId()
+    const id = optionsRef.householdId()
     return id && online() && enabled() && !disposed ? id : null
   }
 
@@ -288,12 +330,14 @@ export function useTodayEvents(options: TodayEventsOptions): TodayEventsState {
    * One request at a time. A refresh for the household and day already being asked for joins that request; one for
    * another household (or after midnight) runs once the current request settles, whose answer is then discarded.
    */
-  async function refresh(): Promise<void> {
+  async function refresh(options: { force?: boolean } = {}): Promise<void> {
     const id = canAsk()
     if (!id) return
     if (running) {
-      if (running.id === id && running.generation === generation) return running.promise
-      return running.promise.then(() => refresh())
+      // `force` never joins a request already in flight: it was sent before the event was added, so its answer
+      // cannot contain it.
+      if (!options.force && running.id === id && running.generation === generation) return running.promise
+      return running.promise.then(() => refresh(options))
     }
     const asked = { id, generation }
     lastAttemptAt.set(id, Date.now())
@@ -302,11 +346,11 @@ export function useTodayEvents(options: TodayEventsOptions): TodayEventsState {
         const next = await fetchEvents(id)
         if (disposed || asked.generation !== generation) return
         lastGood.set(id, next)
-        if (options.householdId() !== id) return
-        result.value = next
+        if (optionsRef.householdId() !== id) return
+        fetched.value = next
         failed.value = false
       } catch (e) {
-        if (disposed || asked.generation !== generation || options.householdId() !== id) return
+        if (disposed || asked.generation !== generation || optionsRef.householdId() !== id) return
         failed.value = true
         console.warn('Calendar refresh failed', e instanceof CalendarError ? e.code : 'error')
       } finally {
@@ -327,7 +371,7 @@ export function useTodayEvents(options: TodayEventsOptions): TodayEventsState {
 
   function scheduleMidnight(): void {
     clearTimeout(midnight)
-    const tz = options.timeZone()
+    const tz = optionsRef.timeZone()
     if (!tz) return
     midnight = setTimeout(() => {
       generation += 1
@@ -344,16 +388,18 @@ export function useTodayEvents(options: TodayEventsOptions): TodayEventsState {
   document.addEventListener('visibilitychange', onVisibility)
 
   watch(
-    options.householdId,
+    optionsRef.householdId,
     (id, previous) => {
       if (previous !== undefined && id !== previous) {
-        result.value = id ? (lastGood.get(id) ?? null) : null
+        fetched.value = id ? (lastGood.get(id) ?? null) : null
+        // Another household's panel never shows what was added to this one.
+        localRows.value = []
         failed.value = false
       }
     },
     { flush: 'sync' },
   )
-  watch(options.timeZone, scheduleMidnight, { immediate: true })
+  watch(optionsRef.timeZone, scheduleMidnight, { immediate: true })
   // First load, and again whenever asking becomes possible (online again, Sitter Mode over, another household).
   watch(canAsk, (id) => {
     if (id) refreshUnlessRecent()
@@ -368,7 +414,15 @@ export function useTodayEvents(options: TodayEventsOptions): TodayEventsState {
   }
   if (getCurrentScope()) onScopeDispose(dispose)
 
-  return { result, failed, refresh }
+  async function addLocal(event: TodayEvent): Promise<void> {
+    const mine = ++localSeq
+    localRows.value = [...localRows.value, { seq: mine, at: new Date().toISOString(), event }]
+    await refresh({ force: true })
+    // Only a fresh answer clears the row; a failed refresh leaves it, so the adult still sees what they added.
+    if (!failed.value && !disposed) localRows.value = localRows.value.filter((r) => r.seq > mine)
+  }
+
+  return { result, failed, refresh: () => refresh(), addLocal }
 }
 
 // ─── Calendar settings ─────────────────────────────────────────────────────
@@ -390,7 +444,34 @@ export interface MyConnection {
   provider: CalendarProvider
   label: string
   status: ConnectionStatus
+  /**
+   * Whether events can be added to this account's calendars (spec §5.5). False for every ICS subscription (a link
+   * is one-way) and for an account connected before Roost asked for write access: it must be connected again.
+   */
+  canWrite: boolean
   calendars: MyCalendar[]
+}
+
+/** An event an adult is adding. `allDay` decides how `start` and `end` are read, as the Edge Function reads them. */
+export interface NewEvent {
+  selectionId: string
+  title: string
+  /** An instant (timed), or a `YYYY-MM-DD` household date (all-day). */
+  start: string
+  /** Exclusive: the instant it ends, or the household date after the last all-day one. */
+  end: string
+  allDay: boolean
+  location?: string | null
+}
+
+/** The event as the provider has it, for the optimistic row on the Today panel. */
+export interface CreatedEvent {
+  selectionId: string
+  title: string
+  startAt: string
+  endAt: string
+  allDay: boolean
+  location: string | null
 }
 
 export interface CalendarPerson extends Assignee {
@@ -398,8 +479,18 @@ export interface CalendarPerson extends Assignee {
   color: string
 }
 
+/** A connection as the whole household may read it, with the adult it belongs to. */
+export interface HouseholdConnection extends MyConnection {
+  membershipId: string
+}
+
 export interface CalendarSettingsApi {
   listMyConnections(client: AdultClient, householdId: string, membershipId: string): Promise<MyConnection[]>
+  /**
+   * Every connection of the household, whoever's it is (a display may read these). The Add event entry point needs
+   * them before anyone has typed a PIN, to say why it cannot be used when nothing can be written to.
+   */
+  listHouseholdConnections(client: RoostClient, householdId: string): Promise<HouseholdConnection[]>
   /** Active members, then children, who a calendar can belong to. */
   listPeople(client: AdultClient, householdId: string): Promise<CalendarPerson[]>
   /** `alreadyConnected`: this adult had already connected that link; nothing new was created. */
@@ -414,6 +505,8 @@ export interface CalendarSettingsApi {
   finishOAuth(client: AdultClient, attempt: string): Promise<{ connectionId: string; calendars: number; label: string }>
   setSelection(client: AdultClient, selectionId: string, visible: boolean, assignee: Assignee | null): Promise<void>
   disconnect(client: AdultClient, connectionId: string): Promise<void>
+  /** Writes one event to the provider; the event itself is never stored by Roost (spec §11.2). */
+  createEvent(client: AdultClient, householdId: string, event: NewEvent): Promise<CreatedEvent>
 
   /** The same three changes on a display, authorised by the open Settings PIN session instead (spec §6.3). */
   connectIcsWithPin(
@@ -430,6 +523,7 @@ export interface CalendarSettingsApi {
     assignee: Assignee | null,
   ): Promise<void>
   disconnectWithPin(client: RoostClient, auth: SettingsAuth, connectionId: string): Promise<void>
+  createEventWithPin(client: RoostClient, householdId: string, auth: SettingsAuth, event: NewEvent): Promise<CreatedEvent>
 }
 
 /** The display's own client, for Calendars on a tablet. Loaded lazily so tests and the browser never build it. */
@@ -447,6 +541,94 @@ function toConnectResult(data: ConnectIcsResponse) {
     selectionId: typeof data.selectionId === 'string' ? data.selectionId : '',
     name: typeof data.name === 'string' ? data.name : '',
     alreadyConnected: data.alreadyConnected === true,
+  }
+}
+
+/** Explicit columns only: vault_secret_id and external_calendar_id are not readable by clients. */
+const CONNECTION_COLUMNS =
+  'id, provider, label, status, can_write, created_at, calendar_selections(id, name, visible, gone, assigned_membership_id, assigned_child_id, created_at)'
+
+interface ConnectionSelectionRow {
+  id: string
+  name: string
+  visible: boolean
+  gone: boolean
+  assigned_membership_id: string | null
+  assigned_child_id: string | null
+  created_at: string
+}
+
+interface ConnectionRow {
+  id: string
+  provider: CalendarProvider
+  label: string
+  status: ConnectionStatus
+  can_write: boolean
+  membership_id?: string
+  calendar_selections: ConnectionSelectionRow[] | null
+}
+
+/** Calendars in the order they were discovered, each with the one person it belongs to (or none). */
+function toMyConnection(row: ConnectionRow): MyConnection {
+  return {
+    id: row.id,
+    provider: row.provider,
+    label: row.label,
+    status: row.status,
+    canWrite: row.can_write === true,
+    calendars: [...(row.calendar_selections ?? [])]
+      .sort((a, b) => a.created_at.localeCompare(b.created_at) || a.name.localeCompare(b.name))
+      .map((s) => ({
+        id: s.id,
+        name: s.name,
+        visible: s.visible,
+        gone: s.gone,
+        assignee: s.assigned_membership_id
+          ? { type: 'member' as const, id: s.assigned_membership_id }
+          : s.assigned_child_id
+            ? { type: 'child' as const, id: s.assigned_child_id }
+            : null,
+      })),
+  }
+}
+
+type CreatedEventResponse =
+  | { created?: unknown; selectionId?: unknown; title?: unknown; startAt?: unknown; endAt?: unknown; allDay?: unknown; location?: unknown }
+  | null
+
+/** The request body `calendar-create-event` takes; an absent location is left out rather than sent as null. */
+function eventBody(householdId: string, event: NewEvent): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    householdId,
+    selectionId: event.selectionId,
+    title: event.title,
+    start: event.start,
+    end: event.end,
+    allDay: event.allDay,
+  }
+  const location = event.location?.trim()
+  if (location) body.location = location
+  return body
+}
+
+function toCreatedEvent(data: CreatedEventResponse): CreatedEvent {
+  if (
+    data?.created !== true ||
+    typeof data.selectionId !== 'string' ||
+    typeof data.title !== 'string' ||
+    !isIso(data.startAt) ||
+    !isIso(data.endAt) ||
+    typeof data.allDay !== 'boolean'
+  ) {
+    throw new CalendarError('internal')
+  }
+  return {
+    selectionId: data.selectionId,
+    title: data.title,
+    startAt: data.startAt,
+    endAt: data.endAt,
+    allDay: data.allDay,
+    location: typeof data.location === 'string' ? data.location : null,
   }
 }
 
@@ -476,39 +658,26 @@ async function pg<T>(op: () => PromiseLike<PgResult>): Promise<T> {
 export function createCalendarSettingsApi(): CalendarSettingsApi {
   return {
     async listMyConnections(client, householdId, membershipId) {
-      type SelectionRow = {
-        id: string; name: string; visible: boolean; gone: boolean
-        assigned_membership_id: string | null; assigned_child_id: string | null; created_at: string
-      }
-      type Row = { id: string; provider: CalendarProvider; label: string; status: ConnectionStatus; calendar_selections: SelectionRow[] | null }
-      // Explicit columns only: vault_secret_id and external_calendar_id are not readable by clients.
-      const rows = await pg<Row[] | null>(() =>
+      const rows = await pg<ConnectionRow[] | null>(() =>
         client
           .from('calendar_connections')
-          .select('id, provider, label, status, created_at, calendar_selections(id, name, visible, gone, assigned_membership_id, assigned_child_id, created_at)')
+          .select(CONNECTION_COLUMNS)
           .eq('household_id', householdId)
           .eq('membership_id', membershipId)
           .order('created_at', { ascending: true }) as unknown as PromiseLike<PgResult>,
       )
-      return (rows ?? []).map((r) => ({
-        id: r.id,
-        provider: r.provider,
-        label: r.label,
-        status: r.status,
-        calendars: [...(r.calendar_selections ?? [])]
-          .sort((a, b) => a.created_at.localeCompare(b.created_at) || a.name.localeCompare(b.name))
-          .map((s) => ({
-            id: s.id,
-            name: s.name,
-            visible: s.visible,
-            gone: s.gone,
-            assignee: s.assigned_membership_id
-              ? { type: 'member' as const, id: s.assigned_membership_id }
-              : s.assigned_child_id
-                ? { type: 'child' as const, id: s.assigned_child_id }
-                : null,
-          })),
-      }))
+      return (rows ?? []).map(toMyConnection)
+    },
+
+    async listHouseholdConnections(client, householdId) {
+      const rows = await pg<ConnectionRow[] | null>(() =>
+        client
+          .from('calendar_connections')
+          .select(`membership_id, ${CONNECTION_COLUMNS}`)
+          .eq('household_id', householdId)
+          .order('created_at', { ascending: true }) as unknown as PromiseLike<PgResult>,
+      )
+      return (rows ?? []).map((r) => ({ ...toMyConnection(r), membershipId: r.membership_id as string }))
     },
 
     async listPeople(client, householdId) {
@@ -570,6 +739,10 @@ export function createCalendarSettingsApi(): CalendarSettingsApi {
       await pg(() => client.rpc('disconnect_calendar', { p_connection_id: connectionId }) as unknown as PromiseLike<PgResult>)
     },
 
+    async createEvent(client, householdId, event) {
+      return toCreatedEvent(await invoke<CreatedEventResponse>(client, 'calendar-create-event', eventBody(householdId, event)))
+    },
+
     // ─── The same three, on a display's own client with the Settings PIN ──
     async connectIcsWithPin(client, householdId, auth, url) {
       return toConnectResult(
@@ -601,6 +774,16 @@ export function createCalendarSettingsApi(): CalendarSettingsApi {
           p_pin: auth.pin,
           p_connection_id: connectionId,
         }) as unknown as PromiseLike<PgResult>,
+      )
+    },
+
+    async createEventWithPin(client, householdId, auth, event) {
+      return toCreatedEvent(
+        await invoke<CreatedEventResponse>(client, 'calendar-create-event', {
+          ...eventBody(householdId, event),
+          membershipId: auth.membershipId,
+          pin: auth.pin,
+        }),
       )
     },
   }

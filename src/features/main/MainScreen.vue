@@ -40,6 +40,7 @@ import KidCard from './KidCard.vue'
 import KidCardCompact from './KidCardCompact.vue'
 import LogRow from './LogRow.vue'
 import MedicineZone from './MedicineZone.vue'
+import AddEventSheet from './AddEventSheet.vue'
 import TodayPanel from './TodayPanel.vue'
 import WeatherLine from './WeatherLine.vue'
 import { buildMainScreenModel, savedInfoLabel, type LogKind } from './mainScreenModel'
@@ -117,6 +118,8 @@ const openLog = ref<LogKind | null>(null)
 /** The child whose forgotten open sleep is being fixed ("Still sleeping?"). */
 const fixingSleepChildId = ref<string | null>(null)
 const editingDinner = ref(false)
+/** The Add event sheet, opened from the Today panel (spec §5.5, §7.2). */
+const addingEvent = ref(false)
 /** The dose whose conflict alert an adult is acknowledging with their PIN (spec §7.3). */
 const acknowledgingDoseId = ref<string | null>(null)
 /** The just-logged dose an adult is undoing with their PIN. */
@@ -221,6 +224,7 @@ const anythingOpen = computed(
     startingSitter.value ||
     endingSitter.value ||
     unlockingSummaryId.value !== null ||
+    addingEvent.value ||
     summary.value !== null,
 )
 watch(
@@ -520,6 +524,7 @@ const SETTINGS_BUTTON = {
             :children="store.view.children"
             :now="now"
             :updated-note="staleMinutes > STALE_AFTER_MIN ? `Updated ${staleMinutes} min ago` : null"
+            @add="addingEvent = true"
           />
         </div>
       </div>
@@ -568,6 +573,8 @@ const SETTINGS_BUTTON = {
       @close="fixingSleepChildId = null"
     />
     <DinnerSheet :open="editingDinner" @close="editingDinner = false" />
+    <!-- The new event shows on the panel at once and is replaced by the provider's own copy on the next refresh. -->
+    <AddEventSheet :open="addingEvent" @close="addingEvent = false" @added="today.addLocal($event)" />
 
     <DosePinDialog
       action="acknowledge"

@@ -33,6 +33,26 @@ export function startOfHouseholdDay(at: Date, timeZone: string): Date {
   return new Date(d.getTime())
 }
 
+/**
+ * The instant at which the clock in `timeZone` reads `date` (`YYYY-MM-DD`) at `hm` (`HH:MM`) — what an adult means
+ * when they add an event for "tomorrow at 4:00 PM". On the hour a zone repeats (falling back) the later instant is
+ * taken; on one it skips (springing forward) the time shifts forward with the offset, as a calendar app does.
+ */
+export function householdWallTime(date: HouseholdDate, hm: HourMinute, timeZone: string): Date {
+  const minutes = parseHourMinute(hm)
+  const [year, month, day] = date.split('-').map(Number)
+  if (!year || !month || !day) throw new Error(`Invalid date "${date}"`)
+  return new Date(new TZDate(year, month - 1, day, Math.floor(minutes / 60), minutes % 60, 0, timeZone).getTime())
+}
+
+/** `date` (`YYYY-MM-DD`) shifted by whole days, staying a calendar date, so a 23- or 25-hour day cannot move it. */
+export function shiftHouseholdDate(date: HouseholdDate, days: number): HouseholdDate {
+  const [year, month, day] = date.split('-').map(Number)
+  if (!year || !month || !day) throw new Error(`Invalid date "${date}"`)
+  const shifted = new Date(Date.UTC(year, month - 1, day + days))
+  return `${shifted.getUTCFullYear()}-${pad(shifted.getUTCMonth() + 1)}-${pad(shifted.getUTCDate())}`
+}
+
 export function householdWeekday(at: Date, timeZone: string): number {
   return new TZDate(at.getTime(), timeZone).getDay()
 }

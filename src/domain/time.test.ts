@@ -6,6 +6,8 @@ import {
   householdDate,
   startOfHouseholdDay,
   householdWeekday,
+  householdWallTime,
+  shiftHouseholdDate,
   formatDuration,
   formatClock,
   normalizeSpaces,
@@ -112,5 +114,35 @@ describe('formatClock', () => {
     )
     expect(callsForZone.length).toBe(1)
     spy.mockRestore()
+  })
+})
+
+describe('householdWallTime', () => {
+  it('reads a household date and wall clock as an instant', () => {
+    expect(householdWallTime('2026-10-20', '14:00', 'America/New_York').toISOString()).toBe('2026-10-20T18:00:00.000Z')
+    expect(householdWallTime('2026-10-20', '00:00', 'America/New_York').toISOString()).toBe('2026-10-20T04:00:00.000Z')
+    expect(householdWallTime('2026-10-20', '14:00', 'UTC').toISOString()).toBe('2026-10-20T14:00:00.000Z')
+  })
+
+  it('handles the days a zone skips or repeats an hour', () => {
+    // 2:30 AM does not exist on the morning the US springs forward: it reads as 3:30 EDT.
+    expect(householdWallTime('2026-03-08', '02:30', 'America/New_York').toISOString()).toBe('2026-03-08T07:30:00.000Z')
+    // 1:30 AM happens twice when it falls back; the later (EST) one is taken.
+    expect(householdWallTime('2026-11-01', '01:30', 'America/New_York').toISOString()).toBe('2026-11-01T05:30:00.000Z')
+  })
+
+  it('refuses a malformed date or time', () => {
+    expect(() => householdWallTime('nope', '14:00', 'UTC')).toThrow()
+    expect(() => householdWallTime('2026-10-20', '25:00', 'UTC')).toThrow()
+  })
+})
+
+describe('shiftHouseholdDate', () => {
+  it('moves whole calendar days across month, year and DST ends', () => {
+    expect(shiftHouseholdDate('2026-10-31', 1)).toBe('2026-11-01')
+    expect(shiftHouseholdDate('2026-01-01', -1)).toBe('2025-12-31')
+    expect(shiftHouseholdDate('2026-11-01', 1)).toBe('2026-11-02')
+    expect(shiftHouseholdDate('2026-02-28', 1)).toBe('2026-03-01')
+    expect(shiftHouseholdDate('2026-10-20', 0)).toBe('2026-10-20')
   })
 })

@@ -23,6 +23,7 @@ const connection = (over: Partial<MyConnection> = {}): MyConnection => ({
   provider: 'ics',
   label: 'Family',
   status: 'ok',
+  canWrite: false,
   calendars: [{ id: 'sel-1', name: 'Family', visible: false, gone: false, assignee: null }],
   ...over,
 })
@@ -32,15 +33,18 @@ type Fake = { [K in keyof CalendarSettingsApi]: ReturnType<typeof vi.fn> }
 function fakeApi(): Fake {
   return {
     listMyConnections: vi.fn().mockResolvedValue([connection()]),
+    listHouseholdConnections: vi.fn().mockResolvedValue([]),
     listPeople: vi.fn().mockResolvedValue(PEOPLE),
     connectIcs: vi.fn().mockResolvedValue({ connectionId: 'conn-2', selectionId: 'sel-2', name: 'Soccer', alreadyConnected: false }),
     startOAuth: vi.fn().mockResolvedValue({ notConfigured: true }),
     finishOAuth: vi.fn(),
     setSelection: vi.fn().mockResolvedValue(undefined),
     disconnect: vi.fn().mockResolvedValue(undefined),
+    createEvent: vi.fn(),
     connectIcsWithPin: vi.fn().mockResolvedValue({ connectionId: 'conn-2', selectionId: 'sel-2', name: 'Soccer', alreadyConnected: false }),
     setSelectionWithPin: vi.fn().mockResolvedValue(undefined),
     disconnectWithPin: vi.fn().mockResolvedValue(undefined),
+    createEventWithPin: vi.fn(),
   }
 }
 
@@ -394,5 +398,101 @@ describe('CalendarsSection', () => {
     await w.setProps({ reloadKey: 1 })
     await flushPromises()
     expect(api.listMyConnections).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('CalendarsSection — Add an event (Manage household)', () => {
+  const writable = () =>
+    connection({
+      id: 'conn-w',
+      provider: 'google',
+      label: 'sam@example.com',
+      canWrite: true,
+      calendars: [{ id: 'sel-sam', name: 'Sam', visible: true, gone: false, assignee: { type: 'member', id: SAM } }],
+    })
+
+  const field = (w: VueWrapper, label: string) => {
+    const lab = w.findAll('label').find((l) => l.text() === label)
+    if (!lab) throw new Error(`No field "${label}"`)
+    return w.get(`#${CSS.escape(lab.attributes('for')!)}`)
+  }
+
+  it('explains why an event cannot be added when nothing is writable', async () => {
+    const w = await mountSection({ timeZone: 'America/New_York' })
+    expect(w.get('[data-testid="manage-add-event-block"]').text()).toContain('one-way')
+    expect(w.find('[data-testid="manage-event-save"]').exists()).toBe(false)
+  })
+
+  it('writes an event on the adult’s own sign-in, with no PIN', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-09-14T18:07:00Z'))
+    api.listMyConnections.mockResolvedValue([writable()])
+    api.createEvent.mockResolvedValue({
+      selectionId: 'sel-sam',
+      title: 'Dentist',
+      startAt: '2026-09-14T20:00:00.000Z',
+      endAt: '2026-09-14T20:30:00.000Z',
+      allDay: false,
+      location: null,
+    })
+    const w = await mountSection({ timeZone: 'America/New_York' })
+    await w.get(`[data-testid="manage-event-person-${SAM}"]`).trigger('click')
+    await field(w, 'What is it?').setValue('Dentist')
+    await w.get('[data-testid="manage-event-start"]').setValue('16:00')
+    expect(w.get('[data-testid="manage-event-target"]').text()).toBe('Adding to Sam · sam@example.com')
+    await w.get('[data-testid="manage-event-save"]').trigger('click')
+    await flushPromises()
+
+    expect(api.createEvent).toHaveBeenCalledWith(CLIENT, HOUSEHOLD, {
+      selectionId: 'sel-sam',
+      title: 'Dentist',
+      start: '2026-09-14T20:00:00.000Z',
+      end: '2026-09-14T20:30:00.000Z',
+      allDay: false,
+      location: null,
+    })
+    expect(api.createEventWithPin).not.toHaveBeenCalled()
+    expect(w.get('[data-testid="manage-add-event-notice"]').text()).toContain('Dentist')
+    vi.useRealTimers()
+  })
+
+  it('reports a refusal and keeps what was typed', async () => {
+    api.listMyConnections.mockResolvedValue([writable()])
+    api.createEvent.mockRejectedValue(new CalendarError('auth_expired'))
+    const w = await mountSection({ timeZone: 'UTC' })
+    await w.get(`[data-testid="manage-event-person-${SAM}"]`).trigger('click')
+    await field(w, 'What is it?').setValue('Dentist')
+    await w.get('[data-testid="manage-event-save"]').trigger('click')
+    await flushPromises()
+    expect(w.get('[data-testid="manage-add-event-error"]').text()).toContain('needs reconnecting')
+    expect((field(w, 'What is it?').element as HTMLInputElement).value).toBe('Dentist')
+  })
+
+  it('asks which calendar to use for a person who has none, and writes to it', async () => {
+    api.listMyConnections.mockResolvedValue([writable()])
+    api.createEvent.mockResolvedValue({
+      selectionId: 'sel-sam',
+      title: 'Swim',
+      startAt: '2026-09-14T20:00:00.000Z',
+      endAt: '2026-09-14T20:30:00.000Z',
+      allDay: true,
+      location: null,
+    })
+    const w = await mountSection({ timeZone: 'UTC' })
+    await w.get(`[data-testid="manage-event-person-${IVY}"]`).trigger('click')
+    expect(w.get('[data-testid="manage-event-calendar-note"]').text()).toContain('can’t be added to')
+    await field(w, 'What is it?').setValue('Swim')
+    expect(w.get('[data-testid="manage-event-problem"]').text()).toBe('Choose which calendar to add it to.')
+    await w.get('[data-testid="manage-event-calendar"]').setValue('sel-sam')
+    await w.get('[data-testid="manage-event-save"]').trigger('click')
+    await flushPromises()
+    expect((api.createEvent.mock.calls[0] as unknown[])[2]).toMatchObject({ selectionId: 'sel-sam' })
+  })
+
+  it('never offers Add event on a display, where the Today panel has it', async () => {
+    api.listMyConnections.mockResolvedValue([writable()])
+    const w = await mountSection({ surface: 'display', pin: { membershipId: SAM, pin: '1234' }, timeZone: 'UTC' })
+    expect(w.find('[data-testid="manage-event-save"]').exists()).toBe(false)
+    expect(w.find('[data-testid="manage-add-event-block"]').exists()).toBe(false)
   })
 })
