@@ -345,7 +345,7 @@ function demoInstant(value: string): string {
               data-testid="event-start"
               type="time"
               step="300"
-              class="min-h-[60px] w-[180px] rounded-[var(--radius-control)] border-2 border-ink-3 bg-surface px-4 text-[24px] tabular-nums text-ink focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-orange-deep"
+              class="min-h-[60px] w-[220px] rounded-[var(--radius-control)] border-2 border-ink-3 bg-surface px-4 text-[24px] tabular-nums text-ink focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-orange-deep"
             />
           </label>
           <div class="flex flex-col gap-3">
