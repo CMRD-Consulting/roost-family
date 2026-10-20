@@ -182,13 +182,15 @@ curl -X POST "$SUPABASE_URL/functions/v1/storage-sweep" -H "Authorization: Beare
 
 ## Calendar providers
 
-Calendars are fetched on request by Edge Functions (spec §5.5); event data is never stored. Secrets (ICS links,
-refresh tokens) live only in Supabase Vault.
+Calendars are fetched on request by Edge Functions (spec §5.5); event data is never stored, including events Roost
+itself adds — those are posted to the provider and read back through the normal feed. Secrets (ICS links, refresh
+tokens) live only in Supabase Vault.
 
 | Function | Caller | Purpose |
 |---|---|---|
 | `calendar-connect-ics` | full sign-in adult, or a display with the Settings PIN (`membershipId` + `pin` in the body) | subscribe to an ICS link (`https://` or `webcal://`) |
 | `calendar-events` | display or member | today's events, cached in memory for 5 minutes |
+| `calendar-create-event` | full sign-in adult, or a display with the Settings PIN (`membershipId` + `pin` in the body) | write one event to the caller's own writable Google / Microsoft calendar |
 | `calendar-oauth-start` | full sign-in adult | Google / Microsoft consent URL |
 | `calendar-oauth-callback` | the provider's redirect (no JWT; the single-use state identifies the attempt) | parks the consent as a pending attempt, returns to `/manage?calendar=pending&attempt=…` |
 | `calendar-oauth-finish` | the full sign-in adult who started the attempt | creates the connection and its calendars |
@@ -198,8 +200,8 @@ Environment (Edge Function secrets: `supabase secrets set NAME=value`; locally `
 | Variable | Needed for | Notes |
 |---|---|---|
 | `CALENDAR_FINGERPRINT_KEY` | all connecting (**required in production**) | at least 32 random characters, e.g. `openssl rand -base64 48`. HMAC key for connection fingerprints (the ICS link or the provider account id), which stop the same calendar being connected twice. Keep it stable: changing it makes existing connections unrecognisable. A local stack uses a built-in development key when unset |
-| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google Calendar | OAuth client of type "Web application". Scopes: `openid email https://www.googleapis.com/auth/calendar.readonly`. Publish the app to Production (Testing tokens expire after 7 days) and verify it before 100 users (§15) |
-| `MS_CLIENT_ID`, `MS_CLIENT_SECRET` | Outlook / Microsoft 365 | Entra app registration, "Accounts in any organizational directory and personal Microsoft accounts" (tenant `common`), delegated `openid email profile offline_access Calendars.Read` |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Google Calendar | OAuth client of type "Web application". Scopes: `openid email https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.calendarlist.readonly` — the narrowest pair that lists today's events, adds one, and offers the account's calendars when connecting (`calendar.events` does **not** cover `calendarList.list`, which is why the second one is there). **`calendar.events` is a restricted/sensitive scope: the app must be verified by Google**, which reviews write access as well as read, so leave time for it. Publish the app to Production (Testing tokens expire after 7 days) and verify it before 100 users (§15) |
+| `MS_CLIENT_ID`, `MS_CLIENT_SECRET` | Outlook / Microsoft 365 | Entra app registration, "Accounts in any organizational directory and personal Microsoft accounts" (tenant `common`), delegated `openid email profile offline_access Calendars.ReadWrite` (it replaced `Calendars.Read`, which cannot create an event) |
 | `APP_URL` | OAuth (**required in production**) | where the browser returns (`/manage?calendar=…`); a local stack defaults to `http://localhost:5173`. Without it elsewhere the OAuth functions answer `not_configured` |
 | `CALENDAR_OAUTH_REDIRECT_URI` | optional | overrides the redirect URI; default `${SUPABASE_URL}/functions/v1/calendar-oauth-callback` |
 | `CALENDAR_ALLOW_PRIVATE_HOSTS` | local verification only | `1` lets ICS links reach private hosts over `http://` and any port (e.g. a fixture at `http://host.docker.internal:8123/…`). Honoured only when `SUPABASE_URL` is a local stack (localhost, 127.0.0.1, kong, host.docker.internal); ignored with a warning anywhere else, where links must be `https://` on the default port and resolve to public addresses only |
@@ -217,7 +219,39 @@ Without the client id and secret (or `APP_URL` / `CALENDAR_FINGERPRINT_KEY`), `c
 the callback parks the result for 15 minutes and only the adult who started it can finish it (so a forwarded consent
 link cannot attach someone else's calendar to another household). The Google and Microsoft network paths (token exchange, refresh, calendar list, events) are
 covered by unit tests with recorded response shapes but are not exercised locally without real credentials; ICS
-subscriptions can be verified end to end locally with `CALENDAR_ALLOW_PRIVATE_HOSTS=1`.
+subscriptions can be verified end to end locally with `CALENDAR_ALLOW_PRIVATE_HOSTS=1`, and the whole write path with
+`supabase/manual-checks/calendar_create_event_e2e.ts` (below).
+
+### Adding events, and what re-consent means
+
+`calendar-create-event` writes one event to a connected account. Whether it may is recorded per connection in
+`calendar_connections.can_write`, read from the scopes the provider reports when the account is connected — not from
+what Roost asked for.
+
+- **Every connection made before the write scopes existed is read-only**, and stays read-only until its owner
+  connects that account again from Manage household and approves the new consent screen. Nothing breaks meanwhile:
+  events still show, and Add event says the account must be connected again. Reconnecting the same account updates it
+  in place (the fingerprint path), keeping its label and which calendars are shown.
+- Consenting again with only the old read-only scopes correctly turns writing back off.
+- **ICS subscriptions are never writable**: a subscription link is one-way. This is enforced by a check constraint,
+  not only by the function.
+- A write bumps `calendar_connections.events_changed_at`, which `calendar-events` mixes into its in-memory cache key,
+  so the new event appears on the next refresh instead of up to 5 minutes later. It also appends a `settings_audit`
+  row naming the connection and calendar — never the title, time or place.
+- Limits: 30 events an hour per member (apart from the 10 ICS connects), a title of 1–200 characters with no markup,
+  a place of at most 200, an end after the start, within about a year either way, at most a month long.
+
+To exercise the whole path locally, including the PIN, the audit row and the cache invalidation, against a stub
+standing in for Google:
+
+```sh
+eval "$(supabase status -o env | sed 's/^/export /')"
+export SUPABASE_ANON_KEY="$ANON_KEY" SUPABASE_SERVICE_ROLE_KEY="$SERVICE_ROLE_KEY"
+deno run --allow-net --allow-env --no-lock --node-modules-dir=none \
+  supabase/manual-checks/calendar_create_event_e2e.ts
+```
+
+It creates its own household, checks, and deletes it again; it must print `ALL CALENDAR WRITE E2E CHECKS PASSED`.
 
 ## Household export
 

@@ -12,7 +12,7 @@
 - Who authorises what (spec §6.3): **on a display the adult PIN authorises every Settings action**, including Members, Displays and Delete household — there is no second, emailed sign-in there. Those sections run on `settingsSession` through `usePinOwner`; a full sign-in is left only for connecting a calendar and resetting a forgotten PIN. **In a browser at `/manage`** there is no PIN, so the same actions run on the adult's email sign-in (`useOwnerSignIn` / `OwnerSignInPanel`, kept for that host). A `SettingsApi` method taking `SettingsAuth` is the PIN path; one taking an `AdultClient` is the browser path — most owner actions have both (`removeMember` / `removeMemberPin`).
 
 ## Database
-- Migrations in `supabase/migrations/`; regenerate types with `pnpm db:types` after schema changes. Until Docker works, `src/data/database.types.ts` is hand-maintained in Supabase CLI shape: update Args/Returns for every RPC change.
+- Migrations in `supabase/migrations/`; regenerate types with `pnpm db:types` after schema changes (it needs Docker and a running `supabase start`). One deliberate deviation to re-apply afterwards: `grocery_items.Insert.list_id` stays optional, because a before-insert trigger fills it.
 - Helpers live in the `private` schema (not exposed by the API): `private.is_household_member(household_id)`, `private.is_household_owner`, `private.require_adult`, and write helpers such as `private.create_household_for` that only security-definer RPCs call (never grant those to a client role).
 - Every household-owned table has RLS through `private.is_household_member(household_id)`. New tables: enable RLS, add policies, and re-run `revoke all on <table> from anon` (default privileges grant anon).
 - New RPCs: `security definer set search_path = ''`, then `revoke execute on function … from public, anon` and `grant execute on function … to authenticated` (add it to the final grant list in the RLS migration).
@@ -31,6 +31,11 @@
 
 ## Calendar
 - `calendar-events` answers today only unless the caller asks for `days: 2` (today and tomorrow). Keep that default: a display that doesn't know about tomorrow would list tomorrow's events as today's. The client asks through `EVENT_DAYS` in `src/data/calendarApi.ts`; `todayPanelModel` splits the answer by the tablet's own clock, so midnight moves rows without a refetch.
+- Roost writes events to the provider and still stores none (spec §11.2): `calendar-create-event` posts one event to Google (`events.insert`) or Microsoft (`/me/calendars/{id}/events`) and the normal feed shows it afterwards. Input is checked in `_shared/eventDraft.ts`; `handler.ts` is Deno-free for Vitest and `deps.ts` holds the database and provider wiring (and is what the e2e script drives with a stubbed `fetch`).
+- Scopes: Google `openid email .../auth/calendar.events .../auth/calendar.calendarlist.readonly` (`calendar.events` does not cover `calendarList.list`); Microsoft `openid email profile offline_access Calendars.ReadWrite`. **Never assume a connection can be written to:** `calendar_connections.can_write` is set at connect time from the scopes the provider reports, so accounts connected under the old read-only scopes stay read-only, and ICS is never writable (a check constraint enforces it).
+- The events cache is per-isolate memory, so a write in another isolate can't clear it: `calendar-create-event` bumps `calendar_connections.events_changed_at` and `calendar-events` mixes it into its cache key. Anything else that changes a calendar's events from outside `calendar-events` must bump it too.
+- Only calendars that are **shown** are offered as a write target (`addEventModel.writableCalendars`): writing to a hidden one would succeed and appear nowhere.
+- Verify the write path with `supabase/manual-checks/calendar_create_event_e2e.ts` (a stub provider; must print `ALL CALENDAR WRITE E2E CHECKS PASSED`). Real Google / Microsoft calls still cannot be exercised locally.
 
 ## UI rules (spec §4)
 - In-the-moment surfaces: 60 pt touch targets; deliberate surfaces (Settings, wizard): 44 pt.

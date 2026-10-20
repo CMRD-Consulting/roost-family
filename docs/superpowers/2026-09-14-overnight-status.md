@@ -83,6 +83,9 @@
   - On the tablet the PIN that opened Settings is all it takes to connect, show, assign and disconnect; in a browser at `/manage` the email sign-in does the same.
 - **Today panel:** today's events for each person, with "Leave in N min" for timed events that have a location, "Now · until…", a stale note, and "Sam's calendar needs reconnecting".
   - Events are never stored: not in the database, not on the device, not in Sentry.
+- **Add event:** the Today panel's heading opens a PIN-guarded sheet that writes the event into the connected Google or Microsoft calendar; `/manage` has the same form on the adult's own sign-in. Roost still stores no event data — it posts to the provider and the normal feed brings it back.
+  - Only calendars that are shown on the displays are offered, and the sheet explains itself (one-way link, needs reconnecting, nothing shown, offline) rather than failing.
+  - **Existing connections are read-only** until their owner connects the account again: the write scopes (`calendar.events`, `Calendars.ReadWrite`) were not consented before.
 - **Google and Microsoft:** the connection code is written, but switched off until credentials exist. Connecting only works from Manage household.
   - The connection is finished only once the same adult signs in, which blocks someone else from attaching their calendar to your household.
 - **My calendars on the tablet:** Settings → My account shows the Calendars card straight away — no second, emailed sign-in.
@@ -136,9 +139,11 @@ pnpm dev
    - optional Sentry DSN
 3. **Google Cloud OAuth app:**
    - Redirect URI: `…/functions/v1/calendar-oauth-callback`
-   - Publish it to Production and get it verified. The `calendar.readonly` scope is sensitive, so expect a review.
+   - Scopes: `openid email https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.calendarlist.readonly`.
+   - Publish it to Production and get it verified. `calendar.events` is a sensitive/restricted scope and now covers **writing** events, so expect a review of that too.
+   - Anyone who connected a Google calendar under the old `calendar.readonly` scope must connect it again before an event can be added to it.
    - Also Apple sign-in, and Google sign-in for adults.
-4. **Microsoft Entra app:** multi-tenant, with the `Calendars.Read`, `offline_access`, `openid` and `profile` permissions, and the same redirect URI.
+4. **Microsoft Entra app:** multi-tenant, with the `Calendars.ReadWrite` (it replaced `Calendars.Read`, which cannot create an event), `offline_access`, `openid`, `email` and `profile` delegated permissions, and the same redirect URI. Accounts connected under `Calendars.Read` stay read-only until reconnected.
 5. **Email provider for SMTP.** Supabase's default sender only allows about 2 emails an hour.
 6. **Scheduled jobs:**
    - Schedule the pg_cron purges; `supabase/manual-checks/cron_check.sql` should report READY.
@@ -165,18 +170,22 @@ Earlier decisions (palette, `orange-deep`, the 18 h wake window, stale sleep, ro
 | **Adults can see the Members and Displays lists on `/manage`; only owners can change them** | Members already see these on the tablet; the server enforces changes | settings RPCs |
 | **Photos per household are capped at 300 (200 slideshow + 100 child and routine-step photos)** | The spec only limits the slideshow to 200 | migration 13 |
 | **Photo deletion keeps the file record until the sweep erases the bytes; the files become unreadable at once** | SQL can't erase Storage files, so deleting the record would lose track of them | migration 7 |
+| **Adding an event writes to the provider, and Roost still stores none** | The household wanted events it adds to land in their real calendar, not in a Roost-only table that the displays would then have to merge. The trade-off is that adding needs a connection (no offline queue) and needs write consent, so every calendar connected before this stays read-only until it is connected again. | migration 19, `calendar-create-event`, `AddEventSheet.vue` |
+| **Only calendars shown on the displays can be written to** | Writing to a hidden calendar would succeed and then appear nowhere, which reads as a bug. The sheet says which to show instead. | `addEventModel.ts` |
+| **Adding an event is limited to 30 an hour per adult, counted apart from the 10 ICS connects** | Adding events is an everyday action; connecting an account is not. Sharing one budget would have let a busy week block connecting a calendar. | migration 19 |
 | **On a display the adult PIN also authorises managing calendars** | A display's session is anonymous, so the account check behind `set_calendar_selection` and `disconnect_calendar` could never be satisfied on a tablet at all: the Calendars card sat behind a second emailed code right after the PIN had opened Settings. Everything else is unchanged — own connections only, same-household assignees, a shown calendar needs one person, links stay in Vault, every change audited — and Google and Microsoft still connect only from `/manage`. | migration 15, `calendar-connect-ics`, `CalendarsSection.vue` |
 | **On a display the adult PIN now authorises every Settings action, including deleting the household** | A one-owner household had to enter three separate emailed codes to visit Members, Displays and Delete household in one sitting, which pushed people to leave a browser signed in instead. **The weaker guard is real:** a 4-digit PIN, not an emailed code, now stands in front of household deletion. What still guards it: owner-only, the household name typed exactly, a 30-day soft delete that support can undo, the 0.75 s wrong-PIN delay, and an audit row. `/manage` in a browser keeps the email sign-in. | migration 14, `usePinOwner.ts` |
 
 ## Verification
 
 - **Automated checks at HEAD:**
-  - `pnpm test`: 1,924 tests in 128 files, all passing.
+  - `pnpm test`: 2,261 tests in 143 files, all passing.
   - `pnpm typecheck` and `pnpm build`: clean.
-  - `deno check` on every Edge Function: clean.
+  - `deno check` on every changed Edge Function file: clean (`export-household/index.ts` still fails on a missing `@types/nodemailer`, which predates this work).
 - **Database checks on local Supabase:**
-  - `rls_smoke.sql`: `ALL RLS SMOKE CHECKS PASSED` (128 labelled sections).
+  - `rls_smoke.sql`: `ALL RLS SMOKE CHECKS PASSED` (146 labelled sections).
   - `anon_api_check.sh`: every check OK.
+  - `calendar_create_event_e2e.ts`: `ALL CALENDAR WRITE E2E CHECKS PASSED` — the real function against the real local database and real JWTs, with only Google's host stubbed: the adult and PIN paths, a wrong PIN, read-only and ICS targets, another adult's calendar, input limits, provider 5xx / 404 / 401, the audit row, the cache bump and the hourly limit.
 - **Independent reviews** after every phase and feature: calendar parsing, calendar schema, calendar functions, Today and calendar UI, Manage household, export, Phase 3c and Phase 4a. Every finding was fixed and re-verified.
 - **Browser runs on local Supabase, controlled by me:**
   - **Phase 1–3a:** setup, join, revoke, realtime, logging, undo, offline queue, offline restart, Night, Nap, Kids' Corner (details in git history of this file).
@@ -206,3 +215,4 @@ Earlier decisions (palette, `orange-deep`, the 18 h wake window, stale sleep, ro
 - **Flaky test:** "long-pressing tonight's dinner edits it" fails when run alone and passes in the full suite.
 - **"Log wake-up" with no data:** it shows for a child with no sleep data at all. Consider hiding it until the first sleep log.
 - **`deno check` flags:** run it with `--no-lock --node-modules-dir=none`, otherwise it writes `deno.lock`.
+- **Real Google and Microsoft writes are still unproven:** `events.insert` and Graph's create-event are exercised only against the stub and against recorded response shapes. The first real write needs the OAuth apps, the new scopes consented, and a reconnected account.
