@@ -68,7 +68,7 @@ describe('calendar-oauth-start handler', () => {
     const second = (await (await createOAuthStartHandler(d)(post({ householdId: HOUSEHOLD, provider: 'microsoft' }))).json()) as { url: string }
     const params = new URL(first.url).searchParams
     expect(first.url.startsWith('https://login.microsoftonline.com/common/oauth2/v2.0/authorize?')).toBe(true)
-    expect(params.get('scope')).toBe('openid email profile offline_access Calendars.Read')
+    expect(params.get('scope')).toBe('openid email profile offline_access Calendars.ReadWrite')
     expect(new URL(second.url).searchParams.get('state')).not.toBe(params.get('state'))
   })
 

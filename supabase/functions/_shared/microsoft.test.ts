@@ -1,14 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import { CalendarProviderError } from './calendarProvider'
 import { householdDayWindow } from './events'
+import { parseEventDraft } from './eventDraft'
 import {
   buildMicrosoftAuthUrl,
   classifyMicrosoftError,
+  createMicrosoftEvent,
   exchangeMicrosoftCode,
   listMicrosoftCalendars,
   listMicrosoftEventsForDay,
   mapMicrosoftCalendars,
   mapMicrosoftEvents,
+  microsoftCanWrite,
+  microsoftEventBody,
   parseMicrosoftTokenResponse,
   refreshMicrosoftAccessToken,
 } from './microsoft'
@@ -144,7 +148,7 @@ describe('parseMicrosoftTokenResponse', () => {
         { token_type: 'Bearer', scope: 'Calendars.Read', expires_in: 4865, ext_expires_in: 4865, access_token: 'eyJ0', refresh_token: 'M.C5' },
         NOW,
       ),
-    ).toEqual({ accessToken: 'eyJ0', expiresAt: new Date(NOW.getTime() + 4865_000), refreshToken: 'M.C5' })
+    ).toEqual({ accessToken: 'eyJ0', expiresAt: new Date(NOW.getTime() + 4865_000), refreshToken: 'M.C5', scope: 'Calendars.Read' })
   })
 
   it('throws auth_expired for invalid_grant / interaction_required and unreachable otherwise', () => {
@@ -281,7 +285,7 @@ describe('Microsoft account connection (authorization code + PKCE)', () => {
       redirect_uri: 'https://x.test/cb',
       response_type: 'code',
       response_mode: 'query',
-      scope: 'openid email profile offline_access Calendars.Read',
+      scope: 'openid email profile offline_access Calendars.ReadWrite',
       state: 'st',
       code_challenge: 'ch',
       code_challenge_method: 'S256',
@@ -309,7 +313,72 @@ describe('Microsoft account connection (authorization code + PKCE)', () => {
       code: 'code-1',
       code_verifier: 'v'.repeat(43),
       redirect_uri: 'https://x.test/cb',
-      scope: 'openid email profile offline_access Calendars.Read',
+      scope: 'openid email profile offline_access Calendars.ReadWrite',
     })
+  })
+})
+
+describe('microsoftCanWrite', () => {
+  it('accepts Calendars.ReadWrite however Entra spells it', () => {
+    expect(microsoftCanWrite('openid email profile offline_access Calendars.ReadWrite')).toBe(true)
+    expect(microsoftCanWrite('https://graph.microsoft.com/Calendars.ReadWrite')).toBe(true)
+    expect(microsoftCanWrite('calendars.readwrite')).toBe(true)
+    expect(microsoftCanWrite('Calendars.ReadWrite.Shared')).toBe(true)
+  })
+
+  it('refuses a read-only grant and no grant at all', () => {
+    expect(microsoftCanWrite('openid email profile offline_access Calendars.Read')).toBe(false)
+    expect(microsoftCanWrite('Calendars.Read.Shared')).toBe(false)
+    expect(microsoftCanWrite(null)).toBe(false)
+  })
+})
+
+describe('createMicrosoftEvent', () => {
+  const draft = (over: Record<string, unknown> = {}) =>
+    parseEventDraft(
+      { title: 'Dentist', allDay: false, start: '2026-09-14T20:00:00Z', end: '2026-09-14T20:45:00Z', ...over },
+      TZ,
+      NOW,
+    )
+
+  it('posts a timed event as a wall clock in the household zone', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = []
+    const id = await createMicrosoftEvent(
+      async (url, init) => {
+        calls.push({ url, init })
+        return jsonResponse(201, { id: 'AAMk=' })
+      },
+      'at',
+      'AAMkAGI2TGuLAAA=',
+      draft({ location: 'Riverside' }),
+    )
+    expect(id).toBe('AAMk=')
+    expect(calls[0]!.url).toBe('https://graph.microsoft.com/v1.0/me/calendars/AAMkAGI2TGuLAAA%3D/events')
+    expect(calls[0]!.init!.method).toBe('POST')
+    expect(JSON.parse(String(calls[0]!.init!.body))).toEqual({
+      subject: 'Dentist',
+      isAllDay: false,
+      // 20:00 UTC is 16:00 in New York.
+      start: { dateTime: '2026-09-14T16:00:00', timeZone: TZ },
+      end: { dateTime: '2026-09-14T16:45:00', timeZone: TZ },
+      location: { displayName: 'Riverside' },
+    })
+  })
+
+  it('posts an all-day event at midnight in the household zone, end exclusive, with no location', () => {
+    expect(microsoftEventBody(draft({ allDay: true, start: '2026-09-15', end: '2026-09-17' }))).toEqual({
+      subject: 'Dentist',
+      isAllDay: true,
+      start: { dateTime: '2026-09-15T00:00:00', timeZone: TZ },
+      end: { dateTime: '2026-09-17T00:00:00', timeZone: TZ },
+    })
+  })
+
+  it('maps a missing calendar to calendar_gone, a refused token to auth_expired and a 5xx to unreachable', async () => {
+    const status = (res: Response) =>
+      createMicrosoftEvent(async () => res, 'at', 'c', draft()).catch((e: CalendarProviderError) => e.status)
+    await expect(status(jsonResponse(404, { error: { code: 'ErrorItemNotFound' } }))).resolves.toBe('calendar_gone')
+    await expect(status(jsonResponse(403, { error: { code: 'ErrorAccessDenied' } }))).resolves.toBe('auth_expired')
+    await expect(status(jsonResponse(500, { error: { code: 'ErrorInternalServerError' } }))).resolves.toBe('unreachable')
   })
 })

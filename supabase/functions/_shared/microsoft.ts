@@ -11,6 +11,7 @@ import {
   MAX_PAGES,
   exchangeAuthorizationCode,
   connectionLevel,
+  grantsAnyScope,
   dateTimeToUtcMs,
   dateToUtcMs,
   isExpiredGrantError,
@@ -29,16 +30,33 @@ import {
   type ProviderFailure,
 } from './calendarProvider.ts'
 import { cleanLocation, cleanTitle, type DayWindow, type SourceEvent } from './events.ts'
+import { wallClockOf, type EventDraft } from './eventDraft.ts'
 
 export const MICROSOFT_TOKEN_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/token'
 export const MICROSOFT_GRAPH_API = 'https://graph.microsoft.com/v1.0'
-export const MICROSOFT_SCOPES = 'offline_access Calendars.Read'
+/** Read and write the account's calendars: `calendarView`, `/me/calendars` and creating an event. */
+export const MICROSOFT_SCOPES = 'offline_access Calendars.ReadWrite'
 export const MICROSOFT_AUTH_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize'
 /**
  * Consent scopes: the calendar scopes plus `openid email profile`, so the connection can be labelled with the account's
  * email and recognised by its object id (`oid`, which needs `profile`) when it connects again.
  */
 export const MICROSOFT_OAUTH_SCOPES = `openid email profile ${MICROSOFT_SCOPES}`
+/**
+ * Granted scopes that let Roost add an event. Entra reports a Graph permission either bare or as a full resource
+ * URI depending on the flow, so both spellings count. A connection made under `Calendars.Read` has neither.
+ */
+const MICROSOFT_WRITE_SCOPES = [
+  'Calendars.ReadWrite',
+  'https://graph.microsoft.com/Calendars.ReadWrite',
+  'Calendars.ReadWrite.Shared',
+  'https://graph.microsoft.com/Calendars.ReadWrite.Shared',
+] as const
+
+/** Whether the account's grant allows creating an event (`calendar_connections.can_write`). */
+export function microsoftCanWrite(scope: string | null): boolean {
+  return grantsAnyScope(scope, MICROSOFT_WRITE_SCOPES)
+}
 
 const DAY_MS = 86_400_000
 
@@ -197,6 +215,47 @@ export async function listMicrosoftEventsForDay(
     url = mapped.nextLink ? assertGraphLink(mapped.nextLink) : null
   }
   return events
+}
+
+/**
+ * The create-event body for a draft. Graph takes a wall-clock `dateTime` with its zone (never an offset), and an
+ * all-day event must start and end at midnight in that zone with an exclusive end. Only what the adult typed is
+ * sent: no body, attendees, reminders or online meeting.
+ */
+export function microsoftEventBody(draft: EventDraft): Record<string, unknown> {
+  const at = (date: string, instant: Date) =>
+    draft.allDay ? { dateTime: `${date}T00:00:00`, timeZone: draft.timeZone } : { dateTime: wallClockOf(instant, draft.timeZone), timeZone: draft.timeZone }
+  const body: Record<string, unknown> = {
+    subject: draft.title,
+    isAllDay: draft.allDay,
+    start: at(draft.startDate, draft.startAt),
+    end: at(draft.endDate, draft.endAt),
+  }
+  if (draft.location) body.location = { displayName: draft.location }
+  return body
+}
+
+/**
+ * Adds one event to a calendar and returns Graph's id for it, which Roost does not store (spec §11.2). A 404 means
+ * the calendar is gone; a 401 or 403 that the grant must be renewed. The subject and location are never logged.
+ */
+export async function createMicrosoftEvent(
+  fetch: FetchLike,
+  accessToken: string,
+  calendarId: string,
+  draft: EventDraft,
+): Promise<string | null> {
+  const { body } = await requestJson(
+    fetch,
+    `${MICROSOFT_GRAPH_API}/me/calendars/${encodeURIComponent(calendarId)}/events`,
+    {
+      method: 'POST',
+      headers: { ...(graphHeaders(accessToken) as Record<string, string>), 'Content-Type': 'application/json' },
+      body: JSON.stringify(microsoftEventBody(draft)),
+    },
+    classifyMicrosoftError,
+  )
+  return isRecord(body) ? stringOrNull(body.id) : null
 }
 
 // ---- Connecting an account (authorization code + PKCE) ----

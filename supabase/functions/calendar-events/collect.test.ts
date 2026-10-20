@@ -52,7 +52,7 @@ const FIXTURE = [
 ].join('\r\n')
 
 function connection(overrides: Partial<ConnectionRow> = {}): ConnectionRow {
-  return { id: 'conn-ics', provider: 'ics', status: 'ok', ownerName: 'Sam', ...overrides }
+  return { id: 'conn-ics', provider: 'ics', status: 'ok', ownerName: 'Sam', eventsChangedAt: '2026-09-14T12:00:00Z', ...overrides }
 }
 
 function selection(overrides: Partial<SelectionRow> = {}): SelectionRow {
@@ -205,6 +205,18 @@ describe('collectDayEvents: ICS', () => {
     expect(second!.events).toEqual(first!.events)
     expect(store.secret).toHaveBeenCalledTimes(1)
     await collectAt(EVENTS_CACHE_TTL_MS + 1, store, icsSources(fetchIcs), memory)
+    expect(fetchIcs).toHaveBeenCalledTimes(2)
+  })
+
+  it('fetches again at once when the connection says Roost wrote to that calendar', async () => {
+    const memory = createEventsMemory()
+    const fetchIcs = vi.fn(async () => FIXTURE)
+    const before = fakeStore({}, { 'conn-ics': 'https://calendar.example.com/a.ics' })
+    await collect(before.store, icsSources(fetchIcs), memory)
+    expect(fetchIcs).toHaveBeenCalledTimes(1)
+    // Same minute, same day, same calendars: only events_changed_at moved, as adding an event does.
+    const after = fakeStore({ connections: [connection({ eventsChangedAt: '2026-09-14T16:05:00Z' })] }, { 'conn-ics': 'https://calendar.example.com/a.ics' })
+    await collectAt(60_000, after.store, icsSources(fetchIcs), memory)
     expect(fetchIcs).toHaveBeenCalledTimes(2)
   })
 

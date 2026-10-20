@@ -1980,14 +1980,14 @@ select pg_temp.expect('anon and authenticated cannot execute any private calenda
     'set_calendar_status', 'set_calendar_selection_gone', 'require_calendar_assignee', 'hide_unassigned_calendar_selection',
     'delete_calendar_vault_secret', 'end_membership')
     and (has_function_privilege('authenticated', p.oid, 'execute') or has_function_privilege('anon', p.oid, 'execute'))));
-select pg_temp.expect('only service_role can execute the 18 svc_ wrappers (6 here, 2 OAuth state wrappers in migration 9, 3 export wrappers in migration 10, 5 calendar wrappers in migration 11, 1 export wrapper in migration 12, 1 weather wrapper in migration 13)', (
+select pg_temp.expect('only service_role can execute the 20 svc_ wrappers (6 here, 2 OAuth state wrappers in migration 9, 3 export wrappers in migration 10, 5 calendar wrappers in migration 11, 1 export wrapper in migration 12, 1 weather wrapper in migration 13, 2 calendar-write wrappers in migration 19)', (
   select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
   where n.nspname = 'public' and p.proname like 'svc\_%'
     and has_function_privilege('service_role', p.oid, 'execute')
     and not has_function_privilege('authenticated', p.oid, 'execute')
-    and not has_function_privilege('anon', p.oid, 'execute')) = 18
+    and not has_function_privilege('anon', p.oid, 'execute')) = 20
   and (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-       where n.nspname = 'public' and p.proname like 'svc\_%') = 18);
+       where n.nspname = 'public' and p.proname like 'svc\_%') = 20);
 select pg_temp.expect('anon cannot execute svc_calendar_secret',
   not has_function_privilege('anon', 'public.svc_calendar_secret(uuid)', 'execute'));
 select pg_temp.expect('PUBLIC cannot execute any calendar function', not exists (
@@ -2716,26 +2716,26 @@ reset role;
 set local role service_role;
 select connection_id as conn_fp, already_connected as fp_again, selection_ids[1] as sel_fp
 from public.svc_create_calendar_connection_with_selections(:'household_f', :'membership_f', 'ics', 'Soccer club', 'https://calendar.test/soccer.ics',
-  null, repeat('e', 64), '[{"id": "ics", "name": "Soccer club"}]') \gset
+  null, repeat('e', 64), '[{"id": "ics", "name": "Soccer club"}]', false) \gset
 select pg_temp.expect('a new ICS connection is created with its selection, hidden and unassigned', not :'fp_again'::boolean
   and (select count(*) from public.calendar_selections s where s.connection_id = :'conn_fp' and s.id = :'sel_fp' and not s.visible
        and s.assigned_membership_id is null and s.assigned_child_id is null) = 1);
 select pg_temp.expect('the same link again returns the existing connection, unchanged', (
   select connection_id = :'conn_fp'::uuid and already_connected and label = 'Soccer club' and selection_ids = array[:'sel_fp'::uuid]
   from public.svc_create_calendar_connection_with_selections(:'household_f', :'membership_f', 'ics', 'Other name', 'https://calendar.test/soccer.ics',
-    null, repeat('e', 64), '[{"id": "ics", "name": "Other name"}]'))
+    null, repeat('e', 64), '[{"id": "ics", "name": "Other name"}]', false))
   and (select count(*) from public.calendar_connections where secret_fingerprint = repeat('e', 64)) = 1);
 select pg_temp.expect_error('connect with a URL in the label',
-  format('select * from public.svc_create_calendar_connection_with_selections(%L, %L, %L, %L, %L, null, %L, %L)',
+  format('select * from public.svc_create_calendar_connection_with_selections(%L, %L, %L, %L, %L, null, %L, %L, false)',
     :'household_f', :'membership_f', 'ics', 'https://calendar.test/x.ics', 'https://calendar.test/x.ics', repeat('f', 64), '[]'), '23514');
 select pg_temp.expect_error('connect for a caregiver',
-  format('select * from public.svc_create_calendar_connection_with_selections(%L, %L, %L, %L, %L, null, %L, %L)',
+  format('select * from public.svc_create_calendar_connection_with_selections(%L, %L, %L, %L, %L, null, %L, %L, false)',
     :'household_f', :'membership_g', 'ics', 'X', 'https://calendar.test/x.ics', repeat('f', 64), '[]'), '42501');
 select pg_temp.expect_error('connect with both a secret and a Vault secret id',
-  format('select * from public.svc_create_calendar_connection_with_selections(%L, %L, %L, %L, %L, %L, %L, %L)',
+  format('select * from public.svc_create_calendar_connection_with_selections(%L, %L, %L, %L, %L, %L, %L, %L, false)',
     :'household_f', :'membership_f', 'ics', 'X', 'https://calendar.test/x.ics', gen_random_uuid(), repeat('f', 64), '[]'), '22023');
 select pg_temp.expect_error('connect with malformed calendars',
-  format('select * from public.svc_create_calendar_connection_with_selections(%L, %L, %L, %L, %L, null, %L, %L)',
+  format('select * from public.svc_create_calendar_connection_with_selections(%L, %L, %L, %L, %L, null, %L, %L, false)',
     :'household_f', :'membership_f', 'ics', 'X', 'https://calendar.test/x.ics', repeat('f', 64), '[{"name": "no id"}]'), '22023');
 reset role;
 
@@ -2743,7 +2743,7 @@ reset role;
 select count(*) as vault_before_attempts from vault.secrets \gset
 set local role service_role;
 select public.svc_create_calendar_oauth_attempt(repeat('1', 64), :'household_f', :'membership_f', 'google', 'refresh-attempt-1', 'frankie@example.com',
-  repeat('9', 64), '[{"id": "frankie@example.com", "name": "Frankie", "summary": "dropped"}, {"id": "kids", "name": "  "}]') as attempt_one \gset
+  repeat('9', 64), '[{"id": "frankie@example.com", "name": "Frankie", "summary": "dropped"}, {"id": "kids", "name": "  "}]', true) as attempt_one \gset
 reset role;
 select vault_secret_id as attempt_secret from public.calendar_oauth_attempts where id = :'attempt_one' \gset
 select pg_temp.expect('an attempt stores only the hash, the id+name calendar list and a Vault secret', (
@@ -2765,6 +2765,8 @@ from public.svc_finish_calendar_oauth_attempt(repeat('1', 64), :'membership_f') 
 select pg_temp.expect('a replayed attempt is invalid', (
   select outcome = 'invalid_attempt' from public.svc_finish_calendar_oauth_attempt(repeat('1', 64), pg_temp.v('membership_f'))));
 reset role;
+select pg_temp.expect('the grant the account gave becomes the connection''s can_write',
+  (select can_write from public.calendar_connections where id = :'conn_oauth'));
 select pg_temp.expect('finishing creates the connection with all calendars and moves the attempt''s Vault secret to it', :'oauth_calendars'::int = 2
   and :'oauth_label' = 'frankie@example.com'
   and (select vault_secret_id = :'attempt_secret'::uuid and secret_fingerprint = repeat('9', 64) and status = 'ok'
@@ -2776,7 +2778,7 @@ select vault_secret_id as oauth_secret from public.calendar_connections where id
 update public.calendar_connections set status = 'auth_expired' where id = :'conn_oauth';
 set local role service_role;
 select public.svc_create_calendar_oauth_attempt(repeat('2', 64), :'household_f', :'membership_f', 'google', 'refresh-attempt-2', null,
-  repeat('9', 64), '[{"id": "frankie@example.com", "name": "Frankie"}, {"id": "new-cal", "name": "New"}]') as attempt_two \gset
+  repeat('9', 64), '[{"id": "frankie@example.com", "name": "Frankie"}, {"id": "new-cal", "name": "New"}]', false) as attempt_two \gset
 reset role;
 select vault_secret_id as attempt_two_secret from public.calendar_oauth_attempts where id = :'attempt_two' \gset
 set local role service_role;
@@ -2784,6 +2786,8 @@ select pg_temp.expect('reconnecting the same account updates the existing connec
   select outcome = 'ok' and connection_id = :'conn_oauth'::uuid and label = 'frankie@example.com' and calendar_count = 3
   from public.svc_finish_calendar_oauth_attempt(repeat('2', 64), :'membership_f')));
 reset role;
+select pg_temp.expect('reconnecting with only the old read-only scopes turns writing off again',
+  (select not can_write from public.calendar_connections where id = :'conn_oauth'));
 select pg_temp.expect('the new token replaced the old in place, status is ok again, and the attempt''s secret is gone', (
   select decrypted_secret = 'refresh-attempt-2' from vault.decrypted_secrets where id = :'oauth_secret')
   and (select status = 'ok' from public.calendar_connections where id = :'conn_oauth')
@@ -2830,6 +2834,106 @@ reset role;
 select pg_temp.expect('set_calendar_selection share-locks memberships before locking the selection row', (
   select position('for share of m' in p.prosrc) between 1 and position('for update of s' in p.prosrc)
   from pg_proc p where p.oid = 'public.set_calendar_selection(uuid, boolean, uuid, uuid)'::regprocedure));
+
+
+-- ─── Adding an event to a connected calendar (migration 19) ──────────────
+\echo '[112] Calendar writes: can_write is recorded per connection, ICS is never writable, and both are readable by clients'
+-- Two fresh adults of household F (Indy and Quinn are long gone by now): Wren owns the writable calendar, Ash is the
+-- other adult who may not write to it.
+insert into auth.users (id, instance_id, aud, role, email, raw_app_meta_data, raw_user_meta_data, is_anonymous, created_at, updated_at)
+values
+  ('00000000-0000-0000-0000-000000000016', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'wren@roost.test', '{}', '{}', false, now(), now()),
+  ('00000000-0000-0000-0000-000000000017', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'ash@roost.test', '{}', '{}', false, now(), now());
+insert into public.memberships (user_id, household_id, role, display_name, color)
+values ('00000000-0000-0000-0000-000000000016', :'household_f', 'adult', 'Wren', '#2F86A6') returning id as membership_w \gset
+insert into public.memberships (user_id, household_id, role, display_name, color)
+values ('00000000-0000-0000-0000-000000000017', :'household_f', 'adult', 'Ash', '#2F86A6') returning id as membership_ash \gset
+set local role service_role;
+select connection_id as conn_w, selection_ids[1] as sel_w
+from public.svc_create_calendar_connection_with_selections(:'household_f', :'membership_w', 'google', 'Wren write', 'refresh-w',
+  null, repeat('c', 64), '[{"id": "w-cal", "name": "Writable"}]', true) \gset
+select connection_id as conn_ro
+from public.svc_create_calendar_connection_with_selections(:'household_f', :'membership_ash', 'microsoft', 'Ash read only', 'refresh-ro',
+  null, repeat('b', 64), '[{"id": "ro-cal", "name": "Read only"}]', false) \gset
+-- An ICS link claiming it can be written to is stored read-only anyway, not refused.
+select connection_id as conn_ics_w
+from public.svc_create_calendar_connection_with_selections(:'household_f', :'membership_w', 'ics', 'One way', 'https://calendar.test/oneway.ics',
+  null, repeat('a', 64), '[{"id": "ics", "name": "One way"}]', true) \gset
+reset role;
+select set_config('smoke.conn_w', :'conn_w', true), set_config('smoke.sel_w', :'sel_w', true),
+       set_config('smoke.conn_ro', :'conn_ro', true), set_config('smoke.membership_w', :'membership_w', true),
+       set_config('smoke.membership_ash', :'membership_ash', true), set_config('smoke.conn_ics_w', :'conn_ics_w', true);
+select pg_temp.expect('a connection records the grant its account gave',
+  (select can_write from public.calendar_connections where id = :'conn_w')
+  and (select not can_write from public.calendar_connections where id = :'conn_ro'));
+select pg_temp.expect('an ICS subscription is never writable, whatever the caller claims',
+  (select not can_write from public.calendar_connections where id = :'conn_ics_w'));
+select pg_temp.expect_error('and the constraint refuses it directly too',
+  $q$update public.calendar_connections set can_write = true where id = pg_temp.v('conn_ics_w')$q$, '23514');
+select pg_temp.expect('every connection carries an events_changed_at',
+  not exists (select 1 from public.calendar_connections where events_changed_at is null));
+select pg_temp.expect('clients may read can_write and events_changed_at, but anon may read neither',
+  has_column_privilege('authenticated', 'public.calendar_connections', 'can_write', 'select')
+  and has_column_privilege('authenticated', 'public.calendar_connections', 'events_changed_at', 'select')
+  and not has_column_privilege('anon', 'public.calendar_connections', 'can_write', 'select')
+  and not has_column_privilege('anon', 'public.calendar_connections', 'events_changed_at', 'select'));
+set local role authenticated;
+select set_config('request.jwt.claims', :'J', true);
+select pg_temp.expect('a display reads which of the household''s calendars can be written to', (
+  select count(*) from public.calendar_connections where household_id = pg_temp.v('household_f') and can_write) = 1);
+reset role;
+
+\echo '[113] svc_record_calendar_event_created: audits the write, bumps the events cache token, and only for the calendar''s own adult'
+-- Backdated first: now() is frozen for the whole transaction, so a fresh bump has to be told apart from the insert's.
+update public.calendar_connections set events_changed_at = now() - interval '10 minutes' where id = :'conn_w';
+select events_changed_at as changed_before from public.calendar_connections where id = :'conn_w' \gset
+select count(*) as audits_before from public.settings_audit where household_id = :'household_f' \gset
+set local role service_role;
+select public.svc_record_calendar_event_created(:'membership_w', :'sel_w');
+select pg_temp.expect_error('another adult of the household recording against this calendar',
+  $q$select public.svc_record_calendar_event_created(pg_temp.v('membership_ash'), pg_temp.v('sel_w'))$q$, '42501');
+select pg_temp.expect_error('a caregiver recording against it',
+  $q$select public.svc_record_calendar_event_created(pg_temp.v('membership_g'), pg_temp.v('sel_w'))$q$, '42501');
+select pg_temp.expect_error('a former member recording against it',
+  $q$select public.svc_record_calendar_event_created(pg_temp.v('membership_h'), pg_temp.v('sel_w'))$q$, '42501');
+select pg_temp.expect_error('a selection that does not exist',
+  $q$select public.svc_record_calendar_event_created(pg_temp.v('membership_w'), gen_random_uuid())$q$, '42501');
+reset role;
+select pg_temp.expect('the cache token moved, so every isolate refetches that connection',
+  (select events_changed_at from public.calendar_connections where id = :'conn_w') > :'changed_before'::timestamptz);
+select pg_temp.expect('exactly one audit row was added, naming the calendar and connection but no event detail', (
+  select count(*) from public.settings_audit where household_id = :'household_f') = :audits_before + 1
+  and (select change ->> 'section' = 'calendars' and change ->> 'action' = 'create_event'
+         and change ->> 'target_id' = pg_temp.v('sel_w')::text
+         and change -> 'fields' ->> 'connection_id' = pg_temp.v('conn_w')::text
+         and not (change::text ilike '%title%' or change::text ilike '%location%')
+       from public.settings_audit where household_id = :'household_f' order by id desc limit 1));
+
+\echo '[114] Adding events has its own hourly limit, apart from connecting a calendar link'
+set local role service_role;
+select pg_temp.expect('30 events an hour are allowed, the 31st is refused', (
+  select array_agg(public.svc_record_calendar_event_attempt(pg_temp.v('membership_ash')) order by g) from generate_series(1, 31) as g)
+  = array_fill(true, array[30]) || array[false]);
+select pg_temp.expect('the connect budget is untouched by them', public.svc_record_calendar_connect_attempt(:'membership_ash'));
+reset role;
+select pg_temp.expect('a refused attempt is not recorded, and the two kinds are counted apart', (
+  select count(*) from public.calendar_connect_attempts where membership_id = :'membership_ash' and kind = 'create_event') = 30
+  and (select count(*) from public.calendar_connect_attempts where membership_id = :'membership_ash' and kind = 'connect') = 1);
+update public.calendar_connect_attempts set created_at = now() - interval '61 minutes' where membership_id = :'membership_ash';
+set local role service_role;
+select pg_temp.expect('attempts older than an hour no longer count', public.svc_record_calendar_event_attempt(:'membership_ash'));
+reset role;
+select pg_temp.expect('the migration 19 svc_ wrappers are executable by service_role only; their private helpers by nobody', (
+  select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public' and p.proname in ('svc_record_calendar_event_attempt', 'svc_record_calendar_event_created')
+    and has_function_privilege('service_role', p.oid, 'execute')
+    and not has_function_privilege('authenticated', p.oid, 'execute')
+    and not has_function_privilege('anon', p.oid, 'execute')) = 2
+  and not exists (
+    select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'private' and p.proname in ('record_calendar_attempt', 'record_calendar_event_attempt', 'record_calendar_event_created')
+      and (has_function_privilege('anon', p.oid, 'execute') or has_function_privilege('authenticated', p.oid, 'execute')
+           or has_function_privilege('service_role', p.oid, 'execute'))));
 
 -- ─── Export hardening (migration 12) ─────────────────────────────────────
 -- Fixtures: household T (owner T, for the rate limit), a second owner V2 of household V, household U (owner U).
@@ -3853,6 +3957,10 @@ update public.shopping_lists set archived_at = null where id = :'list_kb';
 
 \echo '[141] take_list_items carries each item''s list; the purge clears old plans, checked items and done tasks'
 insert into public.shopping_lists (household_id, name) values (:'household_kb', 'Old store') returning id as list_kb3 \gset
+-- now() is frozen for the whole transaction, so every list B has shares a created_at and "oldest list first" would
+-- be whatever order the planner happened to return. Spread them so the ordering under test is a defined one.
+update public.shopping_lists set created_at = now() - interval '2 minutes' where id = :'list_kb';
+update public.shopping_lists set created_at = now() - interval '1 minute' where id = :'list_kb2';
 insert into public.grocery_items (household_id, list_id, text, created_at, checked_at) values
   (:'household_kb', :'list_kb', 'B milk', now() - interval '3 hours', null),
   (:'household_kb', :'list_kb', 'B apples', now() - interval '4 hours', now() - interval '1 hour'),

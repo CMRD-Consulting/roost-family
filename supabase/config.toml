@@ -409,6 +409,11 @@ verify_jwt = true
 [functions.calendar-events]
 verify_jwt = true
 
+# Adding one event to a connected Google / Microsoft calendar (spec §5.5, §6.3, §7.2). Callers must send a valid JWT;
+# the function requires a full sign-in adult, or a display with the Settings PIN, who owns a writable connection.
+[functions.calendar-create-event]
+verify_jwt = true
+
 # Google / Microsoft calendar consent start (spec §5.5, §6.3). Callers must send a valid JWT; the function requires a
 # full sign-in adult.
 [functions.calendar-oauth-start]

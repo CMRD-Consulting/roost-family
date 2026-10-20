@@ -10,6 +10,7 @@ import {
   MAX_PAGES,
   exchangeAuthorizationCode,
   connectionLevel,
+  grantsAnyScope,
   dateTimeToUtcMs,
   dateToUtcMs,
   isExpiredGrantError,
@@ -28,16 +29,33 @@ import {
   type ProviderFailure,
 } from './calendarProvider.ts'
 import { cleanLocation, cleanTitle, type DayWindow, type SourceEvent } from './events.ts'
+import type { EventDraft } from './eventDraft.ts'
 
 export const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 export const GOOGLE_CALENDAR_API = 'https://www.googleapis.com/calendar/v3'
-export const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.readonly'
 export const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
+/** Read and write events on the account's calendars: `events.list` and `events.insert`. */
+export const GOOGLE_EVENTS_SCOPE = 'https://www.googleapis.com/auth/calendar.events'
+/** `calendarList.list` only — `calendar.events` does not cover it, so choosing which calendars to show needs this. */
+export const GOOGLE_CALENDAR_LIST_SCOPE = 'https://www.googleapis.com/auth/calendar.calendarlist.readonly'
 /**
- * Consent scopes: `calendar.readonly` (the one documented read-only scope covering both calendarList.list and
- * events.list) plus `openid email`, so the connection can be labelled with the account's email.
+ * Consent scopes, the narrowest pair that does everything Roost does: `calendar.events` (list today's events and
+ * add one) and `calendar.calendarlist.readonly` (offer the account's calendars when connecting), plus `openid email`
+ * so the connection can be labelled with the account's email. `calendar.events` is a **sensitive** scope: the OAuth
+ * app must be verified by Google before more than 100 users (spec §15, README "Calendar providers").
  */
-export const GOOGLE_OAUTH_SCOPES = `openid email ${GOOGLE_CALENDAR_SCOPE}`
+export const GOOGLE_OAUTH_SCOPES = `openid email ${GOOGLE_EVENTS_SCOPE} ${GOOGLE_CALENDAR_LIST_SCOPE}`
+/** Granted scopes that let Roost add an event. A connection made before the write scope existed has none of them. */
+const GOOGLE_WRITE_SCOPES = [
+  GOOGLE_EVENTS_SCOPE,
+  'https://www.googleapis.com/auth/calendar.events.owned',
+  'https://www.googleapis.com/auth/calendar',
+] as const
+
+/** Whether the account's grant allows `events.insert` (`calendar_connections.can_write`). */
+export function googleCanWrite(scope: string | null): boolean {
+  return grantsAnyScope(scope, GOOGLE_WRITE_SCOPES)
+}
 
 const DAY_MS = 86_400_000
 
@@ -227,6 +245,48 @@ export async function listGoogleEventsForDay(
     if (!pageToken) break
   }
   return events
+}
+
+/**
+ * The `events.insert` body for a draft. All-day events use date-only values with an exclusive end, as Google
+ * requires; timed events send the instant and the household zone, so the event keeps that zone in the owner's
+ * calendar. Nothing but what the adult typed is sent: no description, attendees, reminders or conference data.
+ */
+export function googleEventBody(draft: EventDraft): Record<string, unknown> {
+  const body: Record<string, unknown> = { summary: draft.title }
+  if (draft.location) body.location = draft.location
+  if (draft.allDay) {
+    body.start = { date: draft.startDate }
+    body.end = { date: draft.endDate }
+  } else {
+    body.start = { dateTime: draft.startAt.toISOString(), timeZone: draft.timeZone }
+    body.end = { dateTime: draft.endAt.toISOString(), timeZone: draft.timeZone }
+  }
+  return body
+}
+
+/**
+ * Adds one event to a calendar. Returns the provider's id for it, which Roost does not store (spec §11.2) and only
+ * logs by its absence: a 404 means the calendar is gone, a 401 or an insufficient-permission 403 that the grant must
+ * be renewed. The title and location are never logged.
+ */
+export async function createGoogleEvent(
+  fetch: FetchLike,
+  accessToken: string,
+  calendarId: string,
+  draft: EventDraft,
+): Promise<string | null> {
+  const { body } = await requestJson(
+    fetch,
+    `${GOOGLE_CALENDAR_API}/calendars/${encodeURIComponent(calendarId)}/events?${new URLSearchParams({ fields: 'id' })}`,
+    {
+      method: 'POST',
+      headers: { ...(authHeaders(accessToken) as Record<string, string>), 'Content-Type': 'application/json' },
+      body: JSON.stringify(googleEventBody(draft)),
+    },
+    classifyGoogleError,
+  )
+  return isRecord(body) ? stringOrNull(body.id) : null
 }
 
 // ---- Connecting an account (authorization code + PKCE) ----

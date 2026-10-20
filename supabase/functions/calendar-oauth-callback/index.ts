@@ -42,6 +42,7 @@ const handler = createOAuthCallbackHandler({
       p_account_label: attempt.accountLabel,
       p_fingerprint: attempt.fingerprint,
       p_calendars: attempt.calendars,
+      p_can_write: attempt.canWrite,
     })
   },
   now: () => new Date(),

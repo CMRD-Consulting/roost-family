@@ -30,6 +30,12 @@ export interface AccessToken {
   expiresAt: Date
   /** A new refresh token when the provider issued one (code exchange; Microsoft rotates on refresh). */
   refreshToken: string | null
+  /**
+   * The scopes the account actually granted, space-separated, as the token endpoint reported them; null when it
+   * reported none. A connection made before Roost asked for write access keeps its old, read-only grant, so this is
+   * what decides whether events may be added to it (`can_write`, spec §5.5).
+   */
+  scope: string | null
 }
 
 export interface OAuthClientCredentials {
@@ -119,7 +125,15 @@ export function parseTokenResponse(status: number, body: unknown, now: Date, cla
     accessToken,
     expiresAt: new Date(now.getTime() + expiresIn * 1000),
     refreshToken: stringOrNull(body.refresh_token),
+    scope: stringOrNull(body.scope),
   }
+}
+
+/** True when `granted` (a space-separated scope list) contains any of `wanted`, matching whole scopes only. */
+export function grantsAnyScope(granted: string | null, wanted: readonly string[]): boolean {
+  if (!granted) return false
+  const have = new Set(granted.split(/\s+/).filter(Boolean).map((s) => s.toLowerCase()))
+  return wanted.some((scope) => have.has(scope.toLowerCase()))
 }
 
 /** The OAuth `error` code from a token endpoint body (`{ error: 'invalid_grant' }`), if any. */

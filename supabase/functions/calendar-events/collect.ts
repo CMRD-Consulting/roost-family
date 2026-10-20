@@ -7,7 +7,9 @@
  *
  * - Memory (module-level in the Edge Function, so per isolate): a success is reused for 5 minutes and a failure for
  *   60 seconds, keyed by connection, household day and the set of calendars asked for, so a burst of display
- *   requests never hammers a provider or a dead feed.
+ *   requests never hammers a provider or a dead feed. The key also carries the connection's `events_changed_at`,
+ *   so an event Roost itself added (`calendar-create-event`, which runs in another isolate) is never hidden behind
+ *   a cached answer.
  * - Concurrency: at most 4 connections at once, under one overall deadline (20 s). A connection still running at the
  *   deadline is aborted and reported `unreachable` for this response only (not cached, counted or stored).
  * - Stored status is written only from fresh results and only when it differs from the stored one: `ok` at once,
@@ -36,6 +38,12 @@ export interface ConnectionRow {
   provider: 'ics' | 'google' | 'microsoft'
   status: ConnectionStatus
   ownerName: string
+  /**
+   * `calendar_connections.events_changed_at`: bumped whenever Roost itself writes to this calendar. It is part of
+   * the cache key, so an event added through `calendar-create-event` — which runs in a different isolate, with no
+   * memory to clear — is picked up by the very next request, in every isolate, instead of up to 5 minutes later.
+   */
+  eventsChangedAt: string
 }
 
 /** A visible, not-gone selection. */
@@ -140,7 +148,7 @@ function pruneCache(cache: Map<string, CacheEntry>, nowMs: number): void {
 
 function cacheKey(connection: ConnectionRow, selections: SelectionRow[], window: DayWindow): string {
   const ids = selections.map((s) => s.id).sort().join(',')
-  return `${connection.id}|${window.dayStartUtc.toISOString()}|${window.dayEndUtc.toISOString()}|${ids}`
+  return `${connection.id}|${connection.eventsChangedAt}|${window.dayStartUtc.toISOString()}|${window.dayEndUtc.toISOString()}|${ids}`
 }
 
 async function fetchConnection(

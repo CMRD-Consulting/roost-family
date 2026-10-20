@@ -53,16 +53,19 @@ export type Database = {
         Row: {
           created_at: string
           id: number
+          kind: string
           membership_id: string
         }
         Insert: {
           created_at?: string
           id?: never
+          kind?: string
           membership_id: string
         }
         Update: {
           created_at?: string
           id?: never
+          kind?: string
           membership_id?: string
         }
         Relationships: [
@@ -77,7 +80,9 @@ export type Database = {
       }
       calendar_connections: {
         Row: {
+          can_write: boolean
           created_at: string
+          events_changed_at: string
           household_id: string
           id: string
           label: string
@@ -89,7 +94,9 @@ export type Database = {
           vault_secret_id: string
         }
         Insert: {
+          can_write?: boolean
           created_at?: string
+          events_changed_at?: string
           household_id: string
           id?: string
           label: string
@@ -101,7 +108,9 @@ export type Database = {
           vault_secret_id: string
         }
         Update: {
+          can_write?: boolean
           created_at?: string
+          events_changed_at?: string
           household_id?: string
           id?: string
           label?: string
@@ -134,6 +143,7 @@ export type Database = {
           account_label: string | null
           attempt_hash: string
           calendars: Json
+          can_write: boolean
           created_at: string
           expires_at: string
           household_id: string
@@ -147,6 +157,7 @@ export type Database = {
           account_label?: string | null
           attempt_hash: string
           calendars?: Json
+          can_write?: boolean
           created_at?: string
           expires_at?: string
           household_id: string
@@ -160,6 +171,7 @@ export type Database = {
           account_label?: string | null
           attempt_hash?: string
           calendars?: Json
+          can_write?: boolean
           created_at?: string
           expires_at?: string
           household_id?: string
@@ -795,6 +807,9 @@ export type Database = {
           display_id?: string | null
           household_id: string
           id?: string
+          // Deliberately optional, unlike the generated shape: an insert that leaves the column out gets the
+          // household's default list from the table's before-insert trigger (kitchen spec §3.1), which is what
+          // makes an older build's queued grocery item replayable. Re-apply this after `pnpm db:types`.
           list_id?: string
           text: string
         }
@@ -2423,6 +2438,7 @@ export type Database = {
       svc_create_calendar_connection_with_selections: {
         Args: {
           p_calendars: Json
+          p_can_write: boolean
           p_fingerprint: string
           p_household_id: string
           p_label: string
@@ -2444,6 +2460,7 @@ export type Database = {
           p_account_label: string
           p_attempt_hash: string
           p_calendars: Json
+          p_can_write: boolean
           p_fingerprint: string
           p_household_id: string
           p_membership_id: string
@@ -2491,6 +2508,14 @@ export type Database = {
       svc_record_calendar_connect_attempt: {
         Args: { p_membership_id: string }
         Returns: boolean
+      }
+      svc_record_calendar_event_attempt: {
+        Args: { p_membership_id: string }
+        Returns: boolean
+      }
+      svc_record_calendar_event_created: {
+        Args: { p_membership_id: string; p_selection_id: string }
+        Returns: undefined
       }
       svc_set_calendar_selection_gone: {
         Args: { p_gone: boolean; p_selection_id: string }

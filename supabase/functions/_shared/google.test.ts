@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { CalendarProviderError, emailFromIdToken, subjectFromIdToken } from './calendarProvider'
 import { householdDayWindow } from './events'
+import { parseEventDraft } from './eventDraft'
 import {
   buildGoogleAuthUrl,
   classifyGoogleError,
+  createGoogleEvent,
   exchangeGoogleCode,
+  googleCanWrite,
+  googleEventBody,
   listGoogleCalendars,
   listGoogleEventsForDay,
   mapGoogleCalendarList,
@@ -194,7 +198,12 @@ describe('parseGoogleTokenResponse', () => {
       { access_token: 'ya29.a0Af', expires_in: 3599, scope: 'https://www.googleapis.com/auth/calendar.readonly', token_type: 'Bearer' },
       NOW,
     )
-    expect(token).toEqual({ accessToken: 'ya29.a0Af', expiresAt: new Date('2026-09-14T16:59:59Z'), refreshToken: null })
+    expect(token).toEqual({
+      accessToken: 'ya29.a0Af',
+      expiresAt: new Date('2026-09-14T16:59:59Z'),
+      refreshToken: null,
+      scope: 'https://www.googleapis.com/auth/calendar.readonly',
+    })
   })
 
   it('returns a refresh token when Google sends one (code exchange)', () => {
@@ -341,14 +350,14 @@ function idToken(claims: Record<string, unknown>): string {
 }
 
 describe('Google account connection (authorization code + PKCE)', () => {
-  it('builds the consent URL with offline access, forced consent, the read-only scope and the S256 challenge', () => {
+  it('builds the consent URL with offline access, forced consent, the event and calendar-list scopes and the S256 challenge', () => {
     const url = new URL(buildGoogleAuthUrl({ clientId: 'cid', redirectUri: 'https://x.test/functions/v1/calendar-oauth-callback', state: 'st', codeChallenge: 'ch' }))
     expect(`${url.origin}${url.pathname}`).toBe('https://accounts.google.com/o/oauth2/v2/auth')
     expect(Object.fromEntries(url.searchParams)).toEqual({
       client_id: 'cid',
       redirect_uri: 'https://x.test/functions/v1/calendar-oauth-callback',
       response_type: 'code',
-      scope: 'openid email https://www.googleapis.com/auth/calendar.readonly',
+      scope: 'openid email https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.calendarlist.readonly',
       access_type: 'offline',
       prompt: 'consent',
       state: 'st',
@@ -362,13 +371,24 @@ describe('Google account connection (authorization code + PKCE)', () => {
     const result = await exchangeGoogleCode(
       async (url, init) => {
         calls.push({ url, init })
-        return jsonResponse(200, { access_token: 'at', expires_in: 3599, refresh_token: 'rt', id_token: idToken({ sub: '1098765', email: 'sam@example.com' }) })
+        return jsonResponse(200, {
+          access_token: 'at',
+          expires_in: 3599,
+          refresh_token: 'rt',
+          scope: 'openid email https://www.googleapis.com/auth/calendar.events',
+          id_token: idToken({ sub: '1098765', email: 'sam@example.com' }),
+        })
       },
       { clientId: 'cid', clientSecret: 'cs', code: 'code-1', codeVerifier: 'v'.repeat(43), redirectUri: 'https://x.test/cb' },
       NOW,
     )
     expect(result).toEqual({
-      token: { accessToken: 'at', expiresAt: new Date(NOW.getTime() + 3599_000), refreshToken: 'rt' },
+      token: {
+        accessToken: 'at',
+        expiresAt: new Date(NOW.getTime() + 3599_000),
+        refreshToken: 'rt',
+        scope: 'openid email https://www.googleapis.com/auth/calendar.events',
+      },
       email: 'sam@example.com',
       subject: '1098765',
     })
@@ -410,5 +430,84 @@ describe('emailFromIdToken', () => {
     expect(emailFromIdToken('garbage')).toBeNull()
     expect(emailFromIdToken('a.!!!.c')).toBeNull()
     expect(emailFromIdToken(undefined)).toBeNull()
+  })
+})
+
+describe('googleCanWrite', () => {
+  it('accepts the scopes that authorize events.insert', () => {
+    expect(googleCanWrite('openid email https://www.googleapis.com/auth/calendar.events')).toBe(true)
+    expect(googleCanWrite('https://www.googleapis.com/auth/calendar')).toBe(true)
+    expect(googleCanWrite('https://www.googleapis.com/auth/calendar.events.owned')).toBe(true)
+    // Case and spacing as the provider happens to report them.
+    expect(googleCanWrite('  HTTPS://WWW.GOOGLEAPIS.COM/AUTH/CALENDAR.EVENTS\n')).toBe(true)
+  })
+
+  it('refuses a read-only grant, a lookalike scope and no grant at all', () => {
+    expect(googleCanWrite('openid email https://www.googleapis.com/auth/calendar.readonly')).toBe(false)
+    expect(googleCanWrite('https://www.googleapis.com/auth/calendar.events.readonly')).toBe(false)
+    expect(googleCanWrite('https://www.googleapis.com/auth/calendar.calendarlist.readonly')).toBe(false)
+    expect(googleCanWrite('https://www.googleapis.com/auth/calendar.events.public.readonly')).toBe(false)
+    expect(googleCanWrite(null)).toBe(false)
+    expect(googleCanWrite('')).toBe(false)
+  })
+})
+
+describe('createGoogleEvent', () => {
+  const draft = (over: Record<string, unknown> = {}) =>
+    parseEventDraft(
+      { title: 'Swim lesson', allDay: false, start: '2026-09-14T20:00:00Z', end: '2026-09-14T20:45:00Z', ...over },
+      TZ,
+      NOW,
+    )
+
+  it('posts a timed event with the household zone and asks for nothing back but the id', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = []
+    const id = await createGoogleEvent(
+      async (url, init) => {
+        calls.push({ url, init })
+        return jsonResponse(200, { id: 'evt-1' })
+      },
+      'at',
+      'kids@group.calendar.google.com',
+      draft({ location: 'YMCA Pool' }),
+    )
+    expect(id).toBe('evt-1')
+    expect(calls[0]!.url).toBe(
+      'https://www.googleapis.com/calendar/v3/calendars/kids%40group.calendar.google.com/events?fields=id',
+    )
+    expect(calls[0]!.init!.method).toBe('POST')
+    expect(JSON.parse(String(calls[0]!.init!.body))).toEqual({
+      summary: 'Swim lesson',
+      location: 'YMCA Pool',
+      start: { dateTime: '2026-09-14T20:00:00.000Z', timeZone: TZ },
+      end: { dateTime: '2026-09-14T20:45:00.000Z', timeZone: TZ },
+    })
+  })
+
+  it('posts an all-day event as date-only values with an exclusive end, and no location key when there is none', () => {
+    expect(googleEventBody(draft({ allDay: true, start: '2026-09-15', end: '2026-09-16' }))).toEqual({
+      summary: 'Swim lesson',
+      start: { date: '2026-09-15' },
+      end: { date: '2026-09-16' },
+    })
+  })
+
+  it('maps a missing calendar to calendar_gone and an expired grant to auth_expired', async () => {
+    await expect(
+      createGoogleEvent(async () => jsonResponse(404, { error: { errors: [{ reason: 'notFound' }] } }), 'at', 'c', draft()).catch(
+        (e: CalendarProviderError) => e.status,
+      ),
+    ).resolves.toBe('calendar_gone')
+    await expect(
+      createGoogleEvent(async () => jsonResponse(401, {}), 'at', 'c', draft()).catch((e: CalendarProviderError) => e.status),
+    ).resolves.toBe('auth_expired')
+    await expect(
+      createGoogleEvent(async () => jsonResponse(403, { error: { errors: [{ reason: 'insufficientPermissions' }] } }), 'at', 'c', draft()).catch(
+        (e: CalendarProviderError) => e.status,
+      ),
+    ).resolves.toBe('auth_expired')
+    await expect(
+      createGoogleEvent(async () => jsonResponse(503, 'busy'), 'at', 'c', draft()).catch((e: CalendarProviderError) => e.status),
+    ).resolves.toBe('unreachable')
   })
 })

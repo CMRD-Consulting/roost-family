@@ -19,14 +19,20 @@ function idToken(claims: Record<string, unknown>): string {
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 
 /** A fake Google: token endpoint and calendar list. */
-function googleFetch(options: { token?: Response; list?: Response } = {}) {
+function googleFetch(options: { token?: Response; list?: Response; scope?: string } = {}) {
   const calls: Array<{ url: string; body: string | null }> = []
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
     calls.push({ url, body: typeof init?.body === 'string' ? init.body : null })
     if (url === 'https://oauth2.googleapis.com/token') {
       return (
         options.token ??
-        json(200, { access_token: 'access-1', expires_in: 3599, refresh_token: 'refresh-1', id_token: idToken({ sub: 'google-sub-1', email: 'sam@example.com' }) })
+        json(200, {
+          access_token: 'access-1',
+          expires_in: 3599,
+          refresh_token: 'refresh-1',
+          scope: options.scope ?? 'openid email https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.calendarlist.readonly',
+          id_token: idToken({ sub: 'google-sub-1', email: 'sam@example.com' }),
+        })
       )
     }
     if (url.startsWith('https://www.googleapis.com/calendar/v3/users/me/calendarList')) {
@@ -113,6 +119,7 @@ describe('calendar-oauth-callback handler', () => {
           { id: 'sam@example.com', name: 'sam@example.com' },
           { id: 'kids@group.calendar.google.com', name: 'Kids' },
         ],
+        canWrite: true,
       },
     ])
     expect(JSON.stringify(attempts)).not.toContain(token)
@@ -122,12 +129,30 @@ describe('calendar-oauth-callback handler', () => {
   it('fingerprints Microsoft accounts by oid, and leaves the label empty without an email', async () => {
     const msFetch = vi.fn(async (url: string) =>
       url.includes('/oauth2/v2.0/token')
-        ? json(200, { access_token: 'a', refresh_token: 'r', id_token: idToken({ oid: 'object-1', sub: 'pairwise-1' }) })
+        ? json(200, { access_token: 'a', refresh_token: 'r', scope: 'Calendars.ReadWrite', id_token: idToken({ oid: 'object-1', sub: 'pairwise-1' }) })
         : json(200, { value: [{ id: 'cal-1', name: 'Calendar', isDefaultCalendar: true }] }),
     )
     const { d, attempts } = deps(attempt({ provider: 'microsoft' }), msFetch)
     expect(location(await createOAuthCallbackHandler(d)(get('state=s&code=c'))).searchParams.get('calendar')).toBe('pending')
-    expect(attempts[0]).toMatchObject({ provider: 'microsoft', accountLabel: null, secret: 'r', fingerprint: await hmacSha256Hex(KEY, 'microsoft:object-1') })
+    expect(attempts[0]).toMatchObject({ provider: 'microsoft', accountLabel: null, secret: 'r', canWrite: true, fingerprint: await hmacSha256Hex(KEY, 'microsoft:object-1') })
+  })
+
+  it('records an account that granted only the old read-only scopes as not writable', async () => {
+    const { fetch } = googleFetch({ scope: 'openid email https://www.googleapis.com/auth/calendar.readonly' })
+    const { d, attempts } = deps(attempt(), fetch)
+    expect(location(await createOAuthCallbackHandler(d)(get('state=s&code=c'))).searchParams.get('calendar')).toBe('pending')
+    expect(attempts[0]!.canWrite).toBe(false)
+  })
+
+  it('records a Microsoft account that granted only Calendars.Read as not writable', async () => {
+    const msFetch = vi.fn(async (url: string) =>
+      url.includes('/oauth2/v2.0/token')
+        ? json(200, { access_token: 'a', refresh_token: 'r', scope: 'Calendars.Read', id_token: idToken({ oid: 'object-1' }) })
+        : json(200, { value: [{ id: 'cal-1', name: 'Calendar' }] }),
+    )
+    const { d, attempts } = deps(attempt({ provider: 'microsoft' }), msFetch)
+    expect(location(await createOAuthCallbackHandler(d)(get('state=s&code=c'))).searchParams.get('calendar')).toBe('pending')
+    expect(attempts[0]!.canWrite).toBe(false)
   })
 
   it('refuses a missing, unknown or used state before any provider call', async () => {

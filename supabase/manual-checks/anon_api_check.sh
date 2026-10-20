@@ -40,6 +40,16 @@ status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/rest/v1/rpc/svc_ca
   -d '{"p_connection_id":"00000000-0000-0000-0000-000000000000"}')
 check "anon calls svc_calendar_secret" 401 "$status"
 
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/rest/v1/rpc/svc_record_calendar_event_attempt" \
+  -H "apikey: $KEY" -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d '{"p_membership_id":"00000000-0000-0000-0000-000000000000"}')
+check "anon calls svc_record_calendar_event_attempt" 401 "$status"
+
+status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/rest/v1/rpc/svc_record_calendar_event_created" \
+  -H "apikey: $KEY" -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d '{"p_membership_id":"00000000-0000-0000-0000-000000000000","p_selection_id":"00000000-0000-0000-0000-000000000000"}')
+check "anon calls svc_record_calendar_event_created" 401 "$status"
+
 status=$(curl -s -o /dev/null -w '%{http_code}' "$API/rest/v1/household_exports?select=id" -H "apikey: $KEY" -H "Authorization: Bearer $KEY")
 check "anon selects household_exports" 401 "$status"
 

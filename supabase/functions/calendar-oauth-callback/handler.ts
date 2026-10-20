@@ -42,6 +42,8 @@ export interface PendingAttempt {
   accountLabel: string | null
   fingerprint: string
   calendars: Array<{ id: string; name: string }>
+  /** Whether the scopes this account granted allow adding events (spec §5.5); false for an older, read-only grant. */
+  canWrite: boolean
 }
 
 export interface OAuthCallbackDeps {
@@ -134,6 +136,9 @@ export function createOAuthCallbackHandler(deps: OAuthCallbackDeps): (req: Reque
           secret: refreshToken,
           accountLabel: email,
           fingerprint: await deps.fingerprint(`${attempt.provider}:${exchanged.subject}`),
+          // From the grant the provider reports, never from what Roost asked for: a returning account may have
+          // approved only the old read-only scopes.
+          canWrite: api.canWrite(exchanged.token.scope),
           // Primary calendar first, so it is the first one offered in Settings.
           calendars: [...calendars]
             .sort((a, b) => Number(b.primary) - Number(a.primary))

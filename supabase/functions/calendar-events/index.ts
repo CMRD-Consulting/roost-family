@@ -34,7 +34,7 @@ const store: CalendarStore = {
     if (!household) return null
     const [connections, selections, members] = await Promise.all([
       // Explicit columns: never vault_secret_id.
-      admin.from('calendar_connections').select('id, membership_id, provider, status').eq('household_id', householdId),
+      admin.from('calendar_connections').select('id, membership_id, provider, status, events_changed_at').eq('household_id', householdId),
       admin
         .from('calendar_selections')
         .select('id, connection_id, external_calendar_id, assigned_membership_id, assigned_child_id')
@@ -57,6 +57,7 @@ const store: CalendarStore = {
           provider: c.provider as ConnectionRow['provider'],
           status: c.status as ConnectionStatus,
           ownerName: names.get(c.membership_id) ?? '',
+          eventsChangedAt: c.events_changed_at,
         }),
       ),
       selections: selectionRows.map(
