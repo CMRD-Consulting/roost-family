@@ -206,6 +206,10 @@ Environment (Edge Function secrets: `supabase secrets set NAME=value`; locally `
 | `CALENDAR_OAUTH_REDIRECT_URI` | optional | overrides the redirect URI; default `${SUPABASE_URL}/functions/v1/calendar-oauth-callback` |
 | `CALENDAR_ALLOW_PRIVATE_HOSTS` | local verification only | `1` lets ICS links reach private hosts over `http://` and any port (e.g. a fixture at `http://host.docker.internal:8123/…`). Honoured only when `SUPABASE_URL` is a local stack (localhost, 127.0.0.1, kong, host.docker.internal); ignored with a warning anywhere else, where links must be `https://` on the default port and resolve to public addresses only |
 
+**Setting Google up for the first time:** `bash scripts/setup-google-calendar.sh` walks through the Console
+screens gcloud cannot do (audience, scopes, the web client), writes the client id and secret into
+`supabase/functions/.env`, offers to set them as production secrets, and ends by connecting a calendar.
+
 Redirect URIs to register (Google Cloud Console → Credentials → OAuth client → Authorized redirect URIs; Entra → App
 registrations → Authentication → Web → Redirect URIs):
 
